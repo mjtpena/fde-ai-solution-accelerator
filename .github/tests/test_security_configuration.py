@@ -1,6 +1,7 @@
 """Regression checks for the repository's merge-blocking scanner configuration."""
 
 from pathlib import Path
+import re
 from typing import Any
 
 import pytest
@@ -66,6 +67,7 @@ def test_trivy_findings_fail_without_ignoring_unfixed_issues(
         assert options["scan-ref"] == "."
         assert "misconfig" in options["scanners"].split(",")
         assert options["skip-dirs"] == ".git"
+        assert step["env"]["TRIVY_INCLUDE_DEV_DEPS"] == "true"
     else:
         assert job["strategy"]["matrix"]["include"] == [
             {"image": "web", "dockerfile": "apps/web/Dockerfile"},
@@ -91,6 +93,8 @@ def test_scanner_failures_are_not_suppressed(workflow: dict[str, Any]) -> None:
             assert "|| true" not in step.get("run", "")
             if "checkout@" in step.get("uses", ""):
                 assert step["with"]["persist-credentials"] == "false"
+            if "uses" in step:
+                assert re.fullmatch(r"[0-9a-f]{40}", step["uses"].split("@")[1])
 
 
 def test_dependabot_covers_locked_workspaces_actions_and_images() -> None:

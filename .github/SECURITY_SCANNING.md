@@ -7,7 +7,8 @@ pull-request trigger are used. The existing **Quality checks** job is unchanged.
 CodeQL uses the extended security suite for Python, JavaScript/TypeScript, and
 GitHub Actions, and uploads results to code scanning. Trivy rejects HIGH and
 CRITICAL vulnerabilities (including unfixed ones), misconfigurations, and
-secrets in the repository, and vulnerabilities and secrets in both built
+secrets in the repository (including development dependencies), and vulnerabilities
+and secrets in both built
 runtime images. Scanner errors also fail the jobs. Dependency review rejects
 new HIGH/CRITICAL vulnerable dependencies in pull requests. Dependabot updates
 the root uv and npm workspaces, GitHub Actions, and both Dockerfiles weekly.
@@ -66,3 +67,30 @@ The tests check coverage, triggers, least privilege, and fail-closed scanner
 settings. GitHub-hosted runs provide the actual CodeQL, dependency-review, and
 container-scan evidence. Existing vulnerabilities can fail these checks; fix
 them in the owning issue rather than weakening gates or adding suppressions.
+
+## Initial baseline blockers
+
+The first hosted scan of this change
+([run 37590125202](https://github.com/mjtpena/fde-ai-solution-accelerator/actions/runs/37590125202))
+successfully executed all scanners:
+
+- **Quality checks**, **Security configuration**, and all three CodeQL language
+  checks passed. CodeQL identified a floating setup-uv action reference introduced
+  here; all new workflow action references are now pinned to commit SHAs.
+- **Dependency review** failed because the repository's Dependency Graph is
+  disabled. An administrator must enable it; retry the check after setup.
+- **Trivy repository** failed HIGH DS-0002 in
+  `workers/ingestion/Dockerfile`: the existing image has no non-root `USER`.
+  The runtime npm/uv lockfiles had no HIGH/CRITICAL findings in this first run.
+  Subsequent runs also scan development dependencies.
+- **Trivy image (ingestion)** built successfully and failed on 44 HIGH findings
+  in the Debian 13.7 base image.
+- **Trivy image (web)** built successfully and failed on 11 HIGH Node-package
+  findings in the existing runtime image, including bundled npm/tooling
+  dependencies (`brace-expansion`, `pacote`, `sigstore`) and an unfixed
+  `http-cache-semantics` finding.
+
+These application Dockerfile/base-image changes are outside issue #35's
+`.github/**` scope. Keep the failing gates and resolve the baseline findings in
+the owning changes before landing. Counts are a point-in-time observation:
+mutable base-image tags and updated advisory databases can change later results.
