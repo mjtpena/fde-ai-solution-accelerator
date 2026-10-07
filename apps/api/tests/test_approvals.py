@@ -503,20 +503,16 @@ async def test_get_for_update_uses_postgresql_row_lock() -> None:
 # database for the duration the winner holds the row, rather than merely
 # observing a final state that could also result from in-process ordering.
 #
-# It is skipped (with a clear, actionable reason) when no reachable
-# PostgreSQL is configured, so `make check` / default `pytest` runs do not
-# require Docker. Start one locally with `docker compose up -d postgres`
-# (see docker-compose.yml) and optionally set
-# APPROVALS_TEST_POSTGRES_DSN to point elsewhere.
+# It is opt-in through APPROVALS_TEST_POSTGRES_DSN, so default checks never
+# connect to whichever local PostgreSQL happens to be listening.
 
-POSTGRES_DSN = os.environ.get(
-    "APPROVALS_TEST_POSTGRES_DSN",
-    "postgresql+asyncpg://accelerator:local-development-only@localhost:5432/accelerator",
-)
+POSTGRES_DSN = os.environ.get("APPROVALS_TEST_POSTGRES_DSN")
 LOCK_HOLD_SECONDS = 0.4
 
 
-def _postgres_reachable(dsn: str, timeout: float = 1.0) -> bool:
+def _postgres_reachable(dsn: str | None, timeout: float = 1.0) -> bool:
+    if dsn is None:
+        return False
     url = make_url(dsn)
     if url.host is None:
         return False
@@ -530,10 +526,8 @@ def _postgres_reachable(dsn: str, timeout: float = 1.0) -> bool:
 requires_postgres = pytest.mark.skipif(
     not _postgres_reachable(POSTGRES_DSN),
     reason=(
-        "Real PostgreSQL is not reachable at "
-        f"APPROVALS_TEST_POSTGRES_DSN={make_url(POSTGRES_DSN)!s}. Start one with "
-        "`docker compose up -d postgres` to run this two-session row-lock "
-        "concurrency test."
+        "Set APPROVALS_TEST_POSTGRES_DSN to a reachable PostgreSQL DSN to run "
+        "this two-session row-lock concurrency test."
     ),
 )
 
@@ -574,6 +568,7 @@ class SlowTool(Tool):
 
 @requires_postgres
 async def test_postgresql_row_lock_serializes_concurrent_execute_across_two_sessions() -> None:
+    assert POSTGRES_DSN is not None
     schema = f"approval_test_{uuid4().hex}"
     admin_engine = create_async_engine(POSTGRES_DSN)
     connect_args = {"server_settings": {"search_path": schema}}
