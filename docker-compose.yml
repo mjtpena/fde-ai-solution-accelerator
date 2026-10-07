@@ -50,6 +50,9 @@ services:
         && python -m uvicorn accelerator.api.main:app --host 0.0.0.0 --port 8000
     environment:
       API_ENVIRONMENT: ${API_ENVIRONMENT:-development}
+      API_ENTRA_TENANT_ID: ${ENTRA_TENANT_ID:?Set ENTRA_TENANT_ID in .env}
+      API_ENTRA_AUDIENCE: ${ENTRA_API_AUDIENCE:?Set ENTRA_API_AUDIENCE in .env}
+      API_WEB_ORIGIN: ${WEB_ORIGIN:-http://localhost:3000}
     ports:
       - "${API_PORT:-8000}:8000"
     depends_on:
@@ -62,7 +65,7 @@ services:
         - CMD
         - python
         - -c
-        - "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8000/healthz', timeout=2)"
+        - "import socket; socket.create_connection(('127.0.0.1', 8000), timeout=2).close()"
       interval: 10s
       timeout: 3s
       retries: 5
@@ -74,6 +77,9 @@ services:
       dockerfile: apps/web/Dockerfile
       args:
         NEXT_PUBLIC_API_URL: ${NEXT_PUBLIC_API_URL:-http://localhost:8000}
+        NEXT_PUBLIC_ENTRA_TENANT_ID: ${ENTRA_TENANT_ID:?Set ENTRA_TENANT_ID in .env}
+        NEXT_PUBLIC_ENTRA_CLIENT_ID: ${ENTRA_WEB_CLIENT_ID:?Set ENTRA_WEB_CLIENT_ID in .env}
+        NEXT_PUBLIC_ENTRA_API_SCOPE: ${ENTRA_API_SCOPE:?Set ENTRA_API_SCOPE in .env}
     environment:
       NEXT_PUBLIC_API_URL: ${NEXT_PUBLIC_API_URL:-http://localhost:8000}
     ports:

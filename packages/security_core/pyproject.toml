@@ -6,15 +6,18 @@ build-backend = "setuptools.build_meta"
 name = "fde-security-core"
 version = "0.1.0"
 requires-python = "==3.12.*"
-dependencies = []
-
-[tool.setuptools]
-packages = [
-    "accelerator.security_core",
-    "accelerator.security_core.authorisation",
-    "accelerator.security_core.tool_policy",
-    "accelerator.security_core.prompt_injection",
-    "accelerator.security_core.data_boundaries",
-    "accelerator.security_core.redaction",
+dependencies = [
+    "pydantic>=2.7,<3",
+    "sqlalchemy[asyncio]>=2.0,<3",
+    "asyncpg>=0.30,<1",
 ]
-package-dir = {"accelerator.security_core" = "."}
+
+[dependency-groups]
+dev = ["aiosqlite>=0.21,<1"]
+
+[tool.setuptools.packages.find]
+where = ["src"]
+include = ["accelerator.security_core*"]
+
+[tool.setuptools.package-data]
+"accelerator.security_core" = ["py.typed"]
