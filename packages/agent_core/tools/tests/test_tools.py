@@ -2,7 +2,7 @@ from datetime import UTC, datetime
 from typing import ClassVar
 
 import pytest
-from pydantic import BaseModel, ConfigDict, ValidationError
+from pydantic import AliasChoices, AliasPath, BaseModel, ConfigDict, Field, ValidationError
 
 from .. import EnterpriseTool, ExecutionContextProtocol, ToolRegistry, ToolRisk
 
@@ -201,6 +201,18 @@ class ProjectIdsArgs(BaseModel):
     project_ids: frozenset[str]
 
 
+class AliasedScopeArgs(BaseModel):
+    scope: str = Field(alias="scope_id")
+
+
+class ValidationAliasedProjectArgs(BaseModel):
+    project: str = Field(validation_alias=AliasChoices("project", "project_ids"))
+
+
+class NestedPathScopeArgs(BaseModel):
+    scope: str = Field(validation_alias=AliasPath("metadata", "scope_ids"))
+
+
 @pytest.mark.parametrize("model", [ScopeIdArgs, ScopeIdsArgs, ProjectIdArgs, ProjectIdsArgs])
 def test_scope_arguments_cannot_register(model: type[BaseModel]) -> None:
     class ScopedTool(SearchTool):
@@ -208,6 +220,33 @@ def test_scope_arguments_cannot_register(model: type[BaseModel]) -> None:
 
     with pytest.raises(ValueError, match="ExecutionContext"):
         ToolRegistry().register(ScopedTool())
+
+
+@pytest.mark.parametrize(
+    "model",
+    [AliasedScopeArgs, ValidationAliasedProjectArgs, NestedPathScopeArgs],
+)
+def test_scope_arguments_cannot_register_through_validation_aliases(
+    model: type[BaseModel],
+) -> None:
+    class AliasedScopedTool(SearchTool):
+        args_model = model
+
+    with pytest.raises(ValueError, match="ExecutionContext"):
+        ToolRegistry().register(AliasedScopedTool())
+
+
+class ExtraAllowedArgs(BaseModel):
+    model_config = ConfigDict(extra="allow")
+    query: str
+
+
+def test_args_models_cannot_allow_undeclared_scope_fields() -> None:
+    class ExtraAllowedTool(SearchTool):
+        args_model = ExtraAllowedArgs
+
+    with pytest.raises(ValueError, match="cannot allow undeclared extra"):
+        ToolRegistry().register(ExtraAllowedTool())
 
 
 @pytest.mark.parametrize("timeout", [0.0, -1.0, float("inf"), float("nan")])
