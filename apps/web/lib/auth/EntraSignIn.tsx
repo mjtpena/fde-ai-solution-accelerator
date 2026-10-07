@@ -7,8 +7,8 @@ import {
 } from "@azure/msal-browser";
 import { useCallback, useEffect, useState } from "react";
 
-import { getHealth } from "@/lib/api/client";
-import { getApiScope, getMsalInstance } from "@/lib/auth/msal";
+import { getHealth } from "../api/client";
+import { getApiScope, getMsalInstance } from "./msal";
 
 export function EntraSignIn() {
   const [account, setAccount] = useState<AccountInfo | null>(null);
