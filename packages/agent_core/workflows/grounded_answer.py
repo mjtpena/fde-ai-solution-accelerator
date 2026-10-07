@@ -1,5 +1,5 @@
 from collections.abc import Callable, Sequence
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from typing import Generic, Literal, Protocol, TypeVar
 
 from .base import Workflow
@@ -16,20 +16,36 @@ AnswerEvidenceT = TypeVar("AnswerEvidenceT", contravariant=True)
 
 
 class Evidence(Protocol):
-    chunk_id: str
-    document_title: str
-    source_uri: str
+    @property
+    def chunk_id(self) -> str: ...
+
+    @property
+    def text(self) -> str: ...
+
+    @property
+    def document_title(self) -> str: ...
+
+    @property
+    def source_uri(self) -> str: ...
 
 
 class SufficiencyDecision(Protocol):
-    sufficient: bool
-    reason: str
-    evidence_ids: Sequence[str]
+    @property
+    def sufficient(self) -> bool: ...
+
+    @property
+    def reason(self) -> str: ...
+
+    @property
+    def evidence_ids(self) -> Sequence[str]: ...
 
 
 class GeneratedAnswer(Protocol):
-    answer: str
-    citations: Sequence[str]
+    @property
+    def answer(self) -> str: ...
+
+    @property
+    def citations(self) -> Sequence[str]: ...
 
 
 class Retriever(Protocol[RetrieverRequestT, RetrieverContextT, RetrieverEvidenceT]):
@@ -70,12 +86,21 @@ class CitationSource:
 
 
 @dataclass(frozen=True, slots=True)
+class RetrievedEvidenceContext:
+    chunk_id: str
+    text: str
+
+
+@dataclass(frozen=True, slots=True)
 class GroundedAnswerResult:
     status: Literal["answered", "abstained"]
     answer: str | None
     citations: tuple[str, ...]
     citation_sources: tuple[CitationSource, ...]
     abstention: Abstention | None
+    evaluation_context: tuple[RetrievedEvidenceContext, ...] | None = field(
+        default=None, repr=False
+    )
 
 
 class GroundedAnswerWorkflow(
@@ -90,12 +115,14 @@ class GroundedAnswerWorkflow(
         answer_generator: AnswerGenerator[EvidenceT],
         citation_validator: CitationValidator,
         retrieval_request_factory: Callable[[str], RequestT],
+        capture_evaluation_context: bool = False,
     ) -> None:
         self._retriever = retriever
         self._sufficiency_checker = sufficiency_checker
         self._answer_generator = answer_generator
         self._citation_validator = citation_validator
         self._retrieval_request_factory = retrieval_request_factory
+        self._capture_evaluation_context = capture_evaluation_context
 
     async def run(self, query: str, ctx: ContextT) -> GroundedAnswerResult:
         evidence = tuple(
@@ -103,6 +130,14 @@ class GroundedAnswerWorkflow(
         )
         decision = await self._sufficiency_checker.evaluate(evidence)
         retrieved_chunk_ids = frozenset(item.chunk_id for item in evidence)
+        evaluation_context = (
+            tuple(
+                RetrievedEvidenceContext(chunk_id=item.chunk_id, text=item.text)
+                for item in evidence
+            )
+            if self._capture_evaluation_context
+            else None
+        )
 
         if not decision.sufficient:
             unsupported_ids = set(decision.evidence_ids) - retrieved_chunk_ids
@@ -119,6 +154,7 @@ class GroundedAnswerWorkflow(
                     reason=decision.reason,
                     evidence_ids=tuple(decision.evidence_ids),
                 ),
+                evaluation_context=evaluation_context,
             )
 
         generated = await self._answer_generator.generate(query, evidence)
@@ -141,4 +177,5 @@ class GroundedAnswerWorkflow(
             citations=citations,
             citation_sources=citation_sources,
             abstention=None,
+            evaluation_context=evaluation_context,
         )

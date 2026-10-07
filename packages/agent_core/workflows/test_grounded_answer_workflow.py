@@ -1,10 +1,9 @@
+from collections.abc import Sequence
 from dataclasses import dataclass
 
 import pytest
 
-from accelerator.agent_core.workflows.grounded_answer import (
-    GroundedAnswerWorkflow,
-)
+from .grounded_answer import GroundedAnswerWorkflow, RetrievedEvidenceContext
 
 
 @dataclass(frozen=True)
@@ -58,9 +57,7 @@ class FakeSufficiencyChecker:
         self.decision = decision
         self.calls = calls
 
-    async def evaluate(
-        self, evidence: tuple[FakeEvidence, ...]
-    ) -> FakeDecision:
+    async def evaluate(self, evidence: Sequence[FakeEvidence]) -> FakeDecision:
         self.calls.append("sufficiency")
         return self.decision
 
@@ -69,10 +66,10 @@ class FakeAnswerGenerator:
     def __init__(self, answer: FakeGeneratedAnswer, calls: list[str]) -> None:
         self.answer = answer
         self.calls = calls
-        self.seen_evidence: tuple[FakeEvidence, ...] = ()
+        self.seen_evidence: Sequence[FakeEvidence] = ()
 
     async def generate(
-        self, query: str, evidence: tuple[FakeEvidence, ...]
+        self, query: str, evidence: Sequence[FakeEvidence]
     ) -> FakeGeneratedAnswer:
         self.calls.append("generate")
         self.seen_evidence = evidence
@@ -86,7 +83,7 @@ class FakeCitationValidator:
         self.retrieved_ids: frozenset[str] = frozenset()
 
     def validate(
-        self, citations: tuple[str, ...], retrieved_chunk_ids: frozenset[str]
+        self, citations: Sequence[str], retrieved_chunk_ids: frozenset[str]
     ) -> None:
         self.calls.append("validate")
         self.retrieved_ids = retrieved_chunk_ids
@@ -123,6 +120,7 @@ async def test_grounded_answer_runs_stages_in_order_and_validates_same_turn_ids(
     result = await workflow.run("What does the document say?", context)
 
     assert calls == ["retrieve", "sufficiency", "generate", "validate"]
+    assert calls.count("retrieve") == 1
     assert retriever.seen_context is context
     assert generator.seen_evidence == evidence
     assert validator.retrieved_ids == frozenset({"chunk-1"})
@@ -134,21 +132,71 @@ async def test_grounded_answer_runs_stages_in_order_and_validates_same_turn_ids(
     assert result.citation_sources[0].document_title == "Source document"
     assert result.citation_sources[0].source_uri == "https://example.invalid/source"
     assert result.abstention is None
+    assert result.evaluation_context is None
+
+
+@pytest.mark.asyncio
+async def test_evaluation_context_captures_exact_same_turn_evidence_in_order() -> None:
+    calls: list[str] = []
+    evidence = (
+        FakeEvidence("chunk-2", "Second retrieved text."),
+        FakeEvidence("chunk-1", "First retrieved text."),
+    )
+    workflow = GroundedAnswerWorkflow(
+        retriever=FakeRetriever(evidence, calls),
+        sufficiency_checker=FakeSufficiencyChecker(
+            FakeDecision(True, "Supported.", ("chunk-2", "chunk-1")), calls
+        ),
+        answer_generator=FakeAnswerGenerator(
+            FakeGeneratedAnswer("Grounded answer.", ("chunk-2",)), calls
+        ),
+        citation_validator=FakeCitationValidator(calls),
+        retrieval_request_factory=FakeRequest,
+        capture_evaluation_context=True,
+    )
+
+    result = await workflow.run(
+        "What does the document say?", FakeContext("server-resolved-scope")
+    )
+
+    assert calls.count("retrieve") == 1
+    assert result.evaluation_context is not None
+    assert isinstance(result.evaluation_context[0], RetrievedEvidenceContext)
+    assert tuple(item.chunk_id for item in result.evaluation_context) == (
+        "chunk-2",
+        "chunk-1",
+    )
+    assert tuple(item.text for item in result.evaluation_context) == (
+        "Second retrieved text.",
+        "First retrieved text.",
+    )
+    assert "Second retrieved text." not in repr(result)
+    assert "First retrieved text." not in repr(result)
 
 
 @pytest.mark.asyncio
 async def test_insufficient_evidence_returns_structured_abstention_without_generation() -> None:
     calls: list[str] = []
+    evidence = (
+        FakeEvidence("chunk-2", "Second retrieved text."),
+        FakeEvidence("chunk-1", "First retrieved text."),
+    )
     workflow = GroundedAnswerWorkflow(
-        retriever=FakeRetriever((), calls),
+        retriever=FakeRetriever(evidence, calls),
         sufficiency_checker=FakeSufficiencyChecker(
-            FakeDecision(False, "No relevant evidence was found.", ()), calls
+            FakeDecision(
+                False,
+                "No relevant evidence was found.",
+                ("chunk-2", "chunk-1"),
+            ),
+            calls,
         ),
         answer_generator=FakeAnswerGenerator(
             FakeGeneratedAnswer("Must not be used.", ()), calls
         ),
         citation_validator=FakeCitationValidator(calls),
         retrieval_request_factory=FakeRequest,
+        capture_evaluation_context=True,
     )
 
     result = await workflow.run(
@@ -156,13 +204,23 @@ async def test_insufficient_evidence_returns_structured_abstention_without_gener
     )
 
     assert calls == ["retrieve", "sufficiency"]
+    assert calls.count("retrieve") == 1
     assert result.status == "abstained"
     assert result.answer is None
     assert result.citations == ()
     assert result.citation_sources == ()
     assert result.abstention is not None
     assert result.abstention.reason == "No relevant evidence was found."
-    assert result.abstention.evidence_ids == ()
+    assert result.abstention.evidence_ids == ("chunk-2", "chunk-1")
+    assert result.evaluation_context is not None
+    assert tuple(item.chunk_id for item in result.evaluation_context) == (
+        "chunk-2",
+        "chunk-1",
+    )
+    assert tuple(item.text for item in result.evaluation_context) == (
+        "Second retrieved text.",
+        "First retrieved text.",
+    )
 
 
 @pytest.mark.asyncio

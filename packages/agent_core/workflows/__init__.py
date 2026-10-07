@@ -4,6 +4,7 @@ from .grounded_answer import (
     CitationSource,
     GroundedAnswerResult,
     GroundedAnswerWorkflow,
+    RetrievedEvidenceContext,
 )
 
 __all__ = [
@@ -11,5 +12,6 @@ __all__ = [
     "CitationSource",
     "GroundedAnswerResult",
     "GroundedAnswerWorkflow",
+    "RetrievedEvidenceContext",
     "Workflow",
 ]
