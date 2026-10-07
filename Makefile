@@ -15,7 +15,7 @@ check:
 	npm run check --workspaces --if-present
 
 eval-smoke:
-	@echo "eval-smoke: not implemented until M5 (issue 30)"
+	uv run --all-packages python -m accelerator.evaluation_core.reporting.smoke --allow-fixture
 
 eval-full:
 	uv run --all-packages python -m accelerator.evaluation_core.evaluators
