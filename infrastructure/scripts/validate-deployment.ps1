@@ -25,7 +25,7 @@ function Redact-WhatIfValue {
     if ($Value -is [System.Collections.IDictionary]) {
         $redactedValue = [ordered]@{}
         foreach ($key in $Value.Keys) {
-            if ($key -match '(?i)(password|secret|token|connection.?string|shared.?key|access.?key)') {
+            if ($key -match '(?i)(password|secret|token|connection.?string|shared.?key|access.?key|primary.?key|secondary.?key|api.?key|(^|[^a-z])key([^a-z]|$))') {
                 $redactedValue[$key] = '[REDACTED]'
             } else {
                 $redactedValue[$key] = Redact-WhatIfValue -Value $Value[$key]
