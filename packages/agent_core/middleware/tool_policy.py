@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import asyncio
 import math
+from collections.abc import Awaitable
 from dataclasses import dataclass
 from datetime import datetime, timezone
 from typing import TYPE_CHECKING, Generic, TypeVar
@@ -18,15 +19,21 @@ if TYPE_CHECKING:
 
 ArgsT = TypeVar("ArgsT", bound=BaseModel)
 ResultT = TypeVar("ResultT", bound=BaseModel)
+OperationT = TypeVar("OperationT")
 
 
 @dataclass(frozen=True)
 class ToolCallLimits:
     max_calls_per_turn: int = 10
     max_calls_per_session: int = 100
+    max_tracked_sessions: int = 10_000
 
     def __post_init__(self) -> None:
-        if self.max_calls_per_turn < 1 or self.max_calls_per_session < 1:
+        if (
+            self.max_calls_per_turn < 1
+            or self.max_calls_per_session < 1
+            or self.max_tracked_sessions < 1
+        ):
             raise ValueError("tool call limits must be positive")
 
 
@@ -52,6 +59,11 @@ class _InMemoryCallCounter:
     ) -> None:
         key = (session_id, turn_id)
         async with self._lock:
+            if (
+                session_id not in self._session_counts
+                and len(self._session_counts) >= limits.max_tracked_sessions
+            ):
+                raise ToolCallLimitExceeded("tracked-session capacity exceeded")
             session_count = self._session_counts.get(session_id, 0)
             turn_count = self._turn_counts.get(key, 0)
             if session_count >= limits.max_calls_per_session:
@@ -60,6 +72,13 @@ class _InMemoryCallCounter:
                 raise ToolCallLimitExceeded("per-turn tool call limit exceeded")
             self._session_counts[session_id] = session_count + 1
             self._turn_counts[key] = turn_count + 1
+
+    async def release_session(self, session_id: str) -> None:
+        async with self._lock:
+            self._session_counts.pop(session_id, None)
+            for key in tuple(self._turn_counts):
+                if key[0] == session_id:
+                    del self._turn_counts[key]
 
 
 class ToolPolicyMiddleware(Generic[ArgsT, ResultT]):
@@ -76,6 +95,14 @@ class ToolPolicyMiddleware(Generic[ArgsT, ResultT]):
         self._limits = limits or ToolCallLimits()
         self._privileged_approver_roles = privileged_approver_roles
         self._counter = _InMemoryCallCounter()
+
+    async def release_session(self, session_id: str) -> None:
+        """Release counters only when the trusted session lifecycle ends permanently.
+
+        A released ID must not be reused: reuse would restart its call quota.
+        Capacity fails closed rather than evicting active session quotas.
+        """
+        await self._counter.release_session(session_id)
 
     async def invoke(
         self,
@@ -95,8 +122,11 @@ class ToolPolicyMiddleware(Generic[ArgsT, ResultT]):
         await self._counter.consume(session_id, turn_id, self._limits)
 
         action = self._policy.evaluate(tool.risk.value)
+        timeout_seconds = self._effective_timeout(tool.timeout_seconds, context.deadline_utc)
         if action == "approval" and approval is None:
-            return await self._create_approval(tool, arguments, context)
+            return await self._run_with_timeout(
+                self._create_approval(tool, arguments, context), timeout_seconds, tool.name
+            )
         if action == "approval":
             self._validate_approval_context(
                 tool=tool,
@@ -105,26 +135,37 @@ class ToolPolicyMiddleware(Generic[ArgsT, ResultT]):
                 approver_context=approver_context,
             )
 
-        timeout_seconds = self._effective_timeout(tool.timeout_seconds, context.deadline_utc)
-        try:
-            if action == "approval":
-                if self._approval_service is None or approval is None:
-                    raise ToolPolicyViolation("approval_service_unavailable")
-                return await asyncio.wait_for(
-                    self._approval_service.execute(
-                        approval_id=approval.id,
-                        tool=tool,
-                        args=arguments,
-                        ctx=context,
-                    ),
-                    timeout=timeout_seconds,
-                )
-            return await asyncio.wait_for(
-                tool.execute(arguments, context),
-                timeout=timeout_seconds,
+        if action == "approval":
+            if self._approval_service is None or approval is None:
+                raise ToolPolicyViolation("approval_service_unavailable")
+            return await self._run_with_timeout(
+                self._approval_service.execute(
+                    approval_id=approval.id,
+                    tool=tool,
+                    args=arguments,
+                    ctx=context,
+                ),
+                timeout_seconds,
+                tool.name,
             )
+        return await self._run_with_timeout(
+            tool.execute(arguments, context), timeout_seconds, tool.name
+        )
+
+    @staticmethod
+    async def _run_with_timeout(
+        operation: Awaitable[OperationT], timeout_seconds: float, tool_name: str
+    ) -> OperationT:
+        timeout = asyncio.timeout(timeout_seconds)
+        try:
+            async with timeout:
+                return await operation
         except TimeoutError as error:
-            raise ToolExecutionTimeout(f"tool {tool.name!r} exceeded its policy timeout") from error
+            if timeout.expired():
+                raise ToolExecutionTimeout(
+                    f"tool {tool_name!r} exceeded its policy timeout"
+                ) from error
+            raise
 
     async def _create_approval(
         self,

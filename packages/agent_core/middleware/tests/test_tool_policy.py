@@ -1,34 +1,32 @@
 from __future__ import annotations
 
 import asyncio
-import hashlib
-import json
 from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
-from dataclasses import dataclass, field, replace
+from dataclasses import dataclass, field
 from datetime import datetime, timedelta, timezone
-from enum import StrEnum
 from typing import ClassVar
-from uuid import UUID, uuid4
+from uuid import UUID
 
 import pytest
 from pydantic import BaseModel
 
-from accelerator.agent_core.approvals import (
+from ...approvals import (
     Approval,
     ApprovalAuditEvent,
     ApprovalExpiredError,
     ApprovalMismatchError,
     ApprovalReplayError,
     ApprovalService,
+    canonical_args_hash,
 )
-from accelerator.agent_core.middleware.tool_policy import (
+from ..tool_policy import (
     ToolCallLimitExceeded,
     ToolCallLimits,
     ToolExecutionTimeout,
     ToolPolicyMiddleware,
 )
-from accelerator.agent_core.tools import EnterpriseTool, ExecutionContextProtocol, ToolRisk
+from ...tools import EnterpriseTool, ExecutionContextProtocol, ToolRisk
 from accelerator.security_core.data_boundaries.context import ExecutionContext
 from accelerator.security_core.tool_policy.models import (
     ApprovalRequired,
@@ -36,12 +34,7 @@ from accelerator.security_core.tool_policy.models import (
 )
 
 
-class Risk(StrEnum):
-    READ_ONLY = "read_only"
-    LOW_IMPACT_WRITE = "low_impact_write"
-    HIGH_IMPACT_WRITE = "high_impact_write"
-    PRIVILEGED = "privileged"
-    PROHIBITED = "prohibited"
+Risk = ToolRisk
 
 
 class ToolArgs(BaseModel):
@@ -64,99 +57,66 @@ class Context:
     )
 
 
-@dataclass(frozen=True)
-class FakeApproval:
-    id: UUID
-    tool_name: str
-    args_hash: str
-    scope_id: str
-    requested_by: str
-    status: str
-    decided_by: str | None
-    expires_at: datetime
-    correlation_id: str
+class TestTool(EnterpriseTool[ToolArgs, ToolResult]):
+    __test__ = False
+    name = "sample_tool"
+    description = "Test tool."
+    risk = Risk.READ_ONLY
+    args_model: ClassVar[type[BaseModel]] = ToolArgs
 
-
-class FakeTool:
     def __init__(
         self,
-        risk: Risk = Risk.READ_ONLY,
         *,
-        timeout_seconds: float = 1.0,
         delay_seconds: float = 0.0,
     ) -> None:
-        self.name = "sample_tool"
-        self.risk = risk
-        self.timeout_seconds = timeout_seconds
         self.delay_seconds = delay_seconds
         self.calls = 0
 
-    async def execute(self, args: ToolArgs, ctx: Context) -> ToolResult:
+    async def execute(self, args: ToolArgs, ctx: ExecutionContextProtocol) -> ToolResult:
         self.calls += 1
         if self.delay_seconds:
             await asyncio.sleep(self.delay_seconds)
         return ToolResult(value=f"{ctx.user_id}:{args.value}")
 
 
-class FakeApprovalService:
+def FakeTool(
+    risk: ToolRisk = Risk.READ_ONLY,
+    *,
+    timeout_seconds: float = 1.0,
+    delay_seconds: float = 0.0,
+) -> TestTool:
+    selected_risk = risk
+    selected_timeout = timeout_seconds
+
+    class ConfiguredTool(TestTool):
+        risk = selected_risk
+        timeout_seconds = selected_timeout
+
+    return ConfiguredTool(delay_seconds=delay_seconds)
+
+
+class FakeApprovalService(ApprovalService[ToolArgs, ToolResult]):
     def __init__(self) -> None:
-        self.created: list[FakeApproval] = []
-        self.executed: list[UUID] = []
+        self.repository = InMemoryApprovalRepository()
+        super().__init__(self.repository)
 
-    async def create(self, *, tool_name: str, args: ToolArgs, ctx: Context) -> FakeApproval:
-        approval = FakeApproval(
-            id=uuid4(),
-            tool_name=tool_name,
-            args_hash=_canonical_args_hash(args),
-            scope_id=next(iter(ctx.scope_ids)),
-            requested_by=ctx.user_id,
-            status="pending",
-            decided_by=None,
-            expires_at=datetime.now(timezone.utc) + timedelta(minutes=1),
-            correlation_id=ctx.correlation_id,
-        )
-        self.created.append(approval)
-        return approval
+    @property
+    def created(self) -> list[Approval]:
+        return list(self.repository.approvals.values())
 
-    async def approve(self, *, approval_id: UUID, ctx: Context) -> FakeApproval:
-        approval = next(item for item in self.created if item.id == approval_id)
-        decided = replace(approval, status="approved", decided_by=ctx.user_id)
-        self.created[self.created.index(approval)] = decided
-        return decided
-
-    async def execute(
-        self,
-        *,
-        approval_id: UUID,
-        tool: FakeTool,
-        args: ToolArgs,
-        ctx: Context,
-    ) -> ToolResult:
-        matching = next(item for item in self.created if item.id == approval_id)
-        if matching.status != "approved" or matching.args_hash != _canonical_args_hash(args):
-            raise ToolPolicyViolation("approval_not_valid_for_tool_call")
-        result = await tool.execute(args, ctx)
-        executed = replace(matching, status="executed")
-        self.created[self.created.index(matching)] = executed
-        self.executed.append(approval_id)
-        return result
-
-
-def _canonical_args_hash(args: BaseModel) -> str:
-    canonical_json = json.dumps(
-        args.model_dump(mode="json", by_alias=True),
-        sort_keys=True,
-        separators=(",", ":"),
-        ensure_ascii=False,
-        allow_nan=False,
-    )
-    return hashlib.sha256(canonical_json.encode("utf-8")).hexdigest()
+    @property
+    def executed(self) -> list[UUID]:
+        return [
+            event.approval_id
+            for event in self.repository.audit_events
+            if event.transition == "executed"
+        ]
 
 
 @pytest.mark.asyncio
 async def test_read_only_tool_executes_without_approval() -> None:
     tool = FakeTool()
-    middleware = ToolPolicyMiddleware()
+    middleware = ToolPolicyMiddleware[ToolArgs, ToolResult]()
 
     result = await middleware.invoke(tool, ToolArgs(value="read"), Context(), turn_id="turn-1")
 
@@ -177,7 +137,7 @@ async def test_write_tool_returns_approval_card_and_does_not_execute() -> None:
     assert result.approval_id == service.created[0].id
     assert result.tool_name == tool.name
     assert result.arguments == args
-    assert result.args_hash == _canonical_args_hash(args)
+    assert result.args_hash == canonical_args_hash(args)
     assert result.scope_id == "scope-a"
     assert result.requested_by == "requester"
     assert tool.calls == 0
@@ -224,7 +184,7 @@ async def test_approval_service_rejects_changed_arguments_without_execution() ->
         ctx=Context(user_id="approver"),
     )
 
-    with pytest.raises(ToolPolicyViolation, match="approval_not_valid_for_tool_call"):
+    with pytest.raises(ApprovalMismatchError):
         await middleware.invoke(
             tool,
             ToolArgs(value="changed"),
@@ -240,7 +200,7 @@ async def test_approval_service_rejects_changed_arguments_without_execution() ->
 @pytest.mark.asyncio
 async def test_write_without_approval_service_fails_closed() -> None:
     tool = FakeTool(Risk.LOW_IMPACT_WRITE)
-    middleware = ToolPolicyMiddleware()
+    middleware = ToolPolicyMiddleware[ToolArgs, ToolResult]()
 
     with pytest.raises(ToolPolicyViolation, match="approval_service_unavailable"):
         await middleware.invoke(tool, ToolArgs(value="write"), Context(), turn_id="turn-1")
@@ -327,7 +287,7 @@ async def test_privileged_write_fails_without_approver_role() -> None:
 @pytest.mark.asyncio
 async def test_prohibited_tool_never_executes() -> None:
     tool = FakeTool(Risk.PROHIBITED)
-    middleware = ToolPolicyMiddleware()
+    middleware = ToolPolicyMiddleware[ToolArgs, ToolResult]()
 
     with pytest.raises(ToolPolicyViolation, match="prohibited_tool"):
         await middleware.invoke(tool, ToolArgs(value="blocked"), Context(), turn_id="turn-1")
@@ -338,7 +298,7 @@ async def test_prohibited_tool_never_executes() -> None:
 @pytest.mark.asyncio
 async def test_tool_calls_are_limited_per_turn_and_session() -> None:
     tool = FakeTool()
-    middleware = ToolPolicyMiddleware(
+    middleware = ToolPolicyMiddleware[ToolArgs, ToolResult](
         limits=ToolCallLimits(max_calls_per_turn=2, max_calls_per_session=3)
     )
     context = Context()
@@ -358,7 +318,7 @@ async def test_tool_calls_are_limited_per_turn_and_session() -> None:
 @pytest.mark.asyncio
 async def test_tool_call_requires_session_and_turn_identifiers() -> None:
     tool = FakeTool()
-    middleware = ToolPolicyMiddleware()
+    middleware = ToolPolicyMiddleware[ToolArgs, ToolResult]()
 
     with pytest.raises(ToolPolicyViolation, match="tool_call_requires_session"):
         await middleware.invoke(
@@ -376,7 +336,7 @@ async def test_tool_call_requires_session_and_turn_identifiers() -> None:
 @pytest.mark.asyncio
 async def test_tool_execution_is_stopped_at_declared_timeout() -> None:
     tool = FakeTool(timeout_seconds=0.01, delay_seconds=0.1)
-    middleware = ToolPolicyMiddleware()
+    middleware = ToolPolicyMiddleware[ToolArgs, ToolResult]()
 
     with pytest.raises(ToolExecutionTimeout, match="policy timeout"):
         await middleware.invoke(tool, ToolArgs(value="slow"), Context(), turn_id="turn-1")
@@ -507,3 +467,145 @@ async def test_real_approval_failures_never_invoke_tool(failure: str) -> None:
 
     assert tool.calls == 0
     assert not any(event.transition == "executed" for event in repository.audit_events)
+
+
+@pytest.mark.asyncio
+async def test_privileged_self_approval_never_executes() -> None:
+    service = FakeApprovalService()
+    middleware = ToolPolicyMiddleware(
+        approval_service=service, privileged_approver_roles=frozenset({"tool_approver"})
+    )
+    tool = FakeTool(Risk.PRIVILEGED)
+    context = Context(roles=frozenset({"tool_approver"}))
+    args = ToolArgs(value="write")
+    approval = await service.create(tool_name=tool.name, args=args, ctx=context)
+    approval = await service.approve(approval_id=approval.id, ctx=context)
+
+    with pytest.raises(ToolPolicyViolation, match="privileged_approver_must_be_distinct"):
+        await middleware.invoke(
+            tool, args, context, turn_id="turn", approval=approval, approver_context=context
+        )
+
+    assert tool.calls == 0
+    assert service.executed == []
+
+
+@pytest.mark.asyncio
+async def test_capacity_fails_closed_and_completed_session_releases_counters() -> None:
+    middleware = ToolPolicyMiddleware[ToolArgs, ToolResult](
+        limits=ToolCallLimits(max_calls_per_turn=1, max_calls_per_session=2, max_tracked_sessions=2)
+    )
+    tool = FakeTool()
+    args = ToolArgs(value="read")
+    for session in ("one", "two"):
+        await middleware.invoke(tool, args, Context(session_id=session), turn_id="turn")
+
+    for index in range(100):
+        with pytest.raises(ToolCallLimitExceeded, match="capacity"):
+            await middleware.invoke(tool, args, Context(session_id=f"new-{index}"), turn_id="turn")
+    with pytest.raises(ToolCallLimitExceeded, match="per-turn"):
+        await middleware.invoke(tool, args, Context(session_id="one"), turn_id="turn")
+
+    await middleware.release_session("one")
+    await middleware.invoke(tool, args, Context(session_id="three"), turn_id="turn")
+    await middleware.invoke(tool, args, Context(session_id="two"), turn_id="next")
+    with pytest.raises(ToolCallLimitExceeded, match="per-session"):
+        await middleware.invoke(tool, args, Context(session_id="two"), turn_id="another")
+
+    assert tool.calls == 4
+
+
+class SlowApprovalService(FakeApprovalService):
+    cancelled = False
+
+    async def create(
+        self,
+        *,
+        tool_name: str,
+        args: ToolArgs,
+        ctx: ExecutionContextProtocol,
+        expires_at: datetime | None = None,
+    ) -> Approval:
+        try:
+            await asyncio.sleep(1)
+        except asyncio.CancelledError:
+            self.cancelled = True
+            raise
+        return await super().create(tool_name=tool_name, args=args, ctx=ctx, expires_at=expires_at)
+
+
+@pytest.mark.asyncio
+async def test_elapsed_deadline_prevents_approval_creation() -> None:
+    service = FakeApprovalService()
+    middleware = ToolPolicyMiddleware(approval_service=service)
+    tool = FakeTool(Risk.LOW_IMPACT_WRITE)
+
+    with pytest.raises(ToolExecutionTimeout, match="elapsed"):
+        await middleware.invoke(
+            tool,
+            ToolArgs(value="write"),
+            Context(deadline_utc=datetime.now(timezone.utc) - timedelta(seconds=1)),
+            turn_id="turn",
+        )
+
+    assert service.created == []
+    assert tool.calls == 0
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("use_deadline", [False, True])
+async def test_stalled_approval_creation_is_cancelled_at_policy_timeout(
+    use_deadline: bool,
+) -> None:
+    service = SlowApprovalService()
+    middleware = ToolPolicyMiddleware(approval_service=service)
+    tool = FakeTool(Risk.LOW_IMPACT_WRITE, timeout_seconds=1 if use_deadline else 0.01)
+    context = Context(
+        deadline_utc=datetime.now(timezone.utc) + timedelta(seconds=0.01 if use_deadline else 60)
+    )
+
+    with pytest.raises(ToolExecutionTimeout, match="policy timeout"):
+        await middleware.invoke(tool, ToolArgs(value="write"), context, turn_id="turn")
+
+    assert service.cancelled
+    assert service.created == []
+    assert tool.calls == 0
+
+
+@pytest.mark.asyncio
+async def test_tool_domain_timeout_is_not_reclassified() -> None:
+    error = TimeoutError("domain timeout")
+
+    class TimeoutTool(TestTool):
+        async def execute(self, args: ToolArgs, ctx: ExecutionContextProtocol) -> ToolResult:
+            raise error
+
+    middleware = ToolPolicyMiddleware[ToolArgs, ToolResult]()
+    with pytest.raises(TimeoutError) as raised:
+        await middleware.invoke(TimeoutTool(), ToolArgs(value="read"), Context(), turn_id="turn")
+
+    assert raised.value is error
+
+
+@pytest.mark.asyncio
+async def test_approval_creation_domain_timeout_is_not_reclassified() -> None:
+    error = TimeoutError("persistence timeout")
+
+    class TimeoutService(FakeApprovalService):
+        async def create(
+            self,
+            *,
+            tool_name: str,
+            args: ToolArgs,
+            ctx: ExecutionContextProtocol,
+            expires_at: datetime | None = None,
+        ) -> Approval:
+            raise error
+
+    middleware = ToolPolicyMiddleware(approval_service=TimeoutService())
+    with pytest.raises(TimeoutError) as raised:
+        await middleware.invoke(
+            FakeTool(Risk.LOW_IMPACT_WRITE), ToolArgs(value="write"), Context(), turn_id="turn"
+        )
+
+    assert raised.value is error
