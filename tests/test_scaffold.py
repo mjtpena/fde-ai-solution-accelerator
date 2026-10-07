@@ -50,12 +50,12 @@ class ScaffoldTests(unittest.TestCase):
         self.assertEqual(lock["packages"][""]["workspaces"], manifest["workspaces"])
         self.assertIn("apps/web", lock["packages"])
 
-    def test_license_and_evaluation_placeholder_are_preserved(self) -> None:
+    def test_license_and_evaluation_smoke_entrypoint_are_preserved(self) -> None:
         license_text = (ROOT / "LICENSE").read_text(encoding="utf-8")
         self.assertIn("MIT License", license_text)
         self.assertIn("Michael John Pe\u00f1a", license_text)
         makefile = (ROOT / "Makefile").read_text(encoding="utf-8")
-        self.assertIn("eval-smoke: not implemented until M5 (issue 30)", makefile)
+        self.assertIn("python -m accelerator.evaluation_core.reporting.smoke", makefile)
 
 
 if __name__ == "__main__":
