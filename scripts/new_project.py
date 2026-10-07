@@ -11,6 +11,7 @@ Fixture tests live here to keep issue #37 within its three-file scope.
 from __future__ import annotations
 
 import argparse
+import ast
 from dataclasses import dataclass
 import json
 import keyword
@@ -209,6 +210,45 @@ def generated_makefile(text: str) -> str:
     return before.rstrip() + "\n" + after
 
 
+def generated_spec(text: str) -> str:
+    """Remove accelerator-generator instructions that do not apply to generated projects."""
+    replacements = (
+        (
+            r"(?ms)^## 10\. Project generator\n.*?(?=^## 11\. Delivery milestones)",
+            "## 10. Project setup\n\n"
+            "This project was generated from a reusable accelerator baseline. "
+            "The application scaffold and package layout here are the project-owned "
+            "starting point.\n\n",
+            "project generator section",
+        ),
+        (
+            r"(?m)^.*\| 36 \|.*(?:accelerator\.manifest\.yml|new_project\.py).*\n",
+            "",
+            "generator roadmap entry",
+        ),
+        (
+            r"(?m)^.*accelerator\.manifest\.yml.*\n",
+            "",
+            "manifest tree entry",
+        ),
+        (
+            r"(?m)^.*new_project\.py.*\n",
+            "",
+            "generator tree entry",
+        ),
+        (
+            r"(?m)^\s*make new-project.*(?:\n|$)",
+            "",
+            "generator command",
+        ),
+    )
+    for pattern, replacement, description in replacements:
+        text, count = re.subn(pattern, replacement, text)
+        if count != 1:
+            raise ValueError(f"Expected one {description} in docs/spec.md, found {count}")
+    return text
+
+
 def generate(source: Path, destination: Path, name: str, display: str) -> None:
     module = validate_name(name)
     if not display.strip() or any(ord(char) < 32 for char in display):
@@ -300,6 +340,12 @@ def generate(source: Path, destination: Path, name: str, display: str) -> None:
                 text_replacements["FDE AI Solution Accelerator"] = json.dumps(
                     display, ensure_ascii=False
                 )[1:-1]
+            elif original.suffix == ".py":
+                text_replacements["FDE AI Solution Accelerator"] = (
+                    display.replace("\\", "\\\\").replace("'", "\\'").replace('"', '\\"')
+                )
+            if original == Path("docs/spec.md"):
+                text = generated_spec(text)
             output.write_text(replace_text(text, text_replacements), encoding="utf-8")
             shutil.copymode(source / original, output)
         else:
@@ -355,6 +401,7 @@ class GeneratorTests(unittest.TestCase):
             "packages",
             "engagement",
             "evaluations",
+            "docs",
             "scripts",
             "tests",
             "package.json",
@@ -370,6 +417,23 @@ class GeneratorTests(unittest.TestCase):
         self.write("apps/api/pyproject.toml", '[project]\nname = "fde-accelerator-api"\n')
         self.write("apps/web/package.json", '{"name": "fde-accelerator-web"}\n')
         self.write("apps/web/app/page.tsx", 'const title = "FDE AI Solution Accelerator";\n')
+        self.write(
+            "apps/api/src/accelerator/display.py",
+            'DISPLAY = "FDE AI Solution Accelerator"\n',
+        )
+        self.write(
+            "docs/spec.md",
+            "# Generated project\n\n"
+            "├── accelerator.manifest.yml # what the generator copies\n"
+            "├── scripts/new_project.py # project generator\n\n"
+            "## 10. Project generator\n\n"
+            'Run `make new-project NAME=solution DISPLAY="Solution"`.\n\n'
+            "scripts/new_project.py reads accelerator.manifest.yml.\n\n"
+            "## 11. Delivery milestones\n\n"
+            "| 36 | accelerator.manifest.yml + new_project.py | generated project |\n\n"
+            "## 13. Developer commands\n\n"
+            'make new-project NAME=... DISPLAY="..."\n',
+        )
         self.write(
             "packages/agent_core/pyproject.toml",
             'name = "fde-agent-core"\npackages = ["accelerator.agent_core"]\n',
@@ -442,6 +506,10 @@ class GeneratorTests(unittest.TestCase):
             "node_modules/my-solution-web", (self.destination / "package-lock.json").read_text()
         )
         self.assertIn("My Solution", (self.destination / "apps/web/app/page.tsx").read_text())
+        generated_spec_text = (self.destination / "docs/spec.md").read_text()
+        for omitted in ("accelerator.manifest.yml", "new_project.py", "make new-project"):
+            self.assertNotIn(omitted, generated_spec_text)
+        self.assertIn("## 10. Project setup", generated_spec_text)
         self.assertEqual(
             (self.destination / "tests/test_scaffold.py").read_text(),
             'directories = ("evaluations/datasets", "engagement/project")\n',
@@ -504,7 +572,7 @@ class GeneratorTests(unittest.TestCase):
 
     def test_display_quotes_and_backslashes_preserve_string_literals(self) -> None:
         self.write("apps/web/title.json", '{"title": "FDE AI Solution Accelerator"}')
-        display = 'My "Quoted" Solution \\ Team'
+        display = "My \"Quoted\" and 'Single' Solution \\ Team"
         with patch("subprocess.run"):
             generate(self.source, self.destination, "my-solution", display)
         self.assertEqual(
@@ -514,6 +582,10 @@ class GeneratorTests(unittest.TestCase):
         self.assertIn(
             json.dumps(display)[1:-1], (self.destination / "apps/web/app/page.tsx").read_text()
         )
+        python_source = (self.destination / "apps/api/src/my_solution/display.py").read_text(
+            encoding="utf-8"
+        )
+        self.assertEqual(ast.literal_eval(python_source.split("=", 1)[1].strip()), display)
 
     def test_rejects_invalid_starter_schema(self) -> None:
         self.manifest["starter_row"]["expected_abstain"] = False
