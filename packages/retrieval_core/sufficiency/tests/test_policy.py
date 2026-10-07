@@ -86,3 +86,56 @@ def test_policy_rejects_invalid_thresholds() -> None:
 
     with pytest.raises(ValueError, match="minimum_evidence_count"):
         SufficiencyPolicy(minimum_score=0.5, minimum_evidence_count=0)
+
+
+@pytest.mark.parametrize("score", [float("nan"), float("inf"), float("-inf")])
+def test_policy_rejects_non_finite_score_thresholds(score: float) -> None:
+    with pytest.raises(ValueError, match="minimum_score must be finite"):
+        SufficiencyPolicy(minimum_score=score, minimum_evidence_count=1)
+
+
+@pytest.mark.parametrize("count", [True, False, -1])
+def test_policy_rejects_invalid_evidence_counts(count: int) -> None:
+    with pytest.raises(ValueError, match="minimum_evidence_count"):
+        SufficiencyPolicy(minimum_score=0.5, minimum_evidence_count=count)
+
+
+def test_evidence_ids_do_not_leak_between_turns() -> None:
+    policy = SufficiencyPolicy(minimum_score=0.5, minimum_evidence_count=1)
+
+    first = policy.evaluate([ScoredChunk("previous-turn", 0.8)])
+    second = policy.evaluate([ScoredChunk("current-turn", 0.4)])
+
+    assert first.evidence_ids == ["previous-turn"]
+    assert second.sufficient is False
+    assert second.evidence_ids == []
+
+
+def test_abstention_serializes_only_structured_decision_fields() -> None:
+    policy = SufficiencyPolicy(minimum_score=0.5, minimum_evidence_count=2)
+    decision = policy.evaluate([ScoredChunk("qualified", 0.8)])
+
+    response = build_abstention_response(decision)
+
+    assert response.model_dump(mode="json") == {
+        "abstained": True,
+        "reason": decision.reason,
+        "evidence_ids": ["qualified"],
+    }
+
+
+def test_retrieved_text_is_never_read_by_policy() -> None:
+    class UntrustedChunk:
+        chunk_id = "untrusted-chunk"
+        score = 0.4
+
+        @property
+        def text(self) -> str:
+            raise AssertionError("Retrieved text must not influence sufficiency")
+
+    decision = SufficiencyPolicy(minimum_score=0.5, minimum_evidence_count=1).evaluate(
+        [UntrustedChunk()]
+    )
+
+    assert decision.sufficient is False
+    assert decision.evidence_ids == []

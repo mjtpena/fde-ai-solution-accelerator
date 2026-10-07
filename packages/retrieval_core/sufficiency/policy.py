@@ -7,8 +7,11 @@ from pydantic import BaseModel
 
 
 class _EvidenceScore(Protocol):
-    chunk_id: str
-    score: float
+    @property
+    def chunk_id(self) -> str: ...
+
+    @property
+    def score(self) -> float: ...
 
 
 class SufficiencyDecision(BaseModel):
@@ -31,8 +34,12 @@ class SufficiencyPolicy:
     def __post_init__(self) -> None:
         if not math.isfinite(self.minimum_score):
             raise ValueError("minimum_score must be finite")
-        if self.minimum_evidence_count < 1:
-            raise ValueError("minimum_evidence_count must be at least 1")
+        if (
+            isinstance(self.minimum_evidence_count, bool)
+            or not isinstance(self.minimum_evidence_count, int)
+            or self.minimum_evidence_count < 1
+        ):
+            raise ValueError("minimum_evidence_count must be an integer of at least 1")
 
     def evaluate(self, evidence: Sequence[_EvidenceScore]) -> SufficiencyDecision:
         qualified_scores: dict[str, float] = {}
