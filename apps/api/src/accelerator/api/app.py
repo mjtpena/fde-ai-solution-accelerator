@@ -1,5 +1,11 @@
-from fastapi import FastAPI
+from contextlib import asynccontextmanager
+from typing import AsyncIterator
 
+import httpx
+from fastapi import Depends, FastAPI
+from fastapi.middleware.cors import CORSMiddleware
+
+from accelerator.api.audit import AuthFailureAuditMiddleware, router as audit_router
 from accelerator.api.cost_guard import (
     ContextDependency,
     create_cost_guard_dependency,
@@ -7,18 +13,40 @@ from accelerator.api.cost_guard import (
 )
 from accelerator.api.health import router as health_router
 from accelerator.configuration.settings import Settings
+from accelerator.domain.audit import AuditRepository
+from accelerator.identity.authentication import AppRole, require_any_role
+from accelerator.identity.jwt_validator import EntraTokenValidator
+from accelerator.identity.scope_resolver import install_scope_boundary
 from accelerator.security_core.cost_guard import RateLimiter, TokenBudgetExceeded
+
+
+@asynccontextmanager
+async def lifespan(app: FastAPI) -> AsyncIterator[None]:
+    async with httpx.AsyncClient(timeout=5) as client:
+        app.state.http_client = client
+        yield
 
 
 def create_app(
     settings: Settings,
     *,
+    audit_repository: AuditRepository | None = None,
     get_execution_context: ContextDependency | None = None,
     rate_limiter: RateLimiter | None = None,
 ) -> FastAPI:
     app = FastAPI(
         title="FDE AI Solution Accelerator API",
         version="0.1.0",
+        docs_url=None,
+        redoc_url=None,
+        openapi_url=None,
+        lifespan=lifespan,
+        dependencies=[Depends(require_any_role(*AppRole))],
+        responses={
+            401: {"description": "Missing or invalid bearer token."},
+            403: {"description": "Insufficient app role."},
+            503: {"description": "Identity, scope, or audit persistence is unavailable."},
+        },
     )
     app.state.settings = settings
     app.add_exception_handler(TokenBudgetExceeded, handle_token_budget_exceeded)
@@ -28,5 +56,16 @@ def create_app(
             get_execution_context,
             rate_limiter=rate_limiter,
         )
+    app.state.token_validator = EntraTokenValidator(settings)
+    app.state.audit_repository = audit_repository
+    app.add_middleware(AuthFailureAuditMiddleware)
+    app.add_middleware(
+        CORSMiddleware,
+        allow_origins=[settings.web_origin],
+        allow_methods=["*"],
+        allow_headers=["*"],
+    )
     app.include_router(health_router)
+    app.include_router(audit_router)
+    install_scope_boundary(app)
     return app

@@ -13,6 +13,7 @@ from starlette.types import ASGIApp
 from accelerator.api.app import create_app
 from accelerator.api.cost_guard import RequestCostGuard
 from accelerator.configuration.settings import Settings
+from accelerator.identity.authentication import AppRole, Principal, get_current_principal
 from accelerator.security_core.cost_guard import (
     CostGuardContext,
     RateLimitExceeded,
@@ -240,12 +241,18 @@ class CostGuardApiTests(unittest.TestCase):
         self.app = create_app(
             Settings(
                 environment="test",
+                entra_tenant_id="00000000-0000-0000-0000-000000000001",
+                entra_audience="api://test",
                 request_token_budget=4,
                 request_rate_limit=1,
                 request_rate_window_seconds=60,
             ),
             get_execution_context=get_execution_context,
         )
+        async def authenticated_principal() -> Principal:
+            return Principal(subject="user-1", roles=frozenset({AppRole.READER}))
+
+        self.app.dependency_overrides[get_current_principal] = authenticated_principal
         request_cost_guard = self.app.state.request_cost_guard
 
         @self.app.get("/protected")
