@@ -128,14 +128,6 @@ class ToolPolicyMiddleware(Generic[ArgsT, ResultT]):
                 self._create_approval(tool, arguments, context), timeout_seconds, tool.name
             )
         if action == "approval":
-            self._validate_approval_context(
-                tool=tool,
-                context=context,
-                approval=approval,
-                approver_context=approver_context,
-            )
-
-        if action == "approval":
             if self._approval_service is None or approval is None:
                 raise ToolPolicyViolation("approval_service_unavailable")
             return await self._run_with_timeout(
@@ -144,6 +136,12 @@ class ToolPolicyMiddleware(Generic[ArgsT, ResultT]):
                     tool=tool,
                     args=arguments,
                     ctx=context,
+                    validate_approval=lambda persisted: self._validate_approval_context(
+                        tool=tool,
+                        context=context,
+                        approval=persisted,
+                        approver_context=approver_context,
+                    ),
                 ),
                 timeout_seconds,
                 tool.name,

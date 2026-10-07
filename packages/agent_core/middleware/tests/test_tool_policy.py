@@ -18,6 +18,8 @@ from ...approvals import (
     ApprovalMismatchError,
     ApprovalReplayError,
     ApprovalService,
+    ApprovalScopeError,
+    ApprovalStateError,
     canonical_args_hash,
 )
 from ..tool_policy import (
@@ -219,7 +221,7 @@ async def test_unapproved_write_cannot_execute() -> None:
         ctx=Context(),
     )
 
-    with pytest.raises(ToolPolicyViolation, match="approval_not_approved"):
+    with pytest.raises(ApprovalStateError):
         await middleware.invoke(
             tool,
             ToolArgs(value="pending"),
@@ -460,7 +462,7 @@ async def test_real_approval_failures_never_invoke_tool(failure: str) -> None:
         expected_error = ApprovalExpiredError
     else:
         context = context.model_copy(update={"scope_ids": frozenset({"scope-b"})})
-        expected_error = ToolPolicyViolation
+        expected_error = ApprovalScopeError
 
     with pytest.raises(expected_error):
         await middleware.invoke(tool, args, context, turn_id="turn-1", approval=approval)
@@ -609,3 +611,61 @@ async def test_approval_creation_domain_timeout_is_not_reclassified() -> None:
         )
 
     assert raised.value is error
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("forged_field", ["decided_by", "requested_by"])
+async def test_forged_caller_approval_cannot_authorize_persisted_record(
+    forged_field: str,
+) -> None:
+    service = FakeApprovalService()
+    middleware = ToolPolicyMiddleware(
+        approval_service=service, privileged_approver_roles=frozenset({"tool_approver"})
+    )
+    tool = FakeTool(Risk.PRIVILEGED)
+    context = Context()
+    approver = Context(user_id="approver", roles=frozenset({"tool_approver"}))
+    args = ToolArgs(value="write")
+    requester = context if forged_field == "decided_by" else Context(user_id="other")
+    persisted = await service.create(tool_name=tool.name, args=args, ctx=requester)
+    persisted = await service.approve(
+        approval_id=persisted.id,
+        ctx=context if forged_field == "decided_by" else approver,
+    )
+    forged = persisted.model_copy(
+        update={"decided_by": approver.user_id, "requested_by": context.user_id}
+    )
+    reason = (
+        "privileged_approver_must_be_distinct"
+        if forged_field == "decided_by"
+        else "approval_requester_mismatch"
+    )
+
+    with pytest.raises(ToolPolicyViolation, match=reason):
+        await middleware.invoke(
+            tool, args, context, turn_id="turn", approval=forged, approver_context=approver
+        )
+
+    assert tool.calls == 0
+    assert service.created[0].status == "approved"
+    assert service.executed == []
+
+
+@pytest.mark.asyncio
+async def test_caller_approval_fields_are_ignored_when_persisted_record_is_valid() -> None:
+    service = FakeApprovalService()
+    middleware = ToolPolicyMiddleware(approval_service=service)
+    tool = FakeTool(Risk.LOW_IMPACT_WRITE)
+    args = ToolArgs(value="write")
+    context = Context()
+    persisted = await service.create(tool_name=tool.name, args=args, ctx=context)
+    persisted = await service.approve(approval_id=persisted.id, ctx=context)
+    stale = persisted.model_copy(
+        update={"status": "pending", "requested_by": "forged", "scope_id": "forged"}
+    )
+
+    result = await middleware.invoke(tool, args, context, turn_id="turn", approval=stale)
+
+    assert result == ToolResult(value="requester:write")
+    assert tool.calls == 1
+    assert service.created[0].status == "executed"
