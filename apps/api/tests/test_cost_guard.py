@@ -1,4 +1,6 @@
 import asyncio
+from concurrent.futures import ThreadPoolExecutor
+from copy import copy
 from dataclasses import dataclass
 import json
 from typing import Annotated
@@ -17,6 +19,7 @@ from accelerator.security_core.cost_guard import (
     SlidingWindowRateLimiter,
     TokenBudget,
     TokenBudgetExceeded,
+    TokenReservation,
 )
 
 
@@ -89,6 +92,38 @@ def get_asgi_response(app: ASGIApp, path: str) -> AsgiResponse:
 
 
 class TokenBudgetTests(unittest.TestCase):
+    def test_unissued_reservations_cannot_change_counters(self) -> None:
+        for operation in ("cancel", "settle"):
+            with self.subTest(operation=operation):
+                budget = TokenBudget(10)
+                issued = budget.reserve(4)
+                unissued = TokenReservation(budget, 8)
+                with self.assertRaisesRegex(ValueError, "not issued"):
+                    if operation == "cancel":
+                        unissued.cancel()
+                    else:
+                        unissued.settle(0)
+                self.assertEqual(budget.remaining_tokens, 6)
+                self.assertEqual(budget.consumed_tokens, 0)
+                issued.settle(4)
+                self.assertEqual(budget.remaining_tokens, 6)
+
+    def test_copied_reservation_is_not_an_issued_handle(self) -> None:
+        budget = TokenBudget(10)
+        issued = budget.reserve(4)
+        with self.assertRaisesRegex(ValueError, "not issued"):
+            copy(issued).cancel()
+        self.assertEqual(budget.remaining_tokens, 6)
+        issued.cancel()
+        self.assertEqual(budget.remaining_tokens, 10)
+
+    def test_accounting_uses_issued_amount_not_mutated_handle_amount(self) -> None:
+        budget = TokenBudget(10)
+        issued = budget.reserve(4)
+        issued._token_count = 10
+        issued.cancel()
+        self.assertEqual(budget.remaining_tokens, 10)
+
     def test_exact_limit_is_allowed_and_overage_fails(self) -> None:
         budget = TokenBudget(10, correlation_id="correlation-1")
 
@@ -142,6 +177,27 @@ class TokenBudgetTests(unittest.TestCase):
 
 
 class RateLimitTests(unittest.TestCase):
+    def test_concurrent_requests_sample_clock_inside_the_counter_lock(self) -> None:
+        timestamps = iter(range(100, 120))
+
+        def clock() -> float:
+            self.assertTrue(limiter._lock.locked())
+            return float(next(timestamps))
+
+        limiter = SlidingWindowRateLimiter(20, 60, clock=clock)
+        context = FakeExecutionContext("correlation-1", "user-1", frozenset({"scope-1"}))
+        with ThreadPoolExecutor(max_workers=4) as executor:
+            list(executor.map(limiter.check, [context] * 20))
+
+        requests = limiter._requests[("user-1", ("scope-1",))]
+        self.assertEqual(list(requests), list(range(100, 120)))
+        limiter._clock = lambda: 159.0
+        with self.assertRaises(RateLimitExceeded) as error:
+            limiter.check(context)
+        self.assertEqual(error.exception.retry_after_seconds, 1)
+        limiter._clock = lambda: 160.0
+        limiter.check(context)
+
     def test_sliding_window_boundary_and_retry_after(self) -> None:
         now = [100.0]
         limiter = SlidingWindowRateLimiter(2, 10, clock=lambda: now[0])

@@ -63,11 +63,10 @@ class SlidingWindowRateLimiter:
             raise ValueError("Execution context scope_ids must not contain empty values.")
 
         key = (context.user_id, tuple(sorted(context.scope_ids)))
-        now = self._clock()
-        if not math.isfinite(now):
-            raise ValueError("Rate limiter clock must return a finite timestamp.")
-
         with self._lock:
+            now = self._clock()
+            if not math.isfinite(now):
+                raise ValueError("Rate limiter clock must return a finite timestamp.")
             cutoff = now - self.window_seconds
             if now >= self._next_cleanup_at:
                 for tracked_key, tracked_requests in tuple(self._requests.items()):

@@ -44,6 +44,7 @@ class TokenBudget:
         self.correlation_id = correlation_id
         self._consumed_tokens = 0
         self._reserved_tokens = 0
+        self._reservations: dict[TokenReservation, int] = {}
 
     @property
     def limit(self) -> int:
@@ -67,29 +68,36 @@ class TokenBudget:
         self._validate_token_count(token_count)
         if token_count > self.remaining_tokens:
             raise self._exceeded(token_count)
+        reservation = TokenReservation(self, token_count)
+        self._reservations[reservation] = token_count
         self._reserved_tokens += token_count
-        return TokenReservation(self, token_count)
+        return reservation
 
     def _settle(self, reservation: TokenReservation, actual_tokens: int) -> None:
-        self._validate_reservation(reservation)
+        reserved_tokens = self._validate_reservation(reservation)
         self._validate_token_count(actual_tokens, allow_zero=True)
-        additional_tokens = actual_tokens - reservation.token_count
+        additional_tokens = actual_tokens - reserved_tokens
         if additional_tokens > self.remaining_tokens:
             raise self._exceeded(actual_tokens)
-        self._reserved_tokens -= reservation.token_count
+        self._reserved_tokens -= reserved_tokens
         self._consumed_tokens += actual_tokens
+        del self._reservations[reservation]
         reservation._settled = True
 
     def _cancel(self, reservation: TokenReservation) -> None:
-        self._validate_reservation(reservation)
-        self._reserved_tokens -= reservation.token_count
+        reserved_tokens = self._validate_reservation(reservation)
+        self._reserved_tokens -= reserved_tokens
+        del self._reservations[reservation]
         reservation._settled = True
 
-    def _validate_reservation(self, reservation: TokenReservation) -> None:
+    def _validate_reservation(self, reservation: TokenReservation) -> int:
         if reservation._budget is not self:
             raise ValueError("Token reservation belongs to a different budget.")
         if reservation._settled:
             raise ValueError("Token reservation has already been settled or cancelled.")
+        if reservation not in self._reservations:
+            raise ValueError("Token reservation was not issued by this budget.")
+        return self._reservations[reservation]
 
     def _validate_token_count(self, token_count: int, *, allow_zero: bool = False) -> None:
         minimum = 0 if allow_zero else 1
