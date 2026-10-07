@@ -7,11 +7,13 @@ Container App. The official protocol adapter provides port 8088, `/readiness`,
 
 ## Required application composition
 
-The repository does not yet provide a production application composition.
-`HOSTED_APPLICATION_FACTORY=module:callable` is **required**, is trusted deployment
-configuration (never request input), and returns a `HostedApplication`. Missing
-configuration, import errors and invalid factories fail startup; there is no echo
-or raw-model fallback.
+The packaged `infrastructure.hosted_agent.production:runtime_factory` composes the
+configured production context resolver and grounded workflow into a
+`WorkflowHostedApplication`. `HOSTED_CONTEXT_RESOLVER_FACTORY=module:callable` and
+`HOSTED_GROUNDED_WORKFLOW_FACTORY=module:callable` are **required**, trusted
+deployment configuration (never request input). Each provider must be packaged in
+the image and return the documented interface. Missing configuration, import
+errors and invalid factories fail startup; there is no echo or raw-model fallback.
 
 Use `WorkflowHostedApplication(resolver, workflow)` from
 `accelerator.agent_core.hosting.application`. Supply a transport-independent trusted
@@ -48,11 +50,15 @@ credentials, `.env` files or development dependencies. When composition introduc
 additional packages, add them to this runtime manifest and regenerate its lock;
 don't assume dependencies from another virtual environment exist in the image.
 
-The example `accelerator.application.hosted:create_application` is a placeholder,
-not an implemented production provider. Replace it with a real provider packaged
-in the image before deployment. For a local run supply that factory and model/
-project environment values, and arrange explicitly authenticated local identity.
-Never mount developer credentials into the production image.
+The trusted resolver/workflow provider implementations remain deployment
+prerequisites. The identity resolver API does not provide a concrete membership
+repository here; the retrieval adapter, grounded workflow, and agent factory are
+still delivered separately by #62, #63, and #72. Replace both example factory
+references with real providers packaged in the image before deployment. The
+production composition entrypoint is present and fail-closed, but it does not
+authenticate an identity or query evidence by itself. For local runs, supply both
+trusted factories and model/project values, and arrange explicit authenticated
+identity. Never mount developer credentials into the production image.
 
 ## Deploy and invoke
 

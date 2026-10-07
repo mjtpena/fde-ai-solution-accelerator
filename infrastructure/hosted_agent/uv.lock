@@ -457,6 +457,12 @@ requires-dist = [
 name = "fde-agent-core"
 version = "0.1.0"
 source = { directory = "../../packages/agent_core" }
+dependencies = [
+    { name = "pydantic" },
+]
+
+[package.metadata]
+requires-dist = [{ name = "pydantic", specifier = ">=2.7,<3" }]
 
 [[package]]
 name = "fde-hosted-agent-runtime"

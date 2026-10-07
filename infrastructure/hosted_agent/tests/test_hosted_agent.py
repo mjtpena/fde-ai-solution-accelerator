@@ -1,4 +1,7 @@
 from dataclasses import dataclass
+from importlib.metadata import requires
+from packaging.requirements import Requirement
+from packaging.specifiers import SpecifierSet
 from pathlib import Path
 from unittest.mock import AsyncMock, MagicMock
 
@@ -19,6 +22,7 @@ from accelerator.agent_core.hosting.contracts import (
 
 from infrastructure.hosted_agent.azure_adapter import AzureHostedAgentGateway
 from infrastructure.hosted_agent.configuration import DeploymentSettings, RuntimeSettings
+from infrastructure.hosted_agent import production
 from infrastructure.hosted_agent.server import MAX_REQUEST_BYTES, create_host, load_application
 from infrastructure.hosted_agent.service import HostedVersion, deploy, smoke
 
@@ -29,6 +33,8 @@ def configuration() -> DeploymentSettings:
         agent_name="test-agent",
         image="example.azurecr.io/fde-agent:abc123",
         application_factory="infrastructure.hosted_agent.tests.test_hosted_agent:fake_application",
+        context_resolver_factory="infrastructure.hosted_agent.tests.test_hosted_agent:fake_resolver",
+        grounded_workflow_factory="infrastructure.hosted_agent.tests.test_hosted_agent:fake_workflow",
         model_deployment="test-model",
         poll_seconds=0.001,
     )
@@ -172,19 +178,85 @@ async def test_composition_never_runs_workflow_when_resolution_fails() -> None:
     assert not workflow.calls
 
 
+def fake_resolver() -> FakeResolver:
+    return FakeResolver(TrustedContext("server-only"))
+
+
+def fake_workflow() -> FakeWorkflow:
+    return FakeWorkflow()
+
+
+def test_packaged_production_factory_composes_configured_resolver_and_workflow(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    settings = configuration()
+    monkeypatch.setenv("HOSTED_CONTEXT_RESOLVER_FACTORY", settings.context_resolver_factory)
+    monkeypatch.setenv("HOSTED_GROUNDED_WORKFLOW_FACTORY", settings.grounded_workflow_factory)
+    application = production.create_application()
+    assert isinstance(application, WorkflowHostedApplication)
+
+
+def test_example_runtime_factory_is_included_in_installed_host_package(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    settings = configuration()
+    monkeypatch.setenv("HOSTED_CONTEXT_RESOLVER_FACTORY", settings.context_resolver_factory)
+    monkeypatch.setenv("HOSTED_GROUNDED_WORKFLOW_FACTORY", settings.grounded_workflow_factory)
+    runtime = RuntimeSettings()
+    assert runtime.application_factory == "infrastructure.hosted_agent.production:runtime_factory"
+    application = load_application(runtime)
+    assert isinstance(application, WorkflowHostedApplication)
+
+
+@pytest.mark.parametrize(
+    ("resolver", "workflow", "error"),
+    [
+        ("missing_module:create", "builtins:object", ModuleNotFoundError),
+        ("builtins:object", "builtins:object", TypeError),
+        (
+            "builtins:object",
+            "infrastructure.hosted_agent.tests.test_hosted_agent:fake_workflow",
+            TypeError,
+        ),
+    ],
+)
+def test_packaged_production_factory_fails_closed_for_invalid_components(
+    monkeypatch: pytest.MonkeyPatch, resolver: str, workflow: str, error: type[Exception]
+) -> None:
+    monkeypatch.setenv("HOSTED_CONTEXT_RESOLVER_FACTORY", resolver)
+    monkeypatch.setenv("HOSTED_GROUNDED_WORKFLOW_FACTORY", workflow)
+    with pytest.raises(error):
+        production.create_application()
+
+
 def test_missing_provider_fails_startup(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.delenv("HOSTED_APPLICATION_FACTORY", raising=False)
+    monkeypatch.delenv("HOSTED_CONTEXT_RESOLVER_FACTORY", raising=False)
+    monkeypatch.delenv("HOSTED_GROUNDED_WORKFLOW_FACTORY", raising=False)
     with pytest.raises(ValidationError):
         RuntimeSettings()
 
 
+def test_agent_core_declares_its_direct_pydantic_dependency() -> None:
+    requirements = [Requirement(requirement) for requirement in requires("fde-agent-core") or []]
+    pydantic = next(requirement for requirement in requirements if requirement.name == "pydantic")
+    assert pydantic.specifier == SpecifierSet(">=2.7,<3")
+
+
 def test_configured_provider_loads_and_missing_provider_is_not_hidden() -> None:
-    settings = RuntimeSettings(application_factory=configuration().application_factory)
+    deployment = configuration()
+    settings = RuntimeSettings(
+        application_factory=deployment.application_factory,
+        context_resolver_factory=deployment.context_resolver_factory,
+        grounded_workflow_factory=deployment.grounded_workflow_factory,
+    )
     assert isinstance(load_application(settings), FakeApplication)
     with pytest.raises(ModuleNotFoundError):
-        load_application(RuntimeSettings(application_factory="missing_provider:create"))
+        load_application(
+            settings.model_copy(update={"application_factory": "missing_provider:create"})
+        )
     with pytest.raises(TypeError):
-        load_application(RuntimeSettings(application_factory="builtins:object"))
+        load_application(settings.model_copy(update={"application_factory": "builtins:object"}))
 
 
 @pytest.mark.parametrize(
@@ -221,6 +293,17 @@ def test_answer_without_citations_is_not_success_shaped() -> None:
     with pytest.raises(ValidationError):
         InvocationResult(
             status="answered", answer="Unsupported claim", citations=(), abstention=None
+        )
+
+
+@pytest.mark.parametrize("answer", ["", " ", "\t\n"])
+def test_whitespace_only_answer_is_rejected(answer: str) -> None:
+    with pytest.raises(ValidationError):
+        InvocationResult(
+            status="answered",
+            answer=answer,
+            citations=("chunk-1",),
+            abstention=None,
         )
 
 

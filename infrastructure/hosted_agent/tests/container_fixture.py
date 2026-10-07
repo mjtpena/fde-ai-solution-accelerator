@@ -1,5 +1,7 @@
 """Explicitly mounted offline provider for container smoke; never included in the image."""
 
+from dataclasses import dataclass
+
 from accelerator.agent_core.hosting.contracts import (
     HostedAbstention,
     InvocationResult,
@@ -19,5 +21,35 @@ class OfflineApplication:
         )
 
 
+@dataclass(frozen=True)
+class OfflineContext:
+    scope_id: str = "offline-test"
+
+
+class OfflineResolver:
+    async def resolve(self, authorization: str | None) -> OfflineContext:
+        if authorization != "Bearer offline-container-test":
+            raise InvocationUnauthorized()
+        return OfflineContext()
+
+
+class OfflineWorkflow:
+    async def run(self, query: str, ctx: OfflineContext) -> InvocationResult:
+        return InvocationResult(
+            status="abstained",
+            answer=None,
+            citations=(),
+            abstention=HostedAbstention(reason="Offline fixture has no evidence", evidence_ids=()),
+        )
+
+
 def create_application() -> OfflineApplication:
     return OfflineApplication()
+
+
+def create_resolver() -> OfflineResolver:
+    return OfflineResolver()
+
+
+def create_workflow() -> OfflineWorkflow:
+    return OfflineWorkflow()

@@ -12,7 +12,12 @@ class RuntimeSettings(BaseSettings):
         env_prefix="HOSTED_", extra="forbid", hide_input_in_errors=True
     )
 
-    application_factory: str = Field(pattern=r"^[a-zA-Z_][\w.]*:[a-zA-Z_]\w*$")
+    application_factory: str = Field(
+        default="infrastructure.hosted_agent.production:runtime_factory",
+        pattern=r"^[a-zA-Z_][\w.]*:[a-zA-Z_]\w*$",
+    )
+    context_resolver_factory: str = Field(pattern=r"^[a-zA-Z_][\w.]*:[a-zA-Z_]\w*$")
+    grounded_workflow_factory: str = Field(pattern=r"^[a-zA-Z_][\w.]*:[a-zA-Z_]\w*$")
 
 
 class DeploymentSettings(BaseSettings):
@@ -23,7 +28,12 @@ class DeploymentSettings(BaseSettings):
     project_endpoint: str
     agent_name: str = Field(pattern=r"^[a-zA-Z0-9][a-zA-Z0-9-]{0,62}$")
     image: str
-    application_factory: str = Field(pattern=r"^[a-zA-Z_][\w.]*:[a-zA-Z_]\w*$")
+    application_factory: str = Field(
+        default="infrastructure.hosted_agent.production:runtime_factory",
+        pattern=r"^[a-zA-Z_][\w.]*:[a-zA-Z_]\w*$",
+    )
+    context_resolver_factory: str = Field(pattern=r"^[a-zA-Z_][\w.]*:[a-zA-Z_]\w*$")
+    grounded_workflow_factory: str = Field(pattern=r"^[a-zA-Z_][\w.]*:[a-zA-Z_]\w*$")
     model_deployment: str = Field(min_length=1)
     cpu: Literal["0.5", "1", "2", "4"] = "1"
     memory: Literal["1Gi", "2Gi", "4Gi", "8Gi"] = "2Gi"
@@ -59,5 +69,7 @@ class DeploymentSettings(BaseSettings):
     def runtime_environment(self) -> dict[str, str]:
         return {
             "HOSTED_APPLICATION_FACTORY": self.application_factory,
+            "HOSTED_CONTEXT_RESOLVER_FACTORY": self.context_resolver_factory,
+            "HOSTED_GROUNDED_WORKFLOW_FACTORY": self.grounded_workflow_factory,
             "AZURE_AI_MODEL_DEPLOYMENT_NAME": self.model_deployment,
         }

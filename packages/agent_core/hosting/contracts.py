@@ -31,7 +31,12 @@ class InvocationResult(BaseModel):
     @model_validator(mode="after")
     def validate_outcome(self) -> "InvocationResult":
         if self.status == "answered":
-            if not self.answer or not self.citations or self.abstention is not None:
+            if (
+                not self.answer
+                or not self.answer.strip()
+                or not self.citations
+                or self.abstention is not None
+            ):
                 raise ValueError("Answered outcomes require text and citations, not abstention")
             if any(not chunk_id.strip() for chunk_id in self.citations):
                 raise ValueError("Citations must contain nonempty chunk IDs")
