@@ -6,12 +6,23 @@ from fastapi import Depends, FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
 from accelerator.api.audit import AuthFailureAuditMiddleware, router as audit_router
+from accelerator.api.cost_guard import (
+    ContextDependency,
+    create_cost_guard_dependency,
+    handle_token_budget_exceeded,
+)
 from accelerator.api.health import router as health_router
+from accelerator.api.retrieval_diagnostics import (
+    InMemoryRetrievalDiagnosticsStore,
+    RetrievalDiagnosticsStore,
+    router as retrieval_diagnostics_router,
+)
 from accelerator.configuration.settings import Settings
 from accelerator.domain.audit import AuditRepository
 from accelerator.identity.authentication import AppRole, require_any_role
 from accelerator.identity.jwt_validator import EntraTokenValidator
 from accelerator.identity.scope_resolver import install_scope_boundary
+from accelerator.security_core.cost_guard import RateLimiter, TokenBudgetExceeded
 
 
 @asynccontextmanager
@@ -21,7 +32,14 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
         yield
 
 
-def create_app(settings: Settings, *, audit_repository: AuditRepository | None = None) -> FastAPI:
+def create_app(
+    settings: Settings,
+    diagnostics_store: RetrievalDiagnosticsStore | None = None,
+    *,
+    audit_repository: AuditRepository | None = None,
+    get_execution_context: ContextDependency | None = None,
+    rate_limiter: RateLimiter | None = None,
+) -> FastAPI:
     app = FastAPI(
         title="FDE AI Solution Accelerator API",
         version="0.1.0",
@@ -37,6 +55,18 @@ def create_app(settings: Settings, *, audit_repository: AuditRepository | None =
         },
     )
     app.state.settings = settings
+    app.state.retrieval_diagnostics_store = (
+        diagnostics_store
+        if diagnostics_store is not None
+        else InMemoryRetrievalDiagnosticsStore()
+    )
+    app.add_exception_handler(TokenBudgetExceeded, handle_token_budget_exceeded)
+    if get_execution_context is not None:
+        app.state.request_cost_guard = create_cost_guard_dependency(
+            settings,
+            get_execution_context,
+            rate_limiter=rate_limiter,
+        )
     app.state.token_validator = EntraTokenValidator(settings)
     app.state.audit_repository = audit_repository
     app.add_middleware(AuthFailureAuditMiddleware)
@@ -47,6 +77,7 @@ def create_app(settings: Settings, *, audit_repository: AuditRepository | None =
         allow_headers=["*"],
     )
     app.include_router(health_router)
+    app.include_router(retrieval_diagnostics_router)
     app.include_router(audit_router)
     install_scope_boundary(app)
     return app
