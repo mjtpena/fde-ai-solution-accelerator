@@ -8,6 +8,13 @@ version = "0.1.0"
 requires-python = "==3.12.*"
 dependencies = []
 
-[tool.setuptools.packages.find]
-where = ["."]
-include = ["datasets*", "evaluators*", "runners*", "baselines*", "reporting*"]
+[tool.setuptools]
+packages = [
+    "accelerator.evaluation_core",
+    "accelerator.evaluation_core.datasets",
+    "accelerator.evaluation_core.evaluators",
+    "accelerator.evaluation_core.runners",
+    "accelerator.evaluation_core.baselines",
+    "accelerator.evaluation_core.reporting",
+]
+package-dir = {"accelerator.evaluation_core" = "."}

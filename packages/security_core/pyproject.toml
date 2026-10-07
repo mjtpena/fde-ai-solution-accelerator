@@ -8,6 +8,13 @@ version = "0.1.0"
 requires-python = "==3.12.*"
 dependencies = []
 
-[tool.setuptools.packages.find]
-where = ["."]
-include = ["authorisation*", "tool_policy*", "prompt_injection*", "data_boundaries*", "redaction*"]
+[tool.setuptools]
+packages = [
+    "accelerator.security_core",
+    "accelerator.security_core.authorisation",
+    "accelerator.security_core.tool_policy",
+    "accelerator.security_core.prompt_injection",
+    "accelerator.security_core.data_boundaries",
+    "accelerator.security_core.redaction",
+]
+package-dir = {"accelerator.security_core" = "."}
