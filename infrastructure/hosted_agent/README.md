@@ -51,14 +51,15 @@ additional packages, add them to this runtime manifest and regenerate its lock;
 don't assume dependencies from another virtual environment exist in the image.
 
 The trusted resolver/workflow provider implementations remain deployment
-prerequisites. The identity resolver API does not provide a concrete membership
-repository here; the retrieval adapter, grounded workflow, and agent factory are
-still delivered separately by #62, #63, and #72. Replace both example factory
-references with real providers packaged in the image before deployment. The
-production composition entrypoint is present and fail-closed, but it does not
-authenticate an identity or query evidence by itself. For local runs, supply both
-trusted factories and model/project values, and arrange explicit authenticated
-identity. Never mount developer credentials into the production image.
+prerequisites. #63's grounded-workflow primitives are now in `main`, but this PR
+still lacks the concrete membership-backed resolver and packaged provider
+factories integrating retrieval and generation; those production providers remain
+dependencies of #62 and #72. Replace both example factory references with real
+providers packaged in the image before deployment. The production composition
+entrypoint is present and fail-closed, but it does not authenticate an identity or
+query evidence by itself. For local runs, supply both trusted factories and
+model/project values, and arrange explicit authenticated identity. Never mount
+developer credentials into the production image.
 
 ## Deploy and invoke
 
