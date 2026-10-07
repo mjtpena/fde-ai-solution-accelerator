@@ -1,0 +1,10 @@
+{
+  "project_endpoint": "https://example.services.ai.azure.com/api/projects/example",
+  "agent_name": "fde-agent",
+  "image": "example.azurecr.io/fde-agent:replace-with-git-sha",
+  "application_factory": "accelerator.application.hosted:create_application",
+  "model_deployment": "replace-with-model-deployment",
+  "cpu": "1",
+  "memory": "2Gi",
+  "credential_mode": "managed-identity"
+}
