@@ -17,7 +17,7 @@ from accelerator.api.retrieval_diagnostics import (
     require_contributor,
 )
 from accelerator.configuration.settings import Settings
-from accelerator.identity.authentication import get_current_principal
+from accelerator.identity.authentication import AppRole, Principal, get_current_principal
 from accelerator.identity.scope_resolver import get_execution_context
 from accelerator.security_core.data_boundaries.context import ExecutionContext
 
@@ -62,7 +62,12 @@ class RetrievalDiagnosticsTests(unittest.TestCase):
     def get_response(self, context: ExecutionContext) -> Response:
         app = create_app(self.settings(), self.store)
         app.dependency_overrides[get_execution_context] = lambda: context
-        app.dependency_overrides[get_current_principal] = lambda: None
+        principal = Principal(
+            subject=context.user_id,
+            object_id=context.user_id,
+            roles=frozenset(AppRole(role) for role in context.roles),
+        )
+        app.dependency_overrides[get_current_principal] = lambda: principal
 
         with TestClient(app) as client:
             response = client.get("/diagnostics/retrieval/trace-1")
