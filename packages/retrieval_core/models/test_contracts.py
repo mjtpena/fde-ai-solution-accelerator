@@ -84,8 +84,8 @@ def test_retrieval_request_rejects_top_k_outside_bounds(top_k: int) -> None:
 
 
 def test_retrieval_request_uses_independent_filter_defaults() -> None:
-    first = RetrievalRequest.model_validate({"query": "first"})
-    second = RetrievalRequest.model_validate({"query": "second"})
+    first = RetrievalRequest(query="first")
+    second = RetrievalRequest(query="second")
 
     first.filters["category"] = "reference"
 

@@ -1,5 +1,5 @@
 from datetime import date
-from typing import Any
+from typing import Annotated, Any
 
 from pydantic import BaseModel, Field
 
@@ -35,5 +35,5 @@ class Evidence(BaseModel):
 
 class RetrievalRequest(BaseModel):
     query: str
-    top_k: int = Field(5, ge=1, le=20)
+    top_k: Annotated[int, Field(ge=1, le=20)] = 5
     filters: dict[str, Any] = Field(default_factory=dict)
