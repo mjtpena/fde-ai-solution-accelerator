@@ -5,6 +5,15 @@ description = "Domain-free foundation for secure enterprise AI solutions."
 requires-python = "==3.12.*"
 dependencies = []
 
+[dependency-groups]
+dev = [
+    "mypy>=1.18,<2",
+    "pre-commit>=4.3,<5",
+    "pytest>=8.4,<9",
+    "pytest-asyncio>=1.2,<2",
+    "ruff>=0.13,<1",
+]
+
 [tool.uv]
 package = false
 
@@ -18,3 +27,26 @@ members = [
     "packages/security_core",
     "workers/ingestion",
 ]
+
+[tool.ruff]
+line-length = 100
+target-version = "py312"
+
+[tool.ruff.lint]
+select = ["E4", "E7", "E9", "F"]
+
+[tool.mypy]
+python_version = "3.12"
+strict = true
+files = [
+    "packages/agent_core",
+    "packages/evaluation_core",
+    "packages/observability_core/src",
+    "packages/retrieval_core",
+    "packages/security_core",
+    "workers/ingestion/src",
+]
+
+[tool.pytest.ini_options]
+asyncio_mode = "auto"
+testpaths = ["tests", "apps/api/tests"]

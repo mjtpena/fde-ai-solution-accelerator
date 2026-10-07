@@ -1,0 +1,35 @@
+repos:
+  - repo: local
+    hooks:
+      - id: ruff
+        name: Ruff lint
+        entry: uv run --all-packages ruff check
+        language: system
+        types: [python]
+      - id: mypy
+        name: mypy strict
+        entry: uv run --all-packages mypy --strict
+        language: system
+        pass_filenames: false
+      - id: pytest
+        name: pytest
+        entry: uv run --all-packages pytest
+        language: system
+        pass_filenames: false
+      - id: eslint
+        name: ESLint
+        entry: npm --workspace apps/web run lint --
+        language: system
+        types_or: [javascript, jsx, ts, tsx]
+        pass_filenames: false
+      - id: prettier
+        name: Prettier
+        entry: npm --workspace apps/web run format:check --
+        language: system
+        pass_filenames: false
+      - id: vitest
+        name: Vitest
+        entry: npm --workspace apps/web run test --
+        language: system
+        types_or: [javascript, jsx, ts, tsx]
+        pass_filenames: false
