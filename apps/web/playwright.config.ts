@@ -21,7 +21,14 @@ export default defineConfig({
       url: "http://127.0.0.1:3100",
       reuseExistingServer: !process.env.CI,
       timeout: 120_000,
-      env: { API_BASE_URL: "http://127.0.0.1:8100" },
+      env: {
+        API_BASE_URL: "http://127.0.0.1:8100",
+        NEXT_PUBLIC_API_URL: "http://127.0.0.1:8100",
+        NEXT_PUBLIC_ENTRA_CLIENT_ID: "playwright-client-id",
+        NEXT_PUBLIC_ENTRA_TENANT_ID: "00000000-0000-0000-0000-000000000001",
+        NEXT_PUBLIC_ENTRA_API_SCOPE:
+          "api://playwright-client-id/access_as_user",
+      },
     },
   ],
 });

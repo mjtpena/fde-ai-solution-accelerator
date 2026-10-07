@@ -1,8 +1,21 @@
 import { createServer } from "node:http";
 
 const server = createServer(async (request, response) => {
+  if (request.method === "OPTIONS") {
+    response.writeHead(204, {
+      "Access-Control-Allow-Origin": "http://127.0.0.1:3100",
+      "Access-Control-Allow-Headers": "authorization, accept",
+      "Access-Control-Allow-Methods": "GET, POST, OPTIONS",
+    });
+    response.end();
+    return;
+  }
+
   if (request.method === "GET" && request.url === "/healthz") {
-    response.writeHead(200, { "Content-Type": "application/json" });
+    response.writeHead(200, {
+      "Content-Type": "application/json",
+      "Access-Control-Allow-Origin": "http://127.0.0.1:3100",
+    });
     response.end(JSON.stringify({ status: "ok" }));
     return;
   }
