@@ -113,10 +113,20 @@ The latest status recorded for issue #35 on 2026-10-07 is:
 
 | Area | Latest evidence and remaining work |
 | --- | --- |
-| Ingestion Dockerfile filesystem finding | DS-0002 was cleared on owning PR #61 head `6f818dad5cbf479fa75e4b990d3412ae6179058b`; its hosted Quality check passed and the coordinator reports the unchanged filesystem misconfiguration gate passing. PR #54 still retains its historical failed Trivy result until that change is integrated and the resulting #54 head is rescanned. |
+| Ingestion Dockerfile filesystem finding | Cleared on the integrated PR #54 head `fd7b0be906642cdb42a5a9dfc2cfceb9d145f1cf` after merging `main` at `32aaf1d`, including owning PR #61's non-root Alpine remediation. The hosted repository scan reports no remaining DS-0002 finding. |
 | npm development dependencies | `braces` 3.0.3 remains HIGH for CVE-2026-93687, with no patched release available. Removing npm from the runtime image does not resolve this development-lockfile finding; development dependencies remain included in the repository scan. |
-| Ingestion runtime image | Still blocked by 44 HIGH Debian findings under the unchanged image scan gate, according to the coordinator's latest status after owner remediation. No findings are suppressed. |
-| Web runtime image | PR #79 is published and not draft at head `6a631081d1eae1c903f9f5a9aea9562afbd5c008`, on exact PR #74 base `3a617fc450e93961161bd5ce27e9f83dfc4df976`. Its [hosted Quality run 37598180312](https://github.com/mjtpena/fde-ai-solution-accelerator/actions/runs/37598180312) succeeded. The coordinator reports zero findings in its final exact-head local Trivy 0.75.0 image scan (`vuln,secret`, HIGH/CRITICAL, `ignore-unfixed=false`, `exit-code=1`) after final-stage npm removal. This is committed-owner-head local evidence, not a passing hosted/integrated PR #54 scan; integration and resulting-head verification remain required. The retained PR #54 scan reports 11 HIGH findings while the supplied CVE listing has 10 identifiers; no additional finding is inferred from that discrepancy. |
+| Ingestion runtime image | **Passed** the unchanged hosted image gate on integrated head `fd7b0be906642cdb42a5a9dfc2cfceb9d145f1cf`. The old 44 HIGH Debian findings are historical; the merged Alpine remediation clears this check without suppressions. |
+| Web runtime image | **Still failed** on integrated head `fd7b0be906642cdb42a5a9dfc2cfceb9d145f1cf`: 11 HIGH Node-package findings. The separate PR #79 owner-head local scan passed after npm removal, but that fix is not present in this integrated head. Its local result does not replace this hosted failure. The report lists 10 distinct CVE identifiers for 11 findings; no extra CVE is inferred. |
+
+The current-base rescan is
+[security run 37606050590](https://github.com/mjtpena/fde-ai-solution-accelerator/actions/runs/37606050590).
+Security configuration, all three CodeQL language jobs, Dependency Review, and
+Trivy ingestion image passed. Trivy repository failed only on the unfixed
+`braces` finding; Trivy web image failed on the findings above.
+[Quality run 37606050822](https://github.com/mjtpena/fde-ai-solution-accelerator/actions/runs/37606050822)
+passed. Local configuration tests (7), actionlint, and `make check` (70 Python
+and 9 web tests) also passed after reconciliation. `make eval-smoke` still exits
+successfully with the existing placeholder, not a model-quality evaluation.
 
 These dependency and image findings require remediation in their owning
 changes, outside issue #35's `.github/**` scope. Keep the thresholds and
