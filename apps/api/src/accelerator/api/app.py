@@ -30,6 +30,7 @@ def create_app(settings: Settings, *, audit_repository: AuditRepository | None =
         responses={
             401: {"description": "Missing or invalid bearer token."},
             403: {"description": "Insufficient app role."},
+            503: {"description": "Identity, scope, or audit persistence is unavailable."},
         },
     )
     app.state.settings = settings

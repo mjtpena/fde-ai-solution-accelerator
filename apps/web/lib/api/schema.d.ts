@@ -65,22 +65,22 @@ export interface components {
              * Event Id
              * Format: uuid
              */
-            event_id?: string;
+            event_id: string;
             /**
              * Occurred At
              * Format: date-time
              */
-            occurred_at?: string;
+            occurred_at: string;
             event_type: components["schemas"]["EventType"];
             outcome: components["schemas"]["EventOutcome"];
             /** Correlation Id */
             correlation_id: string;
             /** Actor Id */
-            actor_id?: string | null;
+            actor_id: string | null;
             /** Approval Id */
-            approval_id?: string | null;
+            approval_id: string | null;
             /** Tool Name */
-            tool_name?: string | null;
+            tool_name: string | null;
         };
         /** AuditPage */
         AuditPage: {
@@ -164,6 +164,13 @@ export interface operations {
                 };
                 content?: never;
             };
+            /** @description Identity, scope, or audit persistence is unavailable. */
+            503: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
         };
     };
     readyz_readyz_get: {
@@ -193,6 +200,13 @@ export interface operations {
             };
             /** @description Insufficient app role. */
             403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description Identity, scope, or audit persistence is unavailable. */
+            503: {
                 headers: {
                     [name: string]: unknown;
                 };
@@ -244,6 +258,13 @@ export interface operations {
                 content: {
                     "application/json": components["schemas"]["HTTPValidationError"];
                 };
+            };
+            /** @description Identity, scope, or audit persistence is unavailable. */
+            503: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
             };
         };
     };

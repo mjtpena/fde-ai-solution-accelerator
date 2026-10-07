@@ -305,3 +305,25 @@ def test_public_surface_has_no_mutation_routes_or_repository_methods() -> None:
 
     assert not hasattr(PostgresAuditRepository, "update")
     assert not hasattr(PostgresAuditRepository, "delete")
+
+
+def test_openapi_declares_audit_outages_for_all_authenticated_routes() -> None:
+    schema = make_app(MemoryRepository()).openapi()
+    for path in ("/healthz", "/readyz", "/audit-events"):
+        assert "503" in schema["paths"][path]["get"]["responses"]
+
+
+def test_response_schema_requires_always_serialized_event_fields() -> None:
+    schema = make_app(MemoryRepository()).openapi()
+    response_ref = schema["paths"]["/audit-events"]["get"]["responses"]["200"]["content"][
+        "application/json"
+    ]["schema"]["$ref"]
+    page_schema = schema["components"]["schemas"][response_ref.rsplit("/", 1)[-1]]
+    event_ref = page_schema["properties"]["items"]["items"]["$ref"]
+    event_schema = schema["components"]["schemas"][event_ref.rsplit("/", 1)[-1]]
+    event = AuditEvent(
+        event_type=EventType.AUTH_FAILURE, outcome=EventOutcome.FAILED, correlation_id="c"
+    )
+    assert set(event.model_dump()) == set(event_schema["required"])
+    assert {"event_id", "occurred_at"} <= set(event_schema["required"])
+    assert "event_id" not in AuditEvent.model_json_schema(mode="validation")["required"]

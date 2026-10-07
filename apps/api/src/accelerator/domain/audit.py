@@ -24,7 +24,9 @@ ToolName = Annotated[str, Field(pattern=r"^[A-Za-z0-9_.-]{1,128}$")]
 
 
 class AuditEvent(BaseModel):
-    model_config = ConfigDict(frozen=True, extra="forbid")
+    model_config = ConfigDict(
+        frozen=True, extra="forbid", json_schema_serialization_defaults_required=True
+    )
 
     event_id: UUID = Field(default_factory=uuid4)
     occurred_at: AwareDatetime = Field(default_factory=lambda: datetime.now(timezone.utc))

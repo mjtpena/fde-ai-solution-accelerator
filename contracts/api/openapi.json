@@ -28,6 +28,9 @@
           },
           "403": {
             "description": "Insufficient app role."
+          },
+          "503": {
+            "description": "Identity, scope, or audit persistence is unavailable."
           }
         },
         "security": [
@@ -60,6 +63,9 @@
           },
           "403": {
             "description": "Insufficient app role."
+          },
+          "503": {
+            "description": "Identity, scope, or audit persistence is unavailable."
           }
         },
         "security": [
@@ -139,6 +145,9 @@
           },
           "403": {
             "description": "Insufficient app role."
+          },
+          "503": {
+            "description": "Identity, scope, or audit persistence is unavailable."
           },
           "422": {
             "description": "Validation Error",
@@ -221,9 +230,14 @@
         "additionalProperties": false,
         "type": "object",
         "required": [
+          "event_id",
+          "occurred_at",
           "event_type",
           "outcome",
-          "correlation_id"
+          "correlation_id",
+          "actor_id",
+          "approval_id",
+          "tool_name"
         ],
         "title": "AuditEvent"
       },
