@@ -59,7 +59,7 @@ class FoundrySettingsTests(unittest.TestCase):
             {"FOUNDRY_PROJECT_ENDPOINT": "https://foundry.example/api/projects/project"},
             clear=True,
         ):
-            settings = FoundrySettings.from_environment()
+            settings = FoundrySettings()
 
         self.assertEqual(
             str(settings.project_endpoint),
@@ -67,11 +67,11 @@ class FoundrySettingsTests(unittest.TestCase):
         )
 
     def test_rejects_missing_or_non_https_project_endpoint(self) -> None:
-        with patch.dict("os.environ", {}, clear=True), self.assertRaises(ValueError):
-            FoundrySettings.from_environment()
+        with patch.dict("os.environ", {}, clear=True), self.assertRaises(ValidationError):
+            FoundrySettings()
         with patch.dict(
             "os.environ",
             {"FOUNDRY_PROJECT_ENDPOINT": "http://foundry.example/api/projects/project"},
             clear=True,
         ), self.assertRaises(ValidationError):
-            FoundrySettings.from_environment()
+            FoundrySettings()

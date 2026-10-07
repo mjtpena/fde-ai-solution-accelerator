@@ -1,23 +1,13 @@
 from __future__ import annotations
 
-import os
-
 from pydantic import AnyHttpUrl, field_validator
-from pydantic import BaseModel, ConfigDict, TypeAdapter
+from pydantic_settings import BaseSettings, SettingsConfigDict
 
 
-class FoundrySettings(BaseModel):
-    model_config = ConfigDict(frozen=True)
+class FoundrySettings(BaseSettings):
+    model_config = SettingsConfigDict(env_prefix="FOUNDRY_", frozen=True)
 
     project_endpoint: AnyHttpUrl
-
-    @classmethod
-    def from_environment(cls) -> FoundrySettings:
-        endpoint = os.environ.get("FOUNDRY_PROJECT_ENDPOINT")
-        if endpoint is None:
-            raise ValueError("FOUNDRY_PROJECT_ENDPOINT must be set")
-        validated_endpoint = TypeAdapter(AnyHttpUrl).validate_python(endpoint)
-        return cls(project_endpoint=validated_endpoint)
 
     @field_validator("project_endpoint")
     @classmethod
