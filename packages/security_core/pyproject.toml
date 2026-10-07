@@ -13,8 +13,12 @@ packages = [
     "accelerator.security_core",
     "accelerator.security_core.authorisation",
     "accelerator.security_core.tool_policy",
+    "accelerator.security_core.cost_guard",
     "accelerator.security_core.prompt_injection",
     "accelerator.security_core.data_boundaries",
     "accelerator.security_core.redaction",
 ]
 package-dir = {"accelerator.security_core" = "."}
+
+[tool.setuptools.package-data]
+"accelerator.security_core" = ["py.typed"]

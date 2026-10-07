@@ -95,12 +95,14 @@ version = "0.1.0"
 source = { editable = "apps/api" }
 dependencies = [
     { name = "fastapi" },
+    { name = "fde-security-core" },
     { name = "pydantic-settings" },
 ]
 
 [package.metadata]
 requires-dist = [
     { name = "fastapi", specifier = ">=0.115,<1" },
+    { name = "fde-security-core", editable = "packages/security_core" },
     { name = "pydantic-settings", specifier = ">=2.7,<3" },
 ]
 
