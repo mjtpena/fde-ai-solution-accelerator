@@ -1,0 +1,40 @@
+name: Bicep validation
+
+on:
+  pull_request:
+    paths:
+      - "infrastructure/**"
+      - ".github/workflows/bicep-validation.yml"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  bicep:
+    name: Bicep lint and build
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          persist-credentials: false
+
+      - name: Install Bicep
+        run: az bicep install
+
+      - name: Lint and build all Bicep files
+        shell: bash
+        run: |
+          set -euo pipefail
+          mapfile -d '' bicep_files < <(find infrastructure -type f -name '*.bicep' -print0)
+          if ((${#bicep_files[@]} == 0)); then
+            echo "No Bicep files found under infrastructure/." >&2
+            exit 1
+          fi
+          for file in "${bicep_files[@]}"; do
+            echo "Linting ${file}"
+            az bicep lint --file "${file}"
+            echo "Building ${file}"
+            az bicep build --file "${file}" --stdout > /dev/null
+          done
