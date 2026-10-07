@@ -10,7 +10,13 @@ describe("streamChat", () => {
     const events: unknown[] = [];
 
     await expect(
-      streamChat("Question", (event) => events.push(event), undefined, fetcher),
+      streamChat(
+        "Question",
+        (event) => events.push(event),
+        "test-access-token",
+        undefined,
+        fetcher,
+      ),
     ).rejects.toThrow("The chat stream ended before completion.");
     expect(events).toEqual([{ type: "token", text: "Partial answer" }]);
   });
@@ -36,6 +42,7 @@ describe("streamChat", () => {
     await streamChat(
       "Question",
       (event) => events.push(event),
+      "test-access-token",
       undefined,
       fetcher,
     );
@@ -75,12 +82,16 @@ describe("streamChat", () => {
     await streamChat(
       "What does the guide say?",
       (event) => events.push(event),
+      "test-access-token",
       undefined,
       fetcher,
     );
 
     expect(requestUrl).toBe("/api/chat/stream");
     expect(requestInit?.method).toBe("POST");
+    expect(new Headers(requestInit?.headers).get("Authorization")).toBe(
+      "Bearer test-access-token",
+    );
     expect(JSON.parse(String(requestInit?.body))).toEqual({
       message: "What does the guide say?",
     });

@@ -166,8 +166,24 @@ async def _stream_result(
     response_class=StreamingResponse,
     responses={
         200: {
-            "description": "Server-sent events containing a grounded chat result.",
-            "content": {"text/event-stream": {}},
+            "description": (
+                "Server-sent events. Each frame has an event name and JSON data. "
+                "Answered turns emit token frames followed by citations and done; "
+                "insufficient evidence emits abstention and done; policy handoffs "
+                "emit approval and done."
+            ),
+            "content": {
+                "text/event-stream": {
+                    "schema": {"type": "string"},
+                    "x-sse-events": {
+                        "token": TokenEvent.model_json_schema(),
+                        "citations": CitationsEvent.model_json_schema(),
+                        "approval": ApprovalEvent.model_json_schema(),
+                        "abstention": AbstentionEvent.model_json_schema(),
+                        "done": DoneEvent.model_json_schema(),
+                    },
+                }
+            },
         },
         503: {"description": "The chat workflow is not configured."},
     },

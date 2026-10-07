@@ -113,8 +113,9 @@ function parseEvent(frame: string): ChatStreamEvent | null {
 }
 
 export async function streamChat(
-  message: string,
+  message: ChatRequest["message"],
   onEvent: EventHandler,
+  accessToken: string,
   signal?: AbortSignal,
   fetcher: typeof fetch = fetch,
 ): Promise<void> {
@@ -123,8 +124,9 @@ export async function streamChat(
     headers: {
       Accept: "text/event-stream",
       "Content-Type": "application/json",
+      Authorization: `Bearer ${accessToken}`,
     },
-    body: JSON.stringify({ message }),
+    body: JSON.stringify({ message } satisfies ChatRequest),
     signal,
   });
 
@@ -178,3 +180,6 @@ export async function streamChat(
     }
   }
 }
+import type { components } from "./schema";
+
+type ChatRequest = components["schemas"]["ChatRequest"];

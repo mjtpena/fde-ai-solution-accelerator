@@ -2,8 +2,8 @@
 
 import { useState } from "react";
 import type { FormEvent } from "react";
-import { streamChat } from "@/lib/api/chat";
-import type { ChatApproval, ChatCitation } from "@/lib/api/chat";
+import { streamChat } from "../lib/api/chat";
+import type { ChatApproval, ChatCitation } from "../lib/api/chat";
 
 function citationHref(sourceUri: string): string | null {
   try {
@@ -16,7 +16,7 @@ function citationHref(sourceUri: string): string | null {
   }
 }
 
-export function ChatPanel() {
+export function ChatPanel({ accessToken }: { accessToken: string | null }) {
   const [message, setMessage] = useState("");
   const [answer, setAnswer] = useState("");
   const [citations, setCitations] = useState<ChatCitation[]>([]);
@@ -31,7 +31,7 @@ export function ChatPanel() {
   async function submit(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
     const prompt = message.trim();
-    if (!prompt || isStreaming) return;
+    if (!prompt || !accessToken || isStreaming) return;
 
     setAnswer("");
     setCitations([]);
@@ -41,30 +41,34 @@ export function ChatPanel() {
     setIsStreaming(true);
 
     try {
-      await streamChat(prompt, (streamEvent) => {
-        switch (streamEvent.type) {
-          case "token":
-            setAnswer((current) => current + streamEvent.text);
-            break;
-          case "citations":
-            setCitations(streamEvent.citations);
-            break;
-          case "approval":
-            setApproval(streamEvent.approval);
-            break;
-          case "abstention":
-            setAbstention({
-              reason: streamEvent.reason,
-              evidenceIds: streamEvent.evidence_ids,
-            });
-            break;
-          case "error":
-            setError(streamEvent.message);
-            break;
-          case "done":
-            break;
-        }
-      });
+      await streamChat(
+        prompt,
+        (streamEvent) => {
+          switch (streamEvent.type) {
+            case "token":
+              setAnswer((current) => current + streamEvent.text);
+              break;
+            case "citations":
+              setCitations(streamEvent.citations);
+              break;
+            case "approval":
+              setApproval(streamEvent.approval);
+              break;
+            case "abstention":
+              setAbstention({
+                reason: streamEvent.reason,
+                evidenceIds: streamEvent.evidence_ids,
+              });
+              break;
+            case "error":
+              setError(streamEvent.message);
+              break;
+            case "done":
+              break;
+          }
+        },
+        accessToken,
+      );
     } catch (caught) {
       setError(
         caught instanceof Error ? caught.message : "The chat request failed.",
@@ -88,11 +92,15 @@ export function ChatPanel() {
           rows={3}
           disabled={isStreaming}
         />
-        <button type="submit" disabled={isStreaming || !message.trim()}>
+        <button
+          type="submit"
+          disabled={isStreaming || !message.trim() || !accessToken}
+        >
           {isStreaming ? "Generating…" : "Send"}
         </button>
       </form>
 
+      {!accessToken && <p role="status">Sign in to send a chat message.</p>}
       {isStreaming && <p role="status">Generating answer…</p>}
       {error && <p role="alert">{error}</p>}
       {answer && (

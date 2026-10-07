@@ -192,7 +192,17 @@ class ChatOpenApiTests(unittest.TestCase):
         app = create_app(make_test_settings())
         operation = app.openapi()["paths"]["/chat/stream"]["post"]
 
-        self.assertIn("text/event-stream", operation["responses"]["200"]["content"])
+        response = operation["responses"]["200"]
+        self.assertEqual(
+            response["content"]["text/event-stream"]["schema"], {"type": "string"}
+        )
+        self.assertEqual(
+            set(response["content"]["text/event-stream"]["x-sse-events"]),
+            {"token", "citations", "approval", "abstention", "done"},
+        )
+        request_schema = app.openapi()["components"]["schemas"]["ChatRequest"]
+        self.assertFalse(request_schema["additionalProperties"])
+        self.assertEqual(set(request_schema["properties"]), {"message"})
 
 
 @pytest.mark.asyncio
