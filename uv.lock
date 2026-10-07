@@ -262,6 +262,12 @@ dev = [
 name = "fde-evaluation-core"
 version = "0.1.0"
 source = { editable = "packages/evaluation_core" }
+dependencies = [
+    { name = "pydantic" },
+]
+
+[package.metadata]
+requires-dist = [{ name = "pydantic", specifier = ">=2.7,<3" }]
 
 [[package]]
 name = "fde-ingestion-worker"
