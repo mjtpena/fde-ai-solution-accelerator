@@ -12,6 +12,7 @@ class Settings(BaseSettings):
     request_token_budget: int = Field(default=8192, gt=0)
     request_rate_limit: int = Field(default=60, gt=0)
     request_rate_window_seconds: float = Field(default=60.0, gt=0, allow_inf_nan=False)
+    diagnostics_include_content: bool = False
     entra_tenant_id: UUID
     entra_audience: str = Field(min_length=1)
     web_origin: str = Field(default="http://localhost:3000", min_length=1)

@@ -1,0 +1,42 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "additionalProperties": false,
+  "properties": {
+    "id": {"title": "Id", "type": "string"},
+    "category": {
+      "enum": ["factual", "synthesis", "conflict", "unsupported", "tool_selection", "injection"],
+      "title": "Category",
+      "type": "string"
+    },
+    "query": {"title": "Query", "type": "string"},
+    "scope_id": {"title": "Scope Id", "type": "string"},
+    "expected_answer": {
+      "anyOf": [{"type": "string"}, {"type": "null"}],
+      "title": "Expected Answer"
+    },
+    "expected_evidence_ids": {
+      "items": {"type": "string"},
+      "title": "Expected Evidence Ids",
+      "type": "array"
+    },
+    "expected_tool": {
+      "anyOf": [{"type": "string"}, {"type": "null"}],
+      "title": "Expected Tool"
+    },
+    "expected_abstain": {"title": "Expected Abstain", "type": "boolean"},
+    "tags": {"items": {"type": "string"}, "title": "Tags", "type": "array"}
+  },
+  "required": [
+    "id",
+    "category",
+    "query",
+    "scope_id",
+    "expected_answer",
+    "expected_evidence_ids",
+    "expected_tool",
+    "expected_abstain",
+    "tags"
+  ],
+  "title": "DatasetRow",
+  "type": "object"
+}

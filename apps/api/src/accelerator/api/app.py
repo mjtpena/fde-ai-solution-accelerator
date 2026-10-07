@@ -12,6 +12,11 @@ from accelerator.api.cost_guard import (
     handle_token_budget_exceeded,
 )
 from accelerator.api.health import router as health_router
+from accelerator.api.retrieval_diagnostics import (
+    InMemoryRetrievalDiagnosticsStore,
+    RetrievalDiagnosticsStore,
+    router as retrieval_diagnostics_router,
+)
 from accelerator.configuration.settings import Settings
 from accelerator.domain.audit import AuditRepository
 from accelerator.identity.authentication import AppRole, require_any_role
@@ -29,6 +34,7 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
 
 def create_app(
     settings: Settings,
+    diagnostics_store: RetrievalDiagnosticsStore | None = None,
     *,
     audit_repository: AuditRepository | None = None,
     get_execution_context: ContextDependency | None = None,
@@ -49,6 +55,11 @@ def create_app(
         },
     )
     app.state.settings = settings
+    app.state.retrieval_diagnostics_store = (
+        diagnostics_store
+        if diagnostics_store is not None
+        else InMemoryRetrievalDiagnosticsStore()
+    )
     app.add_exception_handler(TokenBudgetExceeded, handle_token_budget_exceeded)
     if get_execution_context is not None:
         app.state.request_cost_guard = create_cost_guard_dependency(
@@ -66,6 +77,7 @@ def create_app(
         allow_headers=["*"],
     )
     app.include_router(health_router)
+    app.include_router(retrieval_diagnostics_router)
     app.include_router(audit_router)
     install_scope_boundary(app)
     return app

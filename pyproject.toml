@@ -56,5 +56,9 @@ asyncio_mode = "auto"
 testpaths = [
     "tests",
     "apps/api/tests",
+    "packages/evaluation_core/datasets/tests",
+    "packages/evaluation_core/reporting/tests",
+    "packages/retrieval_core/search/tests",
+    "apps/api/src/accelerator/infrastructure/search/tests",
     "packages/security_core/tests",
 ]
