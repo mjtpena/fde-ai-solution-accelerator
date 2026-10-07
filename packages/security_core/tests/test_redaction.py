@@ -2,6 +2,7 @@ import unittest
 
 from accelerator.security_core.redaction import (
     AttributeValue,
+    RedactionValue,
     redact_attributes,
     redact_sensitive_data,
 )
@@ -30,6 +31,8 @@ class RedactionTests(unittest.TestCase):
                 self.assertNotIn(value.split("=")[-1], redacted)
                 expected_marker = "[REDACTED_EMAIL]" if "@" in value else REDACTED
                 self.assertIn(expected_marker, redacted)
+                if value.startswith("Authorization:"):
+                    self.assertNotIn("credential-fixture", redacted)
 
     def test_redacts_authorization_header_scheme_and_token_together(self) -> None:
         bearer_value = "Bear" + "er " + "authorization-fixture"
@@ -73,6 +76,7 @@ class RedactionTests(unittest.TestCase):
             "api_key": "attribute-key-fixture",
             "apiKey": "camel-api-key-fixture",
             "clientSecret": "camel-client-secret-fixture",
+            "accessToken": "camel-access-token-fixture",
             "requestIdToken": "camel-token-fixture",
             "authorizationHeader": "camel-authorization-fixture",
             "fde.header_value": f"Authorization: {bearer_value}",
@@ -89,6 +93,7 @@ class RedactionTests(unittest.TestCase):
             "attribute-key-fixture",
             "camel-api-key-fixture",
             "camel-client-secret-fixture",
+            "camel-access-token-fixture",
             "camel-token-fixture",
             "camel-authorization-fixture",
             "nested-fixture",
@@ -98,6 +103,7 @@ class RedactionTests(unittest.TestCase):
         self.assertEqual(result["api_key"], REDACTED)
         self.assertEqual(result["apiKey"], REDACTED)
         self.assertEqual(result["clientSecret"], REDACTED)
+        self.assertEqual(result["accessToken"], REDACTED)
         self.assertEqual(result["requestIdToken"], REDACTED)
         self.assertEqual(result["authorizationHeader"], REDACTED)
         self.assertEqual(result["fde.prompt_token_count"], 7)
@@ -111,6 +117,13 @@ class RedactionTests(unittest.TestCase):
         bearer_value = "Bear" + "er " + "bytes-fixture"
         raw = f"Authorization: {bearer_value}".encode("utf-8")
         invalid_utf8 = b"\xffapi_key=unreadable-fixture"
+        attributes: dict[str, RedactionValue] = {
+            "binary": b"api_key=bytes-credential-fixture",
+            "nested": {
+                "authorization": b"Basic nested-authorization-fixture",
+                "unreadable": invalid_utf8,
+            },
+        }
 
         self.assertEqual(
             redact_sensitive_data(raw),
@@ -121,6 +134,14 @@ class RedactionTests(unittest.TestCase):
             redact_sensitive_data(invalid_utf8),
             REDACTED.encode("ascii"),
         )
+        result = redact_attributes(attributes)
+        self.assertNotIn("bytes-credential-fixture", repr(result))
+        self.assertNotIn("nested-authorization-fixture", repr(result))
+        self.assertEqual(result["binary"], b"api_key=" + REDACTED.encode("ascii"))
+        nested = result["nested"]
+        assert isinstance(nested, dict)
+        self.assertEqual(nested["authorization"], REDACTED.encode("ascii"))
+        self.assertEqual(nested["unreadable"], REDACTED.encode("ascii"))
 
 
 if __name__ == "__main__":
