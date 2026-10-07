@@ -2,6 +2,47 @@ import { describe, expect, it } from "vitest";
 import { streamChat } from "../../lib/api/chat";
 
 describe("streamChat", () => {
+  it("rejects a stream closed before its completion event", async () => {
+    const fetcher: typeof fetch = async () =>
+      new Response('event: token\ndata: {"text":"Partial answer"}\n\n', {
+        headers: { "Content-Type": "text/event-stream" },
+      });
+    const events: unknown[] = [];
+
+    await expect(
+      streamChat("Question", (event) => events.push(event), undefined, fetcher),
+    ).rejects.toThrow("The chat stream ended before completion.");
+    expect(events).toEqual([{ type: "token", text: "Partial answer" }]);
+  });
+
+  it("cancels the response stream when the completion event arrives", async () => {
+    let cancelled = false;
+    const fetcher: typeof fetch = async () =>
+      new Response(
+        new ReadableStream<Uint8Array>({
+          start(controller) {
+            controller.enqueue(
+              new TextEncoder().encode("event: done\ndata: {}\n\n"),
+            );
+          },
+          cancel() {
+            cancelled = true;
+          },
+        }),
+        { headers: { "Content-Type": "text/event-stream" } },
+      );
+    const events: unknown[] = [];
+
+    await streamChat(
+      "Question",
+      (event) => events.push(event),
+      undefined,
+      fetcher,
+    );
+    expect(events).toEqual([{ type: "done" }]);
+    expect(cancelled).toBe(true);
+  });
+
   it("parses fragmented SSE events and sends only the user message", async () => {
     let requestUrl: string | undefined;
     let requestInit: RequestInit | undefined;

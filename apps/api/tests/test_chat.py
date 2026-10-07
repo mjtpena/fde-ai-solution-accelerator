@@ -3,6 +3,8 @@ from datetime import UTC, datetime, timedelta
 import unittest
 from uuid import UUID
 
+import httpx
+import pytest
 from fastapi.responses import StreamingResponse
 from pydantic import BaseModel, ValidationError
 
@@ -10,10 +12,13 @@ from accelerator.agent_core.workflows.grounded_answer import (
     Abstention,
     CitationSource,
     GroundedAnswerResult,
+    RetrievedEvidenceContext,
 )
 from accelerator.api.app import create_app
 from accelerator.api.chat import ChatRequest, stream_chat
 from accelerator.configuration.settings import Settings
+from accelerator.identity.authentication import AppRole, Principal, get_current_principal
+from accelerator.identity.scope_resolver import configure_scope_resolver
 from accelerator.security_core.data_boundaries.context import ExecutionContext
 from accelerator.security_core.tool_policy import ApprovalRequired
 
@@ -50,6 +55,19 @@ def execution_context() -> ExecutionContext:
     )
 
 
+def make_test_settings() -> Settings:
+    return Settings(
+        environment="test",
+        entra_tenant_id=UUID("00000000-0000-0000-0000-000000000001"),
+        entra_audience="api://test",
+    )
+
+
+class InMemoryMemberships:
+    async def scope_ids_for(self, user_id: str) -> frozenset[str]:
+        return frozenset({"scope-1"}) if user_id == "user-1" else frozenset()
+
+
 async def collect_stream(response: StreamingResponse) -> str:
     chunks: list[str] = []
     async for chunk in response.body_iterator:
@@ -80,6 +98,12 @@ class ChatEndpointTests(unittest.TestCase):
                     ),
                 ),
                 abstention=None,
+                evaluation_context=(
+                    RetrievedEvidenceContext(
+                        chunk_id="chunk-1",
+                        text="Untrusted retrieved text must not appear in SSE.",
+                    ),
+                ),
             )
         )
 
@@ -96,6 +120,8 @@ class ChatEndpointTests(unittest.TestCase):
         self.assertIn('event: token\ndata: {"text":"The guide supports this answer."}', body)
         self.assertIn('"chunk_id":"chunk-1"', body)
         self.assertIn('"document_title":"Guide"', body)
+        self.assertNotIn("Untrusted retrieved text", body)
+        self.assertNotIn("evaluation_context", body)
         self.assertTrue(body.endswith("event: done\ndata: {}\n\n"))
         self.assertEqual(workflow.query, "What does the guide say?")
         self.assertIs(workflow.context, context)
@@ -112,6 +138,12 @@ class ChatEndpointTests(unittest.TestCase):
                     reason="Retrieved evidence is insufficient.",
                     evidence_ids=("chunk-2",),
                 ),
+                evaluation_context=(
+                    RetrievedEvidenceContext(
+                        chunk_id="chunk-2",
+                        text="Insufficient retrieved text must not appear in SSE.",
+                    ),
+                ),
             )
         )
 
@@ -124,6 +156,8 @@ class ChatEndpointTests(unittest.TestCase):
         self.assertIn("event: abstention", body)
         self.assertIn('"reason":"Retrieved evidence is insufficient."', body)
         self.assertIn('"evidence_ids":["chunk-2"]', body)
+        self.assertNotIn("Insufficient retrieved text", body)
+        self.assertNotIn("evaluation_context", body)
 
     def test_streams_policy_approval_without_exposing_bound_arguments(self) -> None:
         context = execution_context()
@@ -155,10 +189,77 @@ class ChatEndpointTests(unittest.TestCase):
 
 class ChatOpenApiTests(unittest.TestCase):
     def test_chat_stream_is_documented_as_server_sent_events(self) -> None:
-        app = create_app(Settings(environment="test"))
+        app = create_app(make_test_settings())
         operation = app.openapi()["paths"]["/chat/stream"]["post"]
 
         self.assertIn("text/event-stream", operation["responses"]["200"]["content"])
+
+
+@pytest.mark.asyncio
+async def test_http_requires_authentication_before_running_chat() -> None:
+    app = create_app(make_test_settings())
+    async with httpx.AsyncClient(
+        transport=httpx.ASGITransport(app=app), base_url="http://test"
+    ) as client:
+        response = await client.post("/chat/stream", json={"message": "Question"})
+    assert response.status_code == 401
+    assert response.headers["X-Correlation-ID"]
+
+
+@pytest.mark.asyncio
+async def test_http_resolves_context_and_rejects_scope_input() -> None:
+    workflow = FakeChatTurn(
+        GroundedAnswerResult(
+            status="abstained",
+            answer=None,
+            citations=(),
+            citation_sources=(),
+            abstention=Abstention(reason="Insufficient evidence.", evidence_ids=()),
+        )
+    )
+    app = create_app(make_test_settings(), chat_turn=workflow)
+
+    async def principal() -> Principal:
+        return Principal(
+            subject="subject", object_id="user-1", roles=frozenset({AppRole.READER})
+        )
+
+    app.dependency_overrides[get_current_principal] = principal
+    configure_scope_resolver(app, InMemoryMemberships())
+    async with httpx.AsyncClient(
+        transport=httpx.ASGITransport(app=app), base_url="http://test"
+    ) as client:
+        invalid = await client.post(
+            "/chat/stream", json={"message": "Question", "scope_ids": ["scope-private"]}
+        )
+        assert invalid.status_code == 422
+        assert workflow.context is None
+        response = await client.post("/chat/stream", json={"message": "Question"})
+    assert response.status_code == 200
+    assert "event: abstention" in response.text
+    assert workflow.context is not None
+    assert workflow.context.user_id == "user-1"
+    assert workflow.context.scope_ids == frozenset({"scope-1"})
+    assert workflow.context.roles == frozenset({"Reader"})
+    assert workflow.context.correlation_id == response.headers["X-Correlation-ID"]
+
+
+@pytest.mark.asyncio
+async def test_http_fails_closed_without_host_scope_repository() -> None:
+    app = create_app(make_test_settings())
+
+    async def principal() -> Principal:
+        return Principal(
+            subject="subject", object_id="user-1", roles=frozenset({AppRole.READER})
+        )
+
+    app.dependency_overrides[get_current_principal] = principal
+    async with httpx.AsyncClient(
+        transport=httpx.ASGITransport(app=app), base_url="http://test"
+    ) as client:
+        response = await client.post("/chat/stream", json={"message": "Question"})
+    assert response.status_code == 503
+    assert response.headers["X-Correlation-ID"]
 
 
 if __name__ == "__main__":

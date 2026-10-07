@@ -141,25 +141,40 @@ export async function streamChat(
   const reader = response.body.getReader();
   const decoder = new TextDecoder();
   let buffer = "";
+  let completed = false;
+  let ended = false;
 
   const dispatchFrames = (flush: boolean) => {
     const frames = buffer.split(/\r?\n\r?\n/);
     buffer = flush ? "" : (frames.pop() ?? "");
     for (const frame of frames) {
       const event = parseEvent(frame);
-      if (event) onEvent(event);
-    }
-    if (flush && buffer) {
-      const event = parseEvent(buffer);
-      if (event) onEvent(event);
-      buffer = "";
+      if (event) {
+        onEvent(event);
+        if (event.type === "done") {
+          completed = true;
+          return;
+        }
+      }
     }
   };
 
-  while (true) {
-    const { done, value } = await reader.read();
-    buffer += decoder.decode(value, { stream: !done });
-    dispatchFrames(done);
-    if (done) return;
+  try {
+    while (true) {
+      const { done, value } = await reader.read();
+      ended = done;
+      buffer += decoder.decode(value, { stream: !done });
+      dispatchFrames(done);
+      if (completed) return;
+      if (done) {
+        throw new Error("The chat stream ended before completion.");
+      }
+    }
+  } finally {
+    try {
+      if (!ended) await reader.cancel();
+    } finally {
+      reader.releaseLock();
+    }
   }
 }
