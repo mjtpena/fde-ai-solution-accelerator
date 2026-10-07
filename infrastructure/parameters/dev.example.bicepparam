@@ -27,11 +27,21 @@ param postgresAdministratorPrincipalType = readEnvironmentVariable('AZURE_POSTGR
 
 param foundrySkuName = 'S0'
 param modelDeploymentName = 'chat-model'
-param modelName = 'gpt-4o-mini'
-param modelVersion = '2024-07-18'
+param modelName = readEnvironmentVariable('AZURE_MODEL_NAME', 'gpt-5-mini')
+param modelVersion = readEnvironmentVariable('AZURE_MODEL_VERSION', '2025-08-07')
 param modelFormat = 'OpenAI'
 param modelSkuName = 'GlobalStandard'
 param modelCapacity = 1
 
 param keyVaultSkuName = 'standard'
 param containerRegistrySkuName = 'Basic'
+
+param networkAddressPrefix = '10.20.0.0/16'
+param containerAppsSubnetPrefix = '10.20.0.0/23'
+param postgresSubnetPrefix = '10.20.2.0/24'
+param deployApplications = bool(readEnvironmentVariable('DEPLOY_APPLICATIONS', 'false'))
+param apiImage = readEnvironmentVariable('API_IMAGE', '')
+param webImage = readEnvironmentVariable('WEB_IMAGE', '')
+param workerImage = readEnvironmentVariable('WORKER_IMAGE', '')
+param apiEntraTenantId = readEnvironmentVariable('API_ENTRA_TENANT_ID', '')
+param apiEntraAudience = readEnvironmentVariable('API_ENTRA_AUDIENCE', '')

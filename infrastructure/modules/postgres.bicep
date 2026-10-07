@@ -5,6 +5,8 @@ param skuTier string
 param storageSizeGb int
 param version string
 param databaseName string
+param delegatedSubnetId string
+param privateDnsZoneId string
 param administratorObjectId string
 param administratorName string
 @allowed([
@@ -38,7 +40,9 @@ resource server 'Microsoft.DBforPostgreSQL/flexibleServers@2024-08-01' = {
       geoRedundantBackup: 'Disabled'
     }
     network: {
-      publicNetworkAccess: 'Enabled'
+      publicNetworkAccess: 'Disabled'
+      delegatedSubnetResourceId: delegatedSubnetId
+      privateDnsZoneArmResourceId: privateDnsZoneId
     }
   }
 }

@@ -90,6 +90,17 @@ param keyVaultSkuName string
 @description('Azure Container Registry SKU.')
 param containerRegistrySkuName string
 
+@description('Deploy real applications after their immutable images are published.')
+param deployApplications bool = false
+param apiImage string = ''
+param webImage string = ''
+param workerImage string = ''
+param apiEntraTenantId string = ''
+param apiEntraAudience string = ''
+param networkAddressPrefix string
+param containerAppsSubnetPrefix string
+param postgresSubnetPrefix string
+
 var suffix = uniqueString(subscription().id, resourceGroupName, location)
 var sanitizedPrefix = replace(toLower(resourcePrefix), '-', '')
 var storageAccountName = '${take(sanitizedPrefix, 11)}${take(suffix, 13)}'
@@ -160,9 +171,26 @@ module postgres './modules/postgres.bicep' = {
     storageSizeGb: postgresStorageSizeGb
     version: postgresVersion
     databaseName: postgresDatabaseName
+    delegatedSubnetId: network.outputs.postgresSubnetId
+    privateDnsZoneId: network.outputs.postgresPrivateDnsZoneId
     administratorObjectId: postgresAdministratorObjectId
     administratorName: postgresAdministratorName
     administratorPrincipalType: postgresAdministratorPrincipalType
+    logAnalyticsWorkspaceId: monitoring.outputs.workspaceId
+    tags: tags
+  }
+}
+
+module network './modules/network.bicep' = {
+  name: 'network-${take(suffix, 8)}'
+  scope: environmentResourceGroup
+  params: {
+    location: location
+    networkName: '${resourcePrefix}-vnet-${take(suffix, 6)}'
+    addressPrefix: networkAddressPrefix
+    containerAppsSubnetPrefix: containerAppsSubnetPrefix
+    postgresSubnetPrefix: postgresSubnetPrefix
+    postgresPrivateDnsZoneName: '${postgresServerName}.private.postgres.database.azure.com'
     logAnalyticsWorkspaceId: monitoring.outputs.workspaceId
     tags: tags
   }
@@ -339,8 +367,32 @@ module containerApps './modules/container-apps.bicep' = {
     apiAppName: '${resourcePrefix}-api-${take(suffix, 6)}'
     webAppName: '${resourcePrefix}-web-${take(suffix, 6)}'
     workerAppName: '${resourcePrefix}-worker-${take(suffix, 6)}'
+    infrastructureSubnetId: network.outputs.containerAppsSubnetId
+    deployApplications: deployApplications
+    apiImage: apiImage
+    webImage: webImage
+    workerImage: workerImage
+    registryLoginServer: containerRegistry.outputs.loginServer
+    apiIdentityId: apiIdentity.outputs.identityId
+    apiIdentityClientId: apiIdentity.outputs.clientId
+    webIdentityId: webIdentity.outputs.identityId
+    webIdentityClientId: webIdentity.outputs.clientId
+    workerIdentityId: workerIdentity.outputs.identityId
+    workerIdentityClientId: workerIdentity.outputs.clientId
+    apiEntraTenantId: apiEntraTenantId
+    apiEntraAudience: apiEntraAudience
+    postgresHost: postgres.outputs.fullyQualifiedDomainName
+    postgresDatabaseName: postgresDatabaseName
+    blobEndpoint: storage.outputs.blobEndpoint
+    searchEndpoint: search.outputs.searchEndpoint
+    projectEndpoint: foundry.outputs.projectEndpoint
     tags: tags
   }
+  dependsOn: [
+    apiRegistryPull
+    webRegistryPull
+    workerRegistryPull
+  ]
 }
 
 output resourceGroupName string = environmentResourceGroup.name
@@ -376,3 +428,8 @@ output webIdentityClientId string = webIdentity.outputs.clientId
 output workerIdentityId string = workerIdentity.outputs.identityId
 output workerIdentityPrincipalId string = workerIdentity.outputs.principalId
 output workerIdentityClientId string = workerIdentity.outputs.clientId
+output virtualNetworkId string = network.outputs.networkId
+output apiUrl string = containerApps.outputs.apiUrl
+output webUrl string = containerApps.outputs.webUrl
+output apiDatabaseRoleName string = 'accelerator_api'
+output workerDatabaseRoleName string = 'accelerator_worker'

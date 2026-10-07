@@ -12,6 +12,20 @@ param(
 
 $ErrorActionPreference = 'Stop'
 
+function Invoke-WhatIf {
+    param([string[]] $Arguments)
+    $previousEncoding = $env:PYTHONIOENCODING
+    $previousConsoleEncoding = [Console]::OutputEncoding
+    try {
+        $env:PYTHONIOENCODING = 'utf-8'
+        [Console]::OutputEncoding = [System.Text.UTF8Encoding]::new($false)
+        & az @Arguments
+    } finally {
+        $env:PYTHONIOENCODING = $previousEncoding
+        [Console]::OutputEncoding = $previousConsoleEncoding
+    }
+}
+
 function Redact-WhatIfValue {
     param(
         [AllowNull()]
@@ -36,7 +50,7 @@ function Redact-WhatIfValue {
     }
 
     if ($Value -is [array]) {
-        return @(
+        return ,@(
             foreach ($item in $Value) {
                 Redact-WhatIfValue -Value $item
             }
@@ -68,6 +82,11 @@ if ($LASTEXITCODE -ne 0) {
     throw 'Bicep build failed.'
 }
 
+az bicep build-params --file $resolvedParameterFile --stdout | Out-Null
+if ($LASTEXITCODE -ne 0) {
+    throw 'Bicep parameter file compilation failed.'
+}
+
 if ($BuildOnly) {
     if (-not [string]::IsNullOrWhiteSpace($WhatIfOutputPath)) {
         throw '-WhatIfOutputPath cannot be used with -BuildOnly.'
@@ -95,6 +114,23 @@ if (-not [guid]::TryParse($env:AZURE_POSTGRES_ADMIN_OBJECT_ID, [ref] $postgresAd
     throw 'AZURE_POSTGRES_ADMIN_OBJECT_ID must be a valid Entra object ID.'
 }
 
+if ($postgresAdminObjectId -eq [guid]::Empty) {
+    throw 'AZURE_POSTGRES_ADMIN_OBJECT_ID cannot be the empty GUID.'
+}
+
+if ($env:DEPLOY_APPLICATIONS -eq 'true') {
+    foreach ($imageVariable in @('API_IMAGE', 'WEB_IMAGE', 'WORKER_IMAGE')) {
+        $image = [Environment]::GetEnvironmentVariable($imageVariable)
+        if ($image -notmatch '^[a-z0-9.-]+(?::[0-9]+)?/[a-z0-9._/-]+@sha256:[a-f0-9]{64}$') {
+            throw "$imageVariable must contain a registry image pinned by its sha256 digest."
+        }
+    }
+    if ([string]::IsNullOrWhiteSpace($env:API_ENTRA_TENANT_ID) -or
+        [string]::IsNullOrWhiteSpace($env:API_ENTRA_AUDIENCE)) {
+        throw 'Set API_ENTRA_TENANT_ID and API_ENTRA_AUDIENCE before deploying applications.'
+    }
+}
+
 if ($env:AZURE_POSTGRES_ADMIN_NAME -eq 'replace-with-entra-admin') {
     throw 'Set AZURE_POSTGRES_ADMIN_NAME to the Entra administrator principal name.'
 }
@@ -115,11 +151,13 @@ $whatIfArgs = @(
     $resolvedParameterFile
     '--output'
     'json'
+    '--no-pretty-print'
+    '--no-prompt'
 )
 
 $resolvedWhatIfOutputPath = $null
 if ([string]::IsNullOrWhiteSpace($WhatIfOutputPath)) {
-    $whatIfOutput = & az @whatIfArgs
+    $whatIfOutput = Invoke-WhatIf -Arguments $whatIfArgs
 } else {
     if ([System.IO.Path]::IsPathRooted($WhatIfOutputPath)) {
         $resolvedWhatIfOutputPath = [System.IO.Path]::GetFullPath($WhatIfOutputPath)
@@ -134,7 +172,7 @@ if ([string]::IsNullOrWhiteSpace($WhatIfOutputPath)) {
         New-Item -ItemType Directory -Path $outputDirectory -Force | Out-Null
     }
 
-    $whatIfOutput = & az @whatIfArgs
+    $whatIfOutput = Invoke-WhatIf -Arguments $whatIfArgs
 }
 
 if ($LASTEXITCODE -ne 0) {
