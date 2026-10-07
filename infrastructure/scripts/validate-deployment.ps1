@@ -5,10 +5,46 @@ param(
 
     [string] $ParameterFile = 'infrastructure/parameters/dev.example.bicepparam',
 
-    [switch] $BuildOnly
+    [switch] $BuildOnly,
+
+    [string] $WhatIfOutputPath
 )
 
 $ErrorActionPreference = 'Stop'
+
+function Redact-WhatIfValue {
+    param(
+        [AllowNull()]
+        [object] $Value
+    )
+
+    if ($null -eq $Value) {
+        return $null
+    }
+
+    if ($Value -is [System.Collections.IDictionary]) {
+        $redactedValue = [ordered]@{}
+        foreach ($key in $Value.Keys) {
+            if ($key -match '(?i)(password|secret|token|connection.?string|shared.?key|access.?key)') {
+                $redactedValue[$key] = '[REDACTED]'
+            } else {
+                $redactedValue[$key] = Redact-WhatIfValue -Value $Value[$key]
+            }
+        }
+
+        return $redactedValue
+    }
+
+    if ($Value -is [array]) {
+        return @(
+            foreach ($item in $Value) {
+                Redact-WhatIfValue -Value $item
+            }
+        )
+    }
+
+    return $Value
+}
 
 $repoRoot = (Resolve-Path (Join-Path $PSScriptRoot '..\..')).Path
 $templatePath = Join-Path $repoRoot 'infrastructure\main.bicep'
@@ -33,6 +69,10 @@ if ($LASTEXITCODE -ne 0) {
 }
 
 if ($BuildOnly) {
+    if (-not [string]::IsNullOrWhiteSpace($WhatIfOutputPath)) {
+        throw '-WhatIfOutputPath cannot be used with -BuildOnly.'
+    }
+
     return
 }
 
@@ -59,12 +99,58 @@ if ($env:AZURE_POSTGRES_ADMIN_NAME -eq 'replace-with-entra-admin') {
     throw 'Set AZURE_POSTGRES_ADMIN_NAME to the Entra administrator principal name.'
 }
 
-az deployment sub what-if `
-    --subscription $SubscriptionId `
-    --location $Location `
-    --name "fde-dev-what-if-$([DateTime]::UtcNow.ToString('yyyyMMddHHmmss'))" `
-    --template-file $templatePath `
-    --parameters $resolvedParameterFile
+$whatIfArgs = @(
+    'deployment'
+    'sub'
+    'what-if'
+    '--subscription'
+    $SubscriptionId
+    '--location'
+    $Location
+    '--name'
+    "fde-dev-what-if-$([DateTime]::UtcNow.ToString('yyyyMMddHHmmss'))"
+    '--template-file'
+    $templatePath
+    '--parameters'
+    $resolvedParameterFile
+    '--output'
+    'json'
+)
+
+$resolvedWhatIfOutputPath = $null
+if ([string]::IsNullOrWhiteSpace($WhatIfOutputPath)) {
+    $whatIfOutput = & az @whatIfArgs
+} else {
+    if ([System.IO.Path]::IsPathRooted($WhatIfOutputPath)) {
+        $resolvedWhatIfOutputPath = [System.IO.Path]::GetFullPath($WhatIfOutputPath)
+    } else {
+        $resolvedWhatIfOutputPath = [System.IO.Path]::GetFullPath(
+            (Join-Path $repoRoot $WhatIfOutputPath)
+        )
+    }
+
+    $outputDirectory = [System.IO.Path]::GetDirectoryName($resolvedWhatIfOutputPath)
+    if (-not (Test-Path -LiteralPath $outputDirectory -PathType Container)) {
+        New-Item -ItemType Directory -Path $outputDirectory -Force | Out-Null
+    }
+
+    $whatIfOutput = & az @whatIfArgs
+}
+
 if ($LASTEXITCODE -ne 0) {
     throw 'Subscription-level deployment what-if failed.'
+}
+
+if (-not [string]::IsNullOrWhiteSpace($WhatIfOutputPath)) {
+    try {
+        $whatIfResult = ConvertFrom-Json -InputObject ($whatIfOutput -join [Environment]::NewLine) -AsHashtable -ErrorAction Stop
+    } catch {
+        throw 'Azure CLI what-if output was not valid JSON.'
+    }
+
+    $redactedWhatIfResult = Redact-WhatIfValue -Value $whatIfResult
+    $redactedWhatIfJson = ConvertTo-Json -InputObject $redactedWhatIfResult -Depth 100
+    Set-Content -LiteralPath $resolvedWhatIfOutputPath -Value $redactedWhatIfJson -Encoding utf8
+} else {
+    $whatIfOutput
 }
