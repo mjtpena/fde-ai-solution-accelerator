@@ -1,0 +1,43 @@
+name: Copilot task
+description: A small, self-contained task suitable for the Copilot coding agent
+title: "[M?] "
+labels: ["copilot"]
+body:
+  - type: textarea
+    id: goal
+    attributes:
+      label: Goal
+      description: One or two sentences. What outcome, and why.
+    validations: { required: true }
+  - type: textarea
+    id: acceptance
+    attributes:
+      label: Acceptance criteria
+      description: Testable checklist. Each item must be verifiable by a test or command.
+      value: |
+        - [ ]
+        - [ ] `make check` passes
+        - [ ] `make eval-smoke` passes
+    validations: { required: true }
+  - type: textarea
+    id: in_scope
+    attributes:
+      label: Files in scope
+      placeholder: packages/agent_core/tools/**
+    validations: { required: true }
+  - type: textarea
+    id: out_scope
+    attributes:
+      label: Out of scope / do not touch
+      placeholder: infrastructure/**, evaluations/baselines/**
+  - type: textarea
+    id: refs
+    attributes:
+      label: References
+      description: Spec section, ADRs, Microsoft Learn links.
+  - type: dropdown
+    id: risk
+    attributes:
+      label: Security-sensitive?
+      options: ["No", "Yes — touches scope, approvals, auth, retrieval filters or telemetry"]
+    validations: { required: true }

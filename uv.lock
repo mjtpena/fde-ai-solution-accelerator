@@ -1,0 +1,55 @@
+version = 1
+revision = 3
+requires-python = "==3.12.*"
+
+[manifest]
+members = [
+    "fde-accelerator-api",
+    "fde-agent-core",
+    "fde-ai-solution-accelerator",
+    "fde-evaluation-core",
+    "fde-ingestion-worker",
+    "fde-observability-core",
+    "fde-retrieval-core",
+    "fde-security-core",
+]
+
+[[package]]
+name = "fde-accelerator-api"
+version = "0.1.0"
+source = { editable = "apps/api" }
+
+[[package]]
+name = "fde-agent-core"
+version = "0.1.0"
+source = { editable = "packages/agent_core" }
+
+[[package]]
+name = "fde-ai-solution-accelerator"
+version = "0.1.0"
+source = { virtual = "." }
+
+[[package]]
+name = "fde-evaluation-core"
+version = "0.1.0"
+source = { editable = "packages/evaluation_core" }
+
+[[package]]
+name = "fde-ingestion-worker"
+version = "0.1.0"
+source = { editable = "workers/ingestion" }
+
+[[package]]
+name = "fde-observability-core"
+version = "0.1.0"
+source = { editable = "packages/observability_core" }
+
+[[package]]
+name = "fde-retrieval-core"
+version = "0.1.0"
+source = { editable = "packages/retrieval_core" }
+
+[[package]]
+name = "fde-security-core"
+version = "0.1.0"
+source = { editable = "packages/security_core" }
