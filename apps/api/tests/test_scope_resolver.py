@@ -12,7 +12,7 @@ from sqlalchemy.ext.asyncio import create_async_engine
 
 from accelerator.api.app import create_app
 from accelerator.configuration.settings import Settings
-from accelerator.identity.authentication import Principal, get_current_principal
+from accelerator.identity.authentication import AppRole, Principal, get_current_principal
 from accelerator.identity.scope_resolver import configure_scope_resolver, get_execution_context
 from accelerator.security_core.data_boundaries.context import ExecutionContext
 from accelerator.security_core.infrastructure.database import Base, create_session_factory
@@ -195,7 +195,7 @@ async def test_unavailable_repository_fails_closed_with_correlated_log(
         return context
 
     async def principal() -> Principal:
-        return Principal(subject="subject", object_id=CALLER)
+        return Principal(subject="subject", object_id=CALLER, roles=frozenset({AppRole.READER}))
 
     app.dependency_overrides[get_current_principal] = principal
     engine = create_async_engine("sqlite+aiosqlite:///:memory:")
@@ -241,7 +241,7 @@ async def test_context_is_cached_for_shared_route_dependencies() -> None:
     configure_scope_resolver(app, RecordingRepository())
 
     async def principal() -> Principal:
-        return Principal(subject="subject", object_id=CALLER)
+        return Principal(subject="subject", object_id=CALLER, roles=frozenset({AppRole.READER}))
 
     app.dependency_overrides[get_current_principal] = principal
 
@@ -282,7 +282,7 @@ async def test_unhandled_server_error_preserves_correlation(
     configure_scope_resolver(app, FailingRepository())
 
     async def principal() -> Principal:
-        return Principal(subject="subject", object_id=CALLER)
+        return Principal(subject="subject", object_id=CALLER, roles=frozenset({AppRole.READER}))
 
     app.dependency_overrides[get_current_principal] = principal
 

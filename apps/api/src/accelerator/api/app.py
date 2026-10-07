@@ -7,7 +7,7 @@ from fastapi.middleware.cors import CORSMiddleware
 
 from accelerator.api.health import router as health_router
 from accelerator.configuration.settings import Settings
-from accelerator.identity.authentication import get_current_principal
+from accelerator.identity.authentication import AppRole, require_any_role
 from accelerator.identity.jwt_validator import EntraTokenValidator
 from accelerator.identity.scope_resolver import install_scope_boundary
 
@@ -23,8 +23,11 @@ def create_app(settings: Settings) -> FastAPI:
     app = FastAPI(
         title="FDE AI Solution Accelerator API",
         version="0.1.0",
+        docs_url=None,
+        redoc_url=None,
+        openapi_url=None,
         lifespan=lifespan,
-        dependencies=[Depends(get_current_principal)],
+        dependencies=[Depends(require_any_role(*AppRole))],
         responses={
             401: {"description": "Missing or invalid bearer token."},
             403: {"description": "Insufficient app role."},
