@@ -176,12 +176,23 @@ jobs:
           subscription-id: ${{ env.AZURE_SUBSCRIPTION_ID }}
 
       - name: Validate Bicep deployment with what-if
+        id: what_if
         shell: pwsh
         run: |
           ./infrastructure/scripts/validate-deployment.ps1 `
             -SubscriptionId "$env:AZURE_SUBSCRIPTION_ID" `
             -Location "$env:AZURE_LOCATION" `
-            -ParameterFile "infrastructure/parameters/dev.example.bicepparam"
+            -ParameterFile "infrastructure/parameters/dev.example.bicepparam" `
+            -WhatIfOutputPath (Join-Path $env:RUNNER_TEMP "deployment-what-if.json")
+
+      - name: Upload successful what-if evidence
+        if: steps.what_if.outcome == 'success'
+        uses: actions/upload-artifact@v4
+        with:
+          name: dev-subscription-what-if-${{ github.sha }}
+          path: ${{ runner.temp }}/deployment-what-if.json
+          if-no-files-found: error
+          retention-days: 30
 
       - name: Deploy dev infrastructure
         id: infrastructure
