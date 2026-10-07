@@ -1,10 +1,11 @@
 from typing import Annotated, Protocol, runtime_checkable
 
 from fastapi import APIRouter, Depends, HTTPException, Path, Request
-from pydantic import BaseModel, ValidationError
+from pydantic import BaseModel
 
 from accelerator.configuration.settings import Settings
-from accelerator.identity.execution_context import ExecutionContext
+from accelerator.identity.scope_resolver import get_execution_context
+from accelerator.security_core.data_boundaries.context import ExecutionContext
 
 REDACTED = "[REDACTED]"
 
@@ -50,17 +51,6 @@ class InMemoryRetrievalDiagnosticsStore:
 
     async def save(self, record: RetrievalDiagnosticRecord) -> None:
         self._records[record.correlation_id] = record
-
-
-def get_execution_context(request: Request) -> ExecutionContext:
-    raw_context = getattr(request.state, "execution_context", None)
-    if raw_context is None:
-        raise HTTPException(status_code=401, detail="Authentication required")
-
-    try:
-        return ExecutionContext.model_validate(raw_context)
-    except ValidationError as exc:
-        raise HTTPException(status_code=401, detail="Invalid execution context") from exc
 
 
 def require_contributor(

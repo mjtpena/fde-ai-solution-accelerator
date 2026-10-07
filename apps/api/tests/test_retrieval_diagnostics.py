@@ -1,8 +1,11 @@
 import asyncio
 from datetime import UTC, datetime
 import unittest
+from uuid import UUID
 
-from fastapi import HTTPException, Request
+from fastapi import HTTPException
+from fastapi.testclient import TestClient
+from httpx import Response
 
 from accelerator.api.app import create_app
 from accelerator.api.retrieval_diagnostics import (
@@ -10,12 +13,13 @@ from accelerator.api.retrieval_diagnostics import (
     RetrievalDiagnosticRecord,
     RetrievalDiagnosticResult,
     RetrievalDiagnosticsResponse,
-    get_execution_context,
     get_retrieval_diagnostics,
     require_contributor,
 )
 from accelerator.configuration.settings import Settings
-from accelerator.identity.execution_context import ExecutionContext
+from accelerator.identity.authentication import get_current_principal
+from accelerator.identity.scope_resolver import get_execution_context
+from accelerator.security_core.data_boundaries.context import ExecutionContext
 
 
 class RetrievalDiagnosticsTests(unittest.TestCase):
@@ -47,13 +51,24 @@ class RetrievalDiagnosticsTests(unittest.TestCase):
             deadline_utc=datetime.now(UTC),
         )
 
-    def test_requires_authenticated_execution_context(self) -> None:
-        request = Request({"type": "http", "app": create_app(Settings(environment="test"))})
+    def settings(self, diagnostics_include_content: bool = False) -> Settings:
+        return Settings(
+            environment="test",
+            entra_tenant_id=UUID("00000000-0000-0000-0000-000000000001"),
+            entra_audience="api://test",
+            diagnostics_include_content=diagnostics_include_content,
+        )
 
-        with self.assertRaises(HTTPException) as raised:
-            get_execution_context(request)
+    def get_response(self, context: ExecutionContext) -> Response:
+        app = create_app(self.settings(), self.store)
+        app.dependency_overrides[get_execution_context] = lambda: context
+        app.dependency_overrides[get_current_principal] = lambda: None
 
-        self.assertEqual(raised.exception.status_code, 401)
+        with TestClient(app) as client:
+            response = client.get("/diagnostics/retrieval/trace-1")
+        if not isinstance(response, Response):
+            raise AssertionError("Expected an HTTP response")
+        return response
 
     def test_requires_contributor_role(self) -> None:
         reader = self.contributor.model_copy(update={"roles": frozenset({"Reader"})})
@@ -62,6 +77,7 @@ class RetrievalDiagnosticsTests(unittest.TestCase):
             require_contributor(reader)
 
         self.assertEqual(raised.exception.status_code, 403)
+        self.assertEqual(self.get_response(reader).status_code, 403)
 
     def test_accepts_normalized_contributor_role(self) -> None:
         contributor = self.contributor.model_copy(update={"roles": frozenset({"CONTRIBUTOR"})})
@@ -74,7 +90,7 @@ class RetrievalDiagnosticsTests(unittest.TestCase):
                 "trace-1",
                 self.contributor,
                 self.store,
-                Settings(environment="test"),
+                self.settings(),
             )
         )
 
@@ -92,13 +108,25 @@ class RetrievalDiagnosticsTests(unittest.TestCase):
         self.assertEqual(response.results[0].score, 0.9)
         self.assertEqual(response.results[0].reranker_score, 0.8)
 
+    def test_http_response_contains_diagnostics_with_redacted_content(self) -> None:
+        response = self.get_response(self.contributor)
+        body = response.json()
+
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(body["correlation_id"], "trace-1")
+        self.assertEqual(body["query"], "[REDACTED]")
+        self.assertEqual(body["filters"], {"scope_id": "scope-a"})
+        self.assertEqual(body["results"][0]["score"], 0.9)
+        self.assertEqual(body["results"][0]["reranker_score"], 0.8)
+        self.assertEqual(body["results"][0]["text"], "[REDACTED]")
+
     def test_content_is_returned_only_when_enabled_by_settings(self) -> None:
         response = asyncio.run(
             get_retrieval_diagnostics(
                 "trace-1",
                 self.contributor,
                 self.store,
-                Settings(environment="test", diagnostics_include_content=True),
+                self.settings(diagnostics_include_content=True),
             )
         )
 
@@ -111,7 +139,7 @@ class RetrievalDiagnosticsTests(unittest.TestCase):
         with self.assertRaises(HTTPException) as raised:
             asyncio.run(
                 get_retrieval_diagnostics(
-                    "trace-1", other_scope, self.store, Settings(environment="test")
+                    "trace-1", other_scope, self.store, self.settings()
                 )
             )
 

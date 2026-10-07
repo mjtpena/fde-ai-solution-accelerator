@@ -12,10 +12,17 @@ function isHealthResponse(value: unknown): value is HealthResponse {
   );
 }
 
-export async function getHealth(fetcher: typeof fetch = fetch): Promise<HealthResponse> {
-  const apiBaseUrl = process.env.API_BASE_URL ?? "http://localhost:8000";
+export async function getHealth(
+  accessToken: string,
+  fetcher: typeof fetch = fetch,
+): Promise<HealthResponse> {
+  const apiBaseUrl =
+    process.env.NEXT_PUBLIC_API_URL ?? process.env.API_BASE_URL ?? "http://localhost:8000";
   const response = await fetcher(new URL("/healthz", apiBaseUrl), {
-    headers: { Accept: "application/json" },
+    headers: {
+      Accept: "application/json",
+      Authorization: `Bearer ${accessToken}`,
+    },
     cache: "no-store",
   });
 
