@@ -6,7 +6,10 @@ build-backend = "setuptools.build_meta"
 name = "fde-accelerator-api"
 version = "0.1.0"
 requires-python = "==3.12.*"
-dependencies = []
+dependencies = [
+    "fastapi>=0.115,<1",
+    "pydantic-settings>=2.7,<3",
+]
 
 [tool.setuptools]
 package-dir = {"" = "src"}
