@@ -94,7 +94,7 @@ def test_policy_rejects_non_finite_score_thresholds(score: float) -> None:
         SufficiencyPolicy(minimum_score=score, minimum_evidence_count=1)
 
 
-@pytest.mark.parametrize("count", [True, False, -1])
+@pytest.mark.parametrize("count", [True, False, -1, 1.5, float("nan"), float("inf")])
 def test_policy_rejects_invalid_evidence_counts(count: int) -> None:
     with pytest.raises(ValueError, match="minimum_evidence_count"):
         SufficiencyPolicy(minimum_score=0.5, minimum_evidence_count=count)
