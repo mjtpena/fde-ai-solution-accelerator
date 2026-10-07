@@ -9,6 +9,7 @@ from accelerator.api.health import router as health_router
 from accelerator.configuration.settings import Settings
 from accelerator.identity.authentication import AppRole, require_any_role
 from accelerator.identity.jwt_validator import EntraTokenValidator
+from accelerator.identity.scope_resolver import install_scope_boundary
 
 
 @asynccontextmanager
@@ -41,4 +42,5 @@ def create_app(settings: Settings) -> FastAPI:
         allow_headers=["*"],
     )
     app.include_router(health_router)
+    install_scope_boundary(app)
     return app

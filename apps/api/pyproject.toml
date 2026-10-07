@@ -7,11 +7,15 @@ name = "fde-accelerator-api"
 version = "0.1.0"
 requires-python = "==3.12.*"
 dependencies = [
+    "fde-security-core",
     "fastapi>=0.115,<1",
     "httpx>=0.28,<1",
     "pydantic-settings>=2.7,<3",
     "pyjwt[crypto]>=2.10,<3",
 ]
+
+[tool.uv.sources]
+fde-security-core = { workspace = true }
 
 [tool.setuptools]
 package-dir = {"" = "src"}
@@ -19,3 +23,6 @@ package-dir = {"" = "src"}
 [tool.setuptools.packages.find]
 where = ["src"]
 include = ["accelerator*"]
+
+[tool.setuptools.package-data]
+accelerator = ["py.typed"]
