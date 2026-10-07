@@ -13,18 +13,22 @@ from sqlalchemy.dialects import postgresql
 from accelerator.agent_core.approvals import (
     Approval,
     ApprovalAuditEvent,
+    ApprovalContext,
     ApprovalExpiredError,
     ApprovalMismatchError,
     ApprovalReplayError,
     ApprovalScopeError,
     ApprovalService,
+    ApprovalTool,
     canonical_args_hash,
 )
+from accelerator.agent_core.tools import EnterpriseTool, ExecutionContextProtocol, ToolRisk
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from accelerator.infrastructure.approvals import (
     SQLAlchemyApprovalRepository,
 )
+from accelerator.security_core.data_boundaries.context import ExecutionContext
 
 
 @dataclass(frozen=True)
@@ -46,13 +50,16 @@ class Result(BaseModel):
     completed: bool
 
 
-class Tool:
+class Tool(EnterpriseTool[Arguments, Result]):
     name: ClassVar[str] = "write_record"
+    description: ClassVar[str] = "Write a record after approval."
+    risk: ClassVar[ToolRisk] = ToolRisk.LOW_IMPACT_WRITE
+    args_model: ClassVar[type[BaseModel]] = Arguments
 
     def __init__(self) -> None:
         self.calls = 0
 
-    async def execute(self, args: Arguments, ctx: Context) -> Result:
+    async def execute(self, args: Arguments, ctx: ExecutionContextProtocol) -> Result:
         self.calls += 1
         return Result(completed=True)
 
@@ -236,6 +243,26 @@ class ApprovalServiceTests(IsolatedAsyncioTestCase):
             canonical_args_hash(Arguments(amount=1, note="a")),
             canonical_args_hash(Arguments(note="a", amount=1)),
         )
+
+    async def test_concrete_server_context_and_enterprise_tool_are_compatible(self) -> None:
+        context = ExecutionContext(
+            user_id="user-1",
+            correlation_id="correlation-1",
+            roles=frozenset(),
+            scope_ids=frozenset({"scope-1"}),
+            deadline_utc=self.now + timedelta(minutes=5),
+        )
+        self.assertIs(ApprovalContext, ExecutionContextProtocol)
+        self.assertIs(ApprovalTool, EnterpriseTool)
+        approval = await self.service.create(
+            tool_name=self.tool.name, args=self.args, ctx=context
+        )
+        await self.service.approve(approval_id=approval.id, ctx=context)
+        result = await self.service.execute(
+            approval_id=approval.id, tool=self.tool, args=self.args, ctx=context
+        )
+        self.assertEqual(result, Result(completed=True))
+        self.assertEqual(self.tool.calls, 1)
 
 
 class _ScalarResult:

@@ -7,13 +7,15 @@ from uuid import UUID, uuid4
 
 from pydantic import BaseModel
 
+from ..tools import EnterpriseTool, ExecutionContextProtocol
+
 from .models import Approval, ApprovalAuditEvent
 
 TArgs = TypeVar("TArgs", bound=BaseModel)
 TResult = TypeVar("TResult", bound=BaseModel)
-TToolArgs = TypeVar("TToolArgs", bound=BaseModel, contravariant=True)
-TToolResult = TypeVar("TToolResult", bound=BaseModel, covariant=True)
 Decision = Literal["approved", "rejected"]
+ApprovalContext = ExecutionContextProtocol
+ApprovalTool = EnterpriseTool
 
 
 class ApprovalError(Exception):
@@ -42,21 +44,6 @@ class ApprovalStateError(ApprovalError):
 
 class ApprovalReplayError(ApprovalStateError):
     pass
-
-
-class ApprovalContext(Protocol):
-    user_id: str
-    scope_ids: frozenset[str]
-    correlation_id: str
-    roles: frozenset[str]
-    session_id: str | None
-    deadline_utc: datetime
-
-
-class ApprovalTool(Protocol, Generic[TToolArgs, TToolResult]):
-    name: str
-
-    async def execute(self, args: TToolArgs, ctx: ApprovalContext) -> TToolResult: ...
 
 
 class ApprovalRepository(Protocol):
