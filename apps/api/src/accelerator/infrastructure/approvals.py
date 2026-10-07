@@ -92,6 +92,14 @@ class SQLAlchemyApprovalRepository:
                 correlation_id=approval.correlation_id,
             )
         )
+        # ``ApprovalAuditRecord`` has no declared ORM relationship to
+        # ``ApprovalRecord`` (they are independent tables with a raw FK
+        # column), so the unit-of-work cannot infer that this insert must
+        # precede a same-flush audit-event insert for the same approval.
+        # Flushing immediately pins the insert order and prevents a foreign
+        # key violation against a database that enforces it (observed with
+        # real PostgreSQL; masked by SQLite's default FK enforcement).
+        await self._session.flush()
 
     async def update(self, approval: Approval) -> None:
         statement = (

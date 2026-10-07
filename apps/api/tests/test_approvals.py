@@ -1,14 +1,19 @@
 import asyncio
+import os
+import socket
+import time
 from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
 from dataclasses import dataclass
 from datetime import UTC, datetime, timedelta
 from typing import ClassVar, cast
-from unittest import IsolatedAsyncioTestCase
 from uuid import UUID
 
+import pytest
 from pydantic import BaseModel
 from sqlalchemy.dialects import postgresql
+from sqlalchemy.engine import make_url
+from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker, create_async_engine
 
 from accelerator.agent_core.approvals import (
     Approval,
@@ -23,9 +28,8 @@ from accelerator.agent_core.approvals import (
     canonical_args_hash,
 )
 from accelerator.agent_core.tools import EnterpriseTool, ExecutionContextProtocol, ToolRisk
-from sqlalchemy.ext.asyncio import AsyncSession
-
 from accelerator.infrastructure.approvals import (
+    ApprovalBase,
     SQLAlchemyApprovalRepository,
 )
 from accelerator.security_core.data_boundaries.context import ExecutionContext
@@ -99,170 +103,321 @@ class InMemoryApprovalRepository:
         self.audit_events.append(event)
 
 
-class ApprovalServiceTests(IsolatedAsyncioTestCase):
-    def setUp(self) -> None:
-        self.now = datetime(2026, 10, 7, 12, 0, tzinfo=UTC)
-        self.repository = InMemoryApprovalRepository()
-        self.service = ApprovalService[Arguments, Result](
-            self.repository,
-            clock=lambda: self.now,
-        )
-        self.context = Context()
-        self.args = Arguments(amount=25, note="approved")
-        self.tool = Tool()
+class Clock:
+    """Mutable, timezone-aware test clock injected into ``ApprovalService``."""
 
-    async def _approved(self, *, expires_at: datetime | None = None) -> Approval:
-        approval = await self.service.create(
-            tool_name=self.tool.name,
-            args=self.args,
-            ctx=self.context,
-            expires_at=expires_at,
-        )
-        return await self.service.approve(approval_id=approval.id, ctx=self.context)
+    def __init__(self, now: datetime) -> None:
+        self.now = now
 
-    async def test_execute_with_matching_approval_succeeds_once(self) -> None:
-        approval = await self._approved()
+    def __call__(self) -> datetime:
+        return self.now
 
-        result = await self.service.execute(
+
+@pytest.fixture
+def clock() -> Clock:
+    return Clock(datetime(2026, 10, 7, 12, 0, tzinfo=UTC))
+
+
+@pytest.fixture
+def repository() -> InMemoryApprovalRepository:
+    return InMemoryApprovalRepository()
+
+
+@pytest.fixture
+def service(
+    repository: InMemoryApprovalRepository, clock: Clock
+) -> ApprovalService[Arguments, Result]:
+    return ApprovalService[Arguments, Result](repository, clock=clock)
+
+
+@pytest.fixture
+def context() -> Context:
+    return Context()
+
+
+@pytest.fixture
+def args() -> Arguments:
+    return Arguments(amount=25, note="approved")
+
+
+@pytest.fixture
+def tool() -> Tool:
+    return Tool()
+
+
+async def _approved(
+    service: ApprovalService[Arguments, Result],
+    *,
+    tool: Tool,
+    args: Arguments,
+    context: Context,
+    expires_at: datetime | None = None,
+) -> Approval:
+    approval = await service.create(
+        tool_name=tool.name,
+        args=args,
+        ctx=context,
+        expires_at=expires_at,
+    )
+    return await service.approve(approval_id=approval.id, ctx=context)
+
+
+async def test_execute_with_matching_approval_succeeds_once(
+    service: ApprovalService[Arguments, Result],
+    repository: InMemoryApprovalRepository,
+    tool: Tool,
+    args: Arguments,
+    context: Context,
+) -> None:
+    approval = await _approved(service, tool=tool, args=args, context=context)
+
+    result = await service.execute(approval_id=approval.id, tool=tool, args=args, ctx=context)
+
+    assert result == Result(completed=True)
+    assert tool.calls == 1
+    assert repository.approvals[approval.id].status == "executed"
+    assert [event.transition for event in repository.audit_events] == [
+        "pending",
+        "approved",
+        "executed",
+    ]
+
+
+async def test_replay_fails_without_invoking_tool_again(
+    service: ApprovalService[Arguments, Result],
+    tool: Tool,
+    args: Arguments,
+    context: Context,
+) -> None:
+    approval = await _approved(service, tool=tool, args=args, context=context)
+    await service.execute(approval_id=approval.id, tool=tool, args=args, ctx=context)
+
+    with pytest.raises(ApprovalReplayError):
+        await service.execute(approval_id=approval.id, tool=tool, args=args, ctx=context)
+
+    assert tool.calls == 1
+
+
+async def test_concurrent_replay_executes_tool_only_once(
+    service: ApprovalService[Arguments, Result],
+    tool: Tool,
+    args: Arguments,
+    context: Context,
+) -> None:
+    approval = await _approved(service, tool=tool, args=args, context=context)
+
+    async def execute() -> BaseModel | ApprovalReplayError:
+        try:
+            return await service.execute(approval_id=approval.id, tool=tool, args=args, ctx=context)
+        except ApprovalReplayError as error:
+            return error
+
+    results = await asyncio.gather(execute(), execute())
+
+    assert sum(isinstance(result, Result) for result in results) == 1
+    assert sum(isinstance(result, ApprovalReplayError) for result in results) == 1
+    assert tool.calls == 1
+
+
+async def test_modified_arguments_fail_without_invoking_tool(
+    service: ApprovalService[Arguments, Result],
+    tool: Tool,
+    args: Arguments,
+    context: Context,
+) -> None:
+    approval = await _approved(service, tool=tool, args=args, context=context)
+
+    with pytest.raises(ApprovalMismatchError):
+        await service.execute(
             approval_id=approval.id,
-            tool=self.tool,
-            args=self.args,
-            ctx=self.context,
+            tool=tool,
+            args=Arguments(amount=26, note="approved"),
+            ctx=context,
         )
 
-        self.assertEqual(result, Result(completed=True))
-        self.assertEqual(self.tool.calls, 1)
-        self.assertEqual(self.repository.approvals[approval.id].status, "executed")
-        self.assertEqual(
-            [event.transition for event in self.repository.audit_events],
-            ["pending", "approved", "executed"],
-        )
+    assert tool.calls == 0
 
-    async def test_replay_fails_without_invoking_tool_again(self) -> None:
-        approval = await self._approved()
-        await self.service.execute(
+
+async def test_different_tool_fails_without_invoking_tool(
+    service: ApprovalService[Arguments, Result],
+    tool: Tool,
+    args: Arguments,
+    context: Context,
+) -> None:
+    approval = await _approved(service, tool=tool, args=args, context=context)
+    other_tool = DifferentTool()
+
+    with pytest.raises(ApprovalMismatchError):
+        await service.execute(approval_id=approval.id, tool=other_tool, args=args, ctx=context)
+
+    assert other_tool.calls == 0
+
+
+async def test_expired_approval_fails_and_is_audited(
+    service: ApprovalService[Arguments, Result],
+    repository: InMemoryApprovalRepository,
+    clock: Clock,
+    tool: Tool,
+    args: Arguments,
+    context: Context,
+) -> None:
+    approval = await _approved(
+        service, tool=tool, args=args, context=context, expires_at=clock.now + timedelta(seconds=1)
+    )
+    clock.now += timedelta(seconds=1)
+
+    with pytest.raises(ApprovalExpiredError):
+        await service.execute(approval_id=approval.id, tool=tool, args=args, ctx=context)
+
+    assert tool.calls == 0
+    assert repository.approvals[approval.id].status == "expired"
+    assert repository.audit_events[-1].transition == "expired"
+
+
+async def test_expiry_at_decision_time_fails_before_any_approval_or_rejection(
+    service: ApprovalService[Arguments, Result],
+    repository: InMemoryApprovalRepository,
+    clock: Clock,
+    tool: Tool,
+    args: Arguments,
+    context: Context,
+) -> None:
+    approval = await service.create(
+        tool_name=tool.name,
+        args=args,
+        ctx=context,
+        expires_at=clock.now + timedelta(seconds=1),
+    )
+    clock.now += timedelta(seconds=1)
+
+    with pytest.raises(ApprovalExpiredError):
+        await service.approve(approval_id=approval.id, ctx=context)
+
+    assert repository.approvals[approval.id].status == "expired"
+    assert repository.approvals[approval.id].decided_by is None
+    assert [event.transition for event in repository.audit_events] == ["pending", "expired"]
+
+    # Rejecting an already-expired, never-decided approval must also fail the
+    # same way, rather than silently transitioning to "rejected".
+    with pytest.raises(ApprovalExpiredError):
+        await service.reject(approval_id=approval.id, ctx=context)
+
+    assert repository.approvals[approval.id].status == "expired"
+
+
+async def test_validate_approval_receives_persisted_record_before_invocation(
+    service: ApprovalService[Arguments, Result],
+    tool: Tool,
+    args: Arguments,
+    context: Context,
+) -> None:
+    approval = await _approved(service, tool=tool, args=args, context=context)
+    seen: list[Approval] = []
+
+    def validate_approval(persisted: Approval) -> None:
+        seen.append(persisted)
+
+    result = await service.execute(
+        approval_id=approval.id,
+        tool=tool,
+        args=args,
+        ctx=context,
+        validate_approval=validate_approval,
+    )
+
+    assert result == Result(completed=True)
+    assert tool.calls == 1
+    assert len(seen) == 1
+    # The callback must see the authoritative, locked, persisted row - not a
+    # caller-supplied value - including server-decided fields.
+    assert seen[0].id == approval.id
+    assert seen[0].status == "approved"
+    assert seen[0].requested_by == context.user_id
+    assert seen[0].decided_by == context.user_id
+    assert seen[0].scope_id == next(iter(context.scope_ids))
+
+
+async def test_validate_approval_rejection_prevents_execution_and_commits_no_change(
+    service: ApprovalService[Arguments, Result],
+    repository: InMemoryApprovalRepository,
+    tool: Tool,
+    args: Arguments,
+    context: Context,
+) -> None:
+    approval = await _approved(service, tool=tool, args=args, context=context)
+
+    class PolicyDenied(Exception):
+        pass
+
+    def validate_approval(_: Approval) -> None:
+        raise PolicyDenied("privileged role required")
+
+    with pytest.raises(PolicyDenied):
+        await service.execute(
             approval_id=approval.id,
-            tool=self.tool,
-            args=self.args,
-            ctx=self.context,
+            tool=tool,
+            args=args,
+            ctx=context,
+            validate_approval=validate_approval,
         )
 
-        with self.assertRaises(ApprovalReplayError):
-            await self.service.execute(
-                approval_id=approval.id,
-                tool=self.tool,
-                args=self.args,
-                ctx=self.context,
-            )
+    # Tool must never be invoked, and the approval remains "approved" (not
+    # "executed") so a corrected/validated retry can still proceed.
+    assert tool.calls == 0
+    assert repository.approvals[approval.id].status == "approved"
+    assert [event.transition for event in repository.audit_events] == ["pending", "approved"]
 
-        self.assertEqual(self.tool.calls, 1)
 
-    async def test_concurrent_replay_executes_tool_only_once(self) -> None:
-        approval = await self._approved()
-
-        async def execute() -> BaseModel | ApprovalReplayError:
-            try:
-                return await self.service.execute(
-                    approval_id=approval.id,
-                    tool=self.tool,
-                    args=self.args,
-                    ctx=self.context,
-                )
-            except ApprovalReplayError as error:
-                return error
-
-        results = await asyncio.gather(execute(), execute())
-
-        self.assertEqual(sum(isinstance(result, Result) for result in results), 1)
-        self.assertEqual(sum(isinstance(result, ApprovalReplayError) for result in results), 1)
-        self.assertEqual(self.tool.calls, 1)
-
-    async def test_modified_arguments_fail_without_invoking_tool(self) -> None:
-        approval = await self._approved()
-
-        with self.assertRaises(ApprovalMismatchError):
-            await self.service.execute(
-                approval_id=approval.id,
-                tool=self.tool,
-                args=Arguments(amount=26, note="approved"),
-                ctx=self.context,
-            )
-
-        self.assertEqual(self.tool.calls, 0)
-
-    async def test_different_tool_fails_without_invoking_tool(self) -> None:
-        approval = await self._approved()
-        other_tool = DifferentTool()
-
-        with self.assertRaises(ApprovalMismatchError):
-            await self.service.execute(
-                approval_id=approval.id,
-                tool=other_tool,
-                args=self.args,
-                ctx=self.context,
-            )
-
-        self.assertEqual(other_tool.calls, 0)
-
-    async def test_expired_approval_fails_and_is_audited(self) -> None:
-        approval = await self._approved(expires_at=self.now + timedelta(seconds=1))
-        self.now += timedelta(seconds=1)
-
-        with self.assertRaises(ApprovalExpiredError):
-            await self.service.execute(
-                approval_id=approval.id,
-                tool=self.tool,
-                args=self.args,
-                ctx=self.context,
-            )
-
-        self.assertEqual(self.tool.calls, 0)
-        self.assertEqual(self.repository.approvals[approval.id].status, "expired")
-        self.assertEqual(self.repository.audit_events[-1].transition, "expired")
-
-    async def test_approval_scope_cannot_be_widened_or_supplied_by_args(self) -> None:
-        with self.assertRaises(ApprovalScopeError):
-            await self.service.create(
-                tool_name=self.tool.name,
-                args=self.args,
-                ctx=Context(scope_ids=frozenset({"scope-1", "scope-2"})),
-            )
-
-        approval = await self._approved()
-        with self.assertRaises(ApprovalScopeError):
-            await self.service.execute(
-                approval_id=approval.id,
-                tool=self.tool,
-                args=self.args,
-                ctx=Context(scope_ids=frozenset({"scope-2"})),
-            )
-        self.assertEqual(self.tool.calls, 0)
-
-    async def test_canonical_hash_is_stable_and_exposed(self) -> None:
-        self.assertEqual(
-            canonical_args_hash(Arguments(amount=1, note="a")),
-            canonical_args_hash(Arguments(note="a", amount=1)),
+async def test_approval_scope_cannot_be_widened_or_supplied_by_args(
+    service: ApprovalService[Arguments, Result],
+    tool: Tool,
+    args: Arguments,
+    context: Context,
+) -> None:
+    with pytest.raises(ApprovalScopeError):
+        await service.create(
+            tool_name=tool.name,
+            args=args,
+            ctx=Context(scope_ids=frozenset({"scope-1", "scope-2"})),
         )
 
-    async def test_concrete_server_context_and_enterprise_tool_are_compatible(self) -> None:
-        context = ExecutionContext(
-            user_id="user-1",
-            correlation_id="correlation-1",
-            roles=frozenset(),
-            scope_ids=frozenset({"scope-1"}),
-            deadline_utc=self.now + timedelta(minutes=5),
+    approval = await _approved(service, tool=tool, args=args, context=context)
+    with pytest.raises(ApprovalScopeError):
+        await service.execute(
+            approval_id=approval.id,
+            tool=tool,
+            args=args,
+            ctx=Context(scope_ids=frozenset({"scope-2"})),
         )
-        self.assertIs(ApprovalContext, ExecutionContextProtocol)
-        self.assertIs(ApprovalTool, EnterpriseTool)
-        approval = await self.service.create(
-            tool_name=self.tool.name, args=self.args, ctx=context
-        )
-        await self.service.approve(approval_id=approval.id, ctx=context)
-        result = await self.service.execute(
-            approval_id=approval.id, tool=self.tool, args=self.args, ctx=context
-        )
-        self.assertEqual(result, Result(completed=True))
-        self.assertEqual(self.tool.calls, 1)
+    assert tool.calls == 0
+
+
+async def test_canonical_hash_is_stable_and_exposed() -> None:
+    assert canonical_args_hash(Arguments(amount=1, note="a")) == canonical_args_hash(
+        Arguments(note="a", amount=1)
+    )
+
+
+async def test_concrete_server_context_and_enterprise_tool_are_compatible(
+    service: ApprovalService[Arguments, Result],
+    clock: Clock,
+    tool: Tool,
+    args: Arguments,
+) -> None:
+    context = ExecutionContext(
+        user_id="user-1",
+        correlation_id="correlation-1",
+        roles=frozenset(),
+        scope_ids=frozenset({"scope-1"}),
+        deadline_utc=clock.now + timedelta(minutes=5),
+    )
+    assert ApprovalContext is ExecutionContextProtocol
+    assert ApprovalTool is EnterpriseTool
+    approval = await service.create(tool_name=tool.name, args=args, ctx=context)
+    await service.approve(approval_id=approval.id, ctx=context)
+    result = await service.execute(approval_id=approval.id, tool=tool, args=args, ctx=context)
+    assert result == Result(completed=True)
+    assert tool.calls == 1
 
 
 class _ScalarResult:
@@ -272,20 +427,163 @@ class _ScalarResult:
 
 class _RecordingSession:
     def __init__(self) -> None:
-        self.statement = None
+        self.statement: object | None = None
 
     async def execute(self, statement: object) -> _ScalarResult:
         self.statement = statement
         return _ScalarResult()
 
 
-class ApprovalRepositoryTests(IsolatedAsyncioTestCase):
-    async def test_get_for_update_uses_postgresql_row_lock(self) -> None:
-        session = _RecordingSession()
-        repository = SQLAlchemyApprovalRepository(cast(AsyncSession, session))
+async def test_get_for_update_uses_postgresql_row_lock() -> None:
+    session = _RecordingSession()
+    repository = SQLAlchemyApprovalRepository(cast(AsyncSession, session))
 
-        await repository.get_for_update(UUID(int=1))
+    await repository.get_for_update(UUID(int=1))
 
-        self.assertIsNotNone(session.statement)
-        sql = str(session.statement.compile(dialect=postgresql.dialect()))
-        self.assertIn("FOR UPDATE", sql)
+    assert session.statement is not None
+    sql = str(session.statement.compile(dialect=postgresql.dialect()))  # type: ignore[attr-defined]
+    assert "FOR UPDATE" in sql
+
+
+# --- Real PostgreSQL two-session row-lock concurrency evidence ---------------
+#
+# The tests above prove the service's own locking *contract* (every mutation
+# happens inside one ``repository.transaction()``), using an in-memory
+# repository whose ``asyncio.Lock`` only serializes callers *within this one
+# process*. That is not evidence that the real adapter is safe across two
+# independent database connections/sessions, which is what "exactly-once"
+# actually depends on in production. The test below exercises the concrete
+# ``SQLAlchemyApprovalRepository`` against a real PostgreSQL server using two
+# separate engines/sessions (i.e. two separate backend connections), and
+# measures that the loser's ``SELECT ... FOR UPDATE`` genuinely blocks at the
+# database for the duration the winner holds the row, rather than merely
+# observing a final state that could also result from in-process ordering.
+#
+# It is skipped (with a clear, actionable reason) when no reachable
+# PostgreSQL is configured, so `make check` / default `pytest` runs do not
+# require Docker. Start one locally with `docker compose up -d postgres`
+# (see docker-compose.yml) and optionally set
+# APPROVALS_TEST_POSTGRES_DSN to point elsewhere.
+
+POSTGRES_DSN = os.environ.get(
+    "APPROVALS_TEST_POSTGRES_DSN",
+    "postgresql+asyncpg://accelerator:local-development-only@localhost:5432/accelerator",
+)
+LOCK_HOLD_SECONDS = 0.4
+
+
+def _postgres_reachable(dsn: str, timeout: float = 1.0) -> bool:
+    url = make_url(dsn)
+    if url.host is None:
+        return False
+    try:
+        with socket.create_connection((url.host, url.port or 5432), timeout=timeout):
+            return True
+    except OSError:
+        return False
+
+
+requires_postgres = pytest.mark.skipif(
+    not _postgres_reachable(POSTGRES_DSN),
+    reason=(
+        "Real PostgreSQL is not reachable at "
+        f"APPROVALS_TEST_POSTGRES_DSN={POSTGRES_DSN!r}. Start one with "
+        "`docker compose up -d postgres` to run this two-session row-lock "
+        "concurrency test."
+    ),
+)
+
+
+class TimingRepository(SQLAlchemyApprovalRepository):
+    """Records how long each ``SELECT ... FOR UPDATE`` call actually took.
+
+    Used only to produce direct evidence that a concurrent call blocked at
+    the database rather than merely observing a final, already-decided
+    state.
+    """
+
+    def __init__(self, session: AsyncSession, timings: list[float]) -> None:
+        super().__init__(session)
+        self._timings = timings
+
+    async def get_for_update(self, approval_id: UUID) -> Approval | None:
+        start = time.monotonic()
+        try:
+            return await super().get_for_update(approval_id)
+        finally:
+            self._timings.append(time.monotonic() - start)
+
+
+class SlowTool(Tool):
+    """Holds its approval's row lock open for ``LOCK_HOLD_SECONDS``.
+
+    This keeps the winning session's transaction (and therefore its
+    ``FOR UPDATE`` row lock) open long enough that the losing session's
+    ``get_for_update`` can only be unblocked by a real database commit, not
+    by asyncio task scheduling.
+    """
+
+    async def execute(self, args: Arguments, ctx: ExecutionContextProtocol) -> Result:
+        await asyncio.sleep(LOCK_HOLD_SECONDS)
+        return await super().execute(args, ctx)
+
+
+@requires_postgres
+async def test_postgresql_row_lock_serializes_concurrent_execute_across_two_sessions() -> None:
+    engine_a = create_async_engine(POSTGRES_DSN)
+    engine_b = create_async_engine(POSTGRES_DSN)
+    try:
+        async with engine_a.begin() as connection:
+            await connection.run_sync(ApprovalBase.metadata.create_all)
+
+        session_factory_a = async_sessionmaker(engine_a, expire_on_commit=False)
+        session_factory_b = async_sessionmaker(engine_b, expire_on_commit=False)
+        async with session_factory_a() as session_a, session_factory_b() as session_b:
+            timings_a: list[float] = []
+            timings_b: list[float] = []
+            repository_a = TimingRepository(session_a, timings_a)
+            repository_b = TimingRepository(session_b, timings_b)
+            clock = Clock(datetime(2026, 10, 7, 12, 0, tzinfo=UTC))
+            service_a = ApprovalService[Arguments, Result](repository_a, clock=clock)
+            service_b = ApprovalService[Arguments, Result](repository_b, clock=clock)
+            context = Context()
+            args = Arguments(amount=25, note="approved")
+            tool = SlowTool()
+
+            approval = await service_a.create(tool_name=tool.name, args=args, ctx=context)
+            approval = await service_a.approve(approval_id=approval.id, ctx=context)
+
+            async def run(
+                service: ApprovalService[Arguments, Result],
+            ) -> BaseModel | ApprovalReplayError:
+                try:
+                    return await service.execute(
+                        approval_id=approval.id, tool=tool, args=args, ctx=context
+                    )
+                except ApprovalReplayError as error:
+                    return error
+
+            started = time.monotonic()
+            results = await asyncio.gather(run(service_a), run(service_b))
+            elapsed = time.monotonic() - started
+
+            # Exactly one session executed the tool; the other was told it
+            # had already been replayed once it finally acquired the lock.
+            assert sum(isinstance(result, Result) for result in results) == 1
+            assert sum(isinstance(result, ApprovalReplayError) for result in results) == 1
+            assert tool.calls == 1
+
+            # Direct evidence of real cross-session blocking: the loser's
+            # own SELECT ... FOR UPDATE call took roughly as long as the
+            # winner held the row locked, and the whole exchange could not
+            # have completed faster than one lock hold.
+            slowest_get_for_update = max(timings_a[0], timings_b[0])
+            assert slowest_get_for_update >= LOCK_HOLD_SECONDS * 0.8
+            assert elapsed >= LOCK_HOLD_SECONDS * 0.8
+    finally:
+        try:
+            async with engine_a.begin() as connection:
+                await connection.run_sync(ApprovalBase.metadata.drop_all)
+        finally:
+            await engine_a.dispose()
+            await engine_b.dispose()

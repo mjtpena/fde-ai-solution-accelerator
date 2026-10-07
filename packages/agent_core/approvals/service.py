@@ -117,7 +117,22 @@ class ApprovalService(Generic[TArgs, TResult]):
         tool: ApprovalTool[TArgs, TResult],
         args: TArgs,
         ctx: ApprovalContext,
+        validate_approval: Callable[[Approval], None] | None = None,
     ) -> TResult:
+        """Execute ``tool`` under the authority of an approved, locked ``Approval``.
+
+        ``validate_approval``, when supplied, is invoked synchronously with the
+        authoritative *persisted* ``Approval`` row (read under the repository's
+        row lock, inside the same transaction) after binding/status/expiry
+        checks pass but strictly before the tool is invoked. It lets a caller
+        apply additional policy (for example, context/privileged-role checks
+        against the stored ``requested_by``/``decided_by``/``scope_id``
+        fields) without trusting any caller-supplied ``Approval`` data, and
+        without a separate read that could race the lock. Raising from the
+        callback aborts execution: the transaction still commits (so audit
+        trail/state are preserved), no tool invocation occurs, and the
+        exception propagates to the caller.
+        """
         result: TResult | None = None
         expired = False
         async with self._repository.transaction():
@@ -131,6 +146,8 @@ class ApprovalService(Generic[TArgs, TResult]):
                 expired = True
             else:
                 self._require_approved(approval)
+                if validate_approval is not None:
+                    validate_approval(approval)
                 result = await tool.execute(args, ctx)
                 executed = approval.model_copy(
                     update={"status": "executed", "decided_by": approval.decided_by}
