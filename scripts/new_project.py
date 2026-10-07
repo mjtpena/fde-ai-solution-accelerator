@@ -1,0 +1,625 @@
+"""Generate an independent project; the manifest uses JSON-compatible YAML.
+
+Usage: make new-project NAME=my-solution DISPLAY="My Solution" [DEST=absolute-path]
+The default destination is a sibling of the accelerator checkout. Existing destinations
+are never overwritten. A failed dependency install/check leaves the output for diagnosis
+and exits nonzero. Only a successful make check counts as a generated project.
+
+Fixture tests live here to keep issue #37 within its three-file scope.
+"""
+
+from __future__ import annotations
+
+import argparse
+from dataclasses import dataclass
+import json
+import keyword
+import logging
+import os
+from pathlib import Path, PurePosixPath, PureWindowsPath
+import re
+import shutil
+import subprocess
+import sys
+import tempfile
+import tomllib
+from typing import Mapping
+import unittest
+from unittest.mock import patch
+
+
+ROOT = Path(__file__).resolve().parents[1]
+LOGGER = logging.getLogger(__name__)
+BEGIN_GENERATOR = "# BEGIN PROJECT GENERATOR"
+END_GENERATOR = "# END PROJECT GENERATOR"
+TEXT_SUFFIXES = {
+    ".py",
+    ".toml",
+    ".json",
+    ".jsonl",
+    ".lock",
+    ".ts",
+    ".tsx",
+    ".js",
+    ".jsx",
+    ".mjs",
+    ".md",
+    ".yml",
+    ".yaml",
+    ".css",
+    ".txt",
+    ".example",
+    ".ini",
+    ".cfg",
+}
+
+
+def relative_path(value: str) -> Path:
+    """Use portable manifest paths and reject drive, UNC, traversal and ADS paths."""
+    path = PurePosixPath(value)
+    if (
+        not value
+        or "\\" in value
+        or ":" in value
+        or path.is_absolute()
+        or PureWindowsPath(value).drive
+        or any(part in {"", ".", ".."} for part in value.split("/"))
+    ):
+        raise ValueError(f"Unsafe manifest path: {value!r}")
+    return Path(*path.parts)
+
+
+def string_list(value: object, field: str) -> tuple[str, ...]:
+    if not isinstance(value, list) or not all(isinstance(item, str) for item in value):
+        raise ValueError(f"Manifest {field} must be an array of strings")
+    return tuple(value)
+
+
+@dataclass(frozen=True)
+class Manifest:
+    version_file: Path
+    copy: tuple[Path, ...]
+    exclude_names: frozenset[str]
+    remove: tuple[Path, ...]
+    renames: Mapping[str, str]
+    templates: Path
+    project_docs: Path
+    dataset: Path
+    starter_row: Mapping[str, object]
+
+    @classmethod
+    def load(cls, source: Path) -> Manifest:
+        raw: object = json.loads((source / "accelerator.manifest.yml").read_text(encoding="utf-8"))
+        if not isinstance(raw, dict) or raw.get("schema_version") != 1:
+            raise ValueError("Expected a JSON-compatible YAML manifest with schema_version 1")
+
+        def path_field(field: str) -> Path:
+            value = raw.get(field)
+            if not isinstance(value, str):
+                raise ValueError(f"Manifest {field} must be a relative path")
+            return relative_path(value)
+
+        renames = raw.get("renames")
+        if (
+            not isinstance(renames, dict)
+            or not renames
+            or not all(
+                isinstance(key, str) and key and isinstance(value, str)
+                for key, value in renames.items()
+            )
+        ):
+            raise ValueError("Manifest renames must map nonempty strings to strings")
+        excludes = string_list(raw.get("exclude_names"), "exclude_names")
+        for name in excludes:
+            if len(relative_path(name).parts) != 1:
+                raise ValueError("exclude_names entries must be single path components")
+        row = raw.get("starter_row")
+        if (
+            not isinstance(row, dict)
+            or set(row)
+            != {
+                "id",
+                "category",
+                "query",
+                "scope_id",
+                "expected_answer",
+                "expected_evidence_ids",
+                "expected_tool",
+                "expected_abstain",
+                "tags",
+            }
+            or not all(
+                isinstance(row[key], str) and row[key]
+                for key in (
+                    "id",
+                    "category",
+                    "query",
+                    "scope_id",
+                )
+            )
+            or row["category"] != "unsupported"
+            or row["expected_answer"] is not None
+            or row["expected_tool"] is not None
+            or row["expected_evidence_ids"] != []
+            or row["expected_abstain"] is not True
+        ):
+            raise ValueError("starter_row must be a schema-valid unsupported/abstention fixture")
+        string_list(row["tags"], "starter_row.tags")
+        manifest = cls(
+            version_file=path_field("version_file"),
+            copy=tuple(relative_path(p) for p in string_list(raw.get("copy"), "copy")),
+            exclude_names=frozenset(excludes),
+            remove=tuple(relative_path(p) for p in string_list(raw.get("remove"), "remove")),
+            renames=renames,
+            templates=path_field("templates"),
+            project_docs=path_field("project_docs"),
+            dataset=path_field("dataset"),
+            starter_row=row,
+        )
+        if not manifest.copy or len(set(manifest.copy)) != len(manifest.copy):
+            raise ValueError("Manifest copy paths must be nonempty and unique")
+        return manifest
+
+
+def is_link(path: Path) -> bool:
+    return path.is_symlink() or path.is_junction()
+
+
+def validate_name(name: str) -> str:
+    module = name.replace("-", "_")
+    if (
+        not re.fullmatch(r"[a-z][a-z0-9]*(?:-[a-z0-9]+)*", name)
+        or len(name) > 64
+        or keyword.iskeyword(module)
+        or module in sys.stdlib_module_names
+        or module == "accelerator"
+        or name.split("-")[0].upper() in {"CON", "PRN", "AUX", "NUL"}
+        or re.fullmatch(r"(?:com|lpt)[1-9]", name)
+    ):
+        raise ValueError("NAME must be a non-reserved lowercase kebab-case name (max 64 chars)")
+    return module
+
+
+def replacement_function(
+    manifest: Manifest,
+    name: str,
+    module: str,
+    display: str,
+) -> Mapping[str, str]:
+    return {
+        old: new.format(name=name, module=module, display=display)
+        for old, new in manifest.renames.items()
+    }
+
+
+def replace_text(text: str, replacements: Mapping[str, str]) -> str:
+    pattern = (
+        r"(?<!\w)(?:"
+        + "|".join(re.escape(key) for key in sorted(replacements, key=len, reverse=True))
+        + r")(?!\w)"
+    )
+    return re.sub(pattern, lambda match: replacements[match.group()], text)
+
+
+def generated_makefile(text: str) -> str:
+    if text.count(BEGIN_GENERATOR) != 1 or text.count(END_GENERATOR) != 1:
+        raise ValueError("Makefile must contain exactly one project generator block")
+    before, block = text.split(BEGIN_GENERATOR, 1)
+    _, after = block.split(END_GENERATOR, 1)
+    return before.rstrip() + "\n" + after
+
+
+def generate(source: Path, destination: Path, name: str, display: str) -> None:
+    module = validate_name(name)
+    if not display.strip() or any(ord(char) < 32 for char in display):
+        raise ValueError("DISPLAY must be nonempty text without control characters")
+    source = source.resolve(strict=True)
+    # Reject aliases before resolve() can hide a symlink or junction.
+    destination = destination.absolute()
+    if ".." in destination.parts:
+        raise ValueError("Destination must not contain traversal")
+    for component in (destination, *destination.parents):
+        if is_link(component):
+            raise ValueError(f"Destination contains a link: {component}")
+    destination = destination.resolve()
+    if destination.is_relative_to(source) or source.is_relative_to(destination):
+        raise ValueError("Destination must not overlap the source checkout")
+    if destination.exists():
+        raise FileExistsError(f"Destination already exists: {destination}")
+    if not destination.parent.is_dir():
+        raise ValueError("Destination parent must be an existing directory")
+    manifest_path = source / "accelerator.manifest.yml"
+    if is_link(manifest_path):
+        raise ValueError("Manifest must not be a link")
+    manifest = Manifest.load(source)
+    replacements = replacement_function(manifest, name, module, display)
+    files: list[tuple[Path, Path]] = []
+    directories: set[Path] = set()
+    targets: set[Path] = set()
+
+    def collect(relative: Path) -> None:
+        if any(
+            part in manifest.exclude_names
+            or part.endswith((".egg-info", ".pyc", ".pyo", ".tsbuildinfo"))
+            or (part.startswith(".env") and part != ".env.example")
+            for part in relative.parts
+        ) or any(relative.is_relative_to(removed) for removed in manifest.remove):
+            return
+        original = source / relative
+        for component in (original, *original.parents):
+            if component == source:
+                break
+            if is_link(component):
+                raise ValueError(f"Source contains a link: {relative}")
+        target = Path(*(module if part == "accelerator" else part for part in relative.parts))
+        if target in targets:
+            raise ValueError(f"Overlapping copy paths or rename collision: {target}")
+        targets.add(target)
+        if original.is_dir():
+            directories.add(target)
+            for child in sorted(original.iterdir()):
+                collect(child.relative_to(source))
+        elif original.is_file():
+            files.append((relative, target))
+        else:
+            raise ValueError(f"Missing or unsupported source entry: {relative}")
+
+    for entry in manifest.copy:
+        collect(entry)
+    version_path = source / manifest.version_file
+    if is_link(version_path) or not version_path.resolve().is_relative_to(source):
+        raise ValueError("Version file must be inside the source and not a link")
+    version: object = tomllib.loads(version_path.read_text(encoding="utf-8"))["project"]["version"]
+    if not isinstance(version, str) or not re.fullmatch(
+        r"\d+\.\d+\.\d+(?:[-+][A-Za-z0-9.-]+)?", version
+    ):
+        raise ValueError("Accelerator version must be a semantic version string")
+
+    destination.mkdir()
+    for directory in sorted(directories, key=lambda path: len(path.parts)):
+        (destination / directory).mkdir(parents=True, exist_ok=True)
+    for original, target in files:
+        output = destination / target
+        output.parent.mkdir(parents=True, exist_ok=True)
+        if original.suffix in TEXT_SUFFIXES or original.name in {"Makefile", "Dockerfile"}:
+            text = (source / original).read_text(encoding="utf-8")
+            if original == Path("Makefile"):
+                text = generated_makefile(text)
+            text_replacements = dict(replacements)
+            if original.suffix in {
+                ".json",
+                ".jsonl",
+                ".toml",
+                ".lock",
+                ".ts",
+                ".tsx",
+                ".js",
+                ".jsx",
+                ".mjs",
+            }:
+                text_replacements["FDE AI Solution Accelerator"] = json.dumps(
+                    display, ensure_ascii=False
+                )[1:-1]
+            output.write_text(replace_text(text, text_replacements), encoding="utf-8")
+            shutil.copymode(source / original, output)
+        else:
+            shutil.copy2(source / original, output)
+    docs = destination / manifest.project_docs
+    docs.mkdir(parents=True, exist_ok=True)
+    templates = destination / manifest.templates
+    for template in sorted(templates.rglob("*.md")):
+        output = docs / template.relative_to(templates)
+        output.parent.mkdir(parents=True, exist_ok=True)
+        # Preserve template headings and instructions, not fictional example answers.
+        output.write_text(template.read_text(encoding="utf-8"), encoding="utf-8")
+    dataset = destination / manifest.dataset
+    dataset.parent.mkdir(parents=True, exist_ok=True)
+    if dataset.exists():
+        raise FileExistsError(f"Starter dataset would overwrite an existing file: {dataset}")
+    dataset.write_text(json.dumps(manifest.starter_row) + "\n", encoding="utf-8")
+    (destination / "ACCELERATOR_VERSION").write_text(version + "\n", encoding="utf-8")
+    (destination / "README.md").write_text(
+        f"# {display}\n\nGenerated from FDE AI Solution Accelerator {version}.\n\n"
+        f"Python namespace: `{module}`. This is a scaffold, not a production certification.\n\n"
+        "## Development\n\nRequires Python 3.12, uv, Node.js 22, npm and GNU Make.\n\n"
+        "```sh\nuv sync --all-packages --frozen\nnpm ci\nmake check\nmake eval-smoke\n```\n\n"
+        f"Fill in `{manifest.project_docs.as_posix()}` from the engagement templates. "
+        f"Replace `{manifest.dataset.as_posix()}` with project-owned evaluation cases; "
+        "its synthetic scope is fixture data, never an authorization source.\n\n"
+        "The evaluation smoke gate and package capabilities depend on the accelerator "
+        "version used. Inspect the checked-in implementation before relying on them.\n",
+        encoding="utf-8",
+    )
+    for command in (
+        ["uv", "sync", "--all-packages", "--frozen"],
+        ["npm.cmd" if os.name == "nt" else "npm", "ci"],
+        ["make", "check"],
+    ):
+        subprocess.run(command, cwd=destination, check=True)
+    LOGGER.info("Project generated and checked: %s", destination)
+
+
+class GeneratorTests(unittest.TestCase):
+    def setUp(self) -> None:
+        self.temporary = tempfile.TemporaryDirectory()
+        self.addCleanup(self.temporary.cleanup)
+        self.root = Path(self.temporary.name)
+        self.source = self.root / "source"
+        self.source.mkdir()
+        self.destination = self.root / "my-solution"
+        self.manifest = json.loads((ROOT / "accelerator.manifest.yml").read_text(encoding="utf-8"))
+        self.manifest["copy"] = [
+            "pyproject.toml",
+            "Makefile",
+            "apps",
+            "packages",
+            "engagement",
+            "evaluations",
+            "scripts",
+            "tests",
+            "package.json",
+            "package-lock.json",
+            "uv.lock",
+        ]
+        self.write("accelerator.manifest.yml", json.dumps(self.manifest))
+        self.write(
+            "pyproject.toml", '[project]\nname = "fde-ai-solution-accelerator"\nversion = "0.1.0"\n'
+        )
+        self.write("Makefile", (ROOT / "Makefile").read_text(encoding="utf-8"))
+        self.write("apps/api/src/accelerator/api.py", "from accelerator import api\n")
+        self.write("apps/api/pyproject.toml", '[project]\nname = "fde-accelerator-api"\n')
+        self.write("apps/web/package.json", '{"name": "fde-accelerator-web"}\n')
+        self.write("apps/web/app/page.tsx", 'const title = "FDE AI Solution Accelerator";\n')
+        self.write(
+            "packages/agent_core/pyproject.toml",
+            'name = "fde-agent-core"\npackages = ["accelerator.agent_core"]\n',
+        )
+        self.write("package.json", '{"name": "fde-ai-solution-accelerator"}\n')
+        self.write(
+            "package-lock.json",
+            '{"name": "fde-ai-solution-accelerator", '
+            '"packages": {"node_modules/fde-accelerator-web": {}}}\n',
+        )
+        self.write("uv.lock", 'name = "fde-agent-core"\n')
+        self.write("engagement/templates/plan.md", "# Plan\n\n<!-- Complete this section -->\n")
+        self.write("engagement/examples/fictional-engagement/plan.md", "fictional answer")
+        self.write("evaluations/example-datasets/example.jsonl", '{"example": true}')
+        self.write("evaluations/rubrics/.gitkeep", "")
+        self.write("scripts/new_project.py", "generator")
+        self.write("scripts/.gitkeep", "")
+        self.write(
+            "tests/test_scaffold.py",
+            'directories = ("evaluations/example-datasets", '
+            '"engagement/examples/fictional-engagement")\n',
+        )
+        self.write("tests/test_runtime.py", "import accelerator.api\n")
+        self.write("apps/.env", "must not copy")
+        self.write("apps/.env.production", "must not copy")
+        self.write("apps/.env.example", "safe placeholder")
+        self.write("apps/node_modules/ignored.txt", "must not copy")
+        (self.source / "apps" / "asset.bin").write_bytes(b"\x00\xff\x80")
+
+    def write(self, relative: str, text: str) -> None:
+        path = self.source / relative
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text(text, encoding="utf-8")
+
+    def run_generator(self) -> None:
+        generate(self.source, self.destination, "my-solution", "My Solution")
+
+    def test_generation_renames_removes_seeds_and_checks_without_changing_source(self) -> None:
+        before = {
+            path.relative_to(self.source): path.read_bytes()
+            for path in self.source.rglob("*")
+            if path.is_file()
+        }
+        with patch("subprocess.run") as run:
+            self.run_generator()
+        self.assertEqual(
+            [call.args[0] for call in run.call_args_list],
+            [
+                ["uv", "sync", "--all-packages", "--frozen"],
+                ["npm.cmd" if os.name == "nt" else "npm", "ci"],
+                ["make", "check"],
+            ],
+        )
+        for call in run.call_args_list:
+            self.assertEqual(call.kwargs, {"cwd": self.destination, "check": True})
+        self.assertEqual(
+            (self.destination / "apps/api/src/my_solution/api.py").read_text(),
+            "from my_solution import api\n",
+        )
+        self.assertIn(
+            "my-solution-agent-core",
+            (self.destination / "packages/agent_core/pyproject.toml").read_text(),
+        )
+        self.assertIn(
+            "my_solution.agent_core",
+            (self.destination / "packages/agent_core/pyproject.toml").read_text(),
+        )
+        self.assertIn("my-solution-agent-core", (self.destination / "uv.lock").read_text())
+        self.assertIn(
+            "node_modules/my-solution-web", (self.destination / "package-lock.json").read_text()
+        )
+        self.assertIn("My Solution", (self.destination / "apps/web/app/page.tsx").read_text())
+        self.assertEqual(
+            (self.destination / "tests/test_scaffold.py").read_text(),
+            'directories = ("evaluations/datasets", "engagement/project")\n',
+        )
+        for removed in self.manifest["remove"] + [
+            "accelerator.manifest.yml",
+            "apps/.env",
+            "apps/.env.production",
+            "apps/node_modules",
+        ]:
+            self.assertFalse((self.destination / removed).exists(), removed)
+        self.assertEqual((self.destination / "apps/.env.example").read_text(), "safe placeholder")
+        self.assertEqual((self.destination / "apps/asset.bin").read_bytes(), b"\x00\xff\x80")
+        self.assertNotIn("new-project", (self.destination / "Makefile").read_text())
+        self.assertNotIn("check-generator", (self.destination / "Makefile").read_text())
+        self.assertEqual((self.destination / "ACCELERATOR_VERSION").read_text(), "0.1.0\n")
+        self.assertEqual(
+            (self.destination / "engagement/project/plan.md").read_text(),
+            (self.source / "engagement/templates/plan.md").read_text(),
+        )
+        row = json.loads((self.destination / "evaluations/datasets/starter.jsonl").read_text())
+        self.assertEqual(row, self.manifest["starter_row"])
+        self.assertEqual(
+            before,
+            {
+                path.relative_to(self.source): path.read_bytes()
+                for path in self.source.rglob("*")
+                if path.is_file()
+            },
+        )
+
+    def test_rejects_existing_destination_and_overlapping_source(self) -> None:
+        self.destination.mkdir()
+        sentinel = self.destination / "keep"
+        sentinel.write_text("unchanged")
+        with self.assertRaises(FileExistsError):
+            self.run_generator()
+        self.assertEqual(sentinel.read_text(), "unchanged")
+        for path in (self.source / "nested", self.source, self.root):
+            with self.subTest(path=path), self.assertRaises(ValueError):
+                generate(self.source, path, "my-solution", "My Solution")
+
+    def test_rejects_unsafe_names_and_manifest_paths_before_creating_output(self) -> None:
+        for name in ("../escape", "UPPER", "a/b", "a\\b", "class", "con", "com1", "json", ""):
+            with self.subTest(name=name), self.assertRaises(ValueError):
+                generate(self.source, self.destination, name, "Display")
+        for path in ("../escape", "/absolute", "C:/escape", "a/../b", "a\\b", "a:stream", "."):
+            with self.subTest(path=path), self.assertRaises(ValueError):
+                relative_path(path)
+        self.manifest["project_docs"] = "../escape"
+        self.write("accelerator.manifest.yml", json.dumps(self.manifest))
+        with self.assertRaises(ValueError):
+            self.run_generator()
+        self.assertFalse(self.destination.exists())
+
+    def test_rejects_destination_traversal_before_creating_output(self) -> None:
+        with self.assertRaises(ValueError):
+            generate(self.source, self.root / "unused" / ".." / "escape", "my-solution", "Display")
+        self.assertFalse((self.root / "escape").exists())
+
+    def test_display_quotes_and_backslashes_preserve_string_literals(self) -> None:
+        self.write("apps/web/title.json", '{"title": "FDE AI Solution Accelerator"}')
+        display = 'My "Quoted" Solution \\ Team'
+        with patch("subprocess.run"):
+            generate(self.source, self.destination, "my-solution", display)
+        self.assertEqual(
+            json.loads((self.destination / "apps/web/title.json").read_text())["title"],
+            display,
+        )
+        self.assertIn(
+            json.dumps(display)[1:-1], (self.destination / "apps/web/app/page.tsx").read_text()
+        )
+
+    def test_rejects_invalid_starter_schema(self) -> None:
+        self.manifest["starter_row"]["expected_abstain"] = False
+        self.write("accelerator.manifest.yml", json.dumps(self.manifest))
+        with self.assertRaises(ValueError):
+            self.run_generator()
+        self.assertFalse(self.destination.exists())
+
+    def test_rejects_missing_entries_and_copy_collisions(self) -> None:
+        for entry in ("missing", "apps/api"):
+            with self.subTest(entry=entry):
+                manifest = dict(self.manifest)
+                manifest["copy"] = [*self.manifest["copy"], entry]
+                self.write("accelerator.manifest.yml", json.dumps(manifest))
+                with self.assertRaises(ValueError):
+                    self.run_generator()
+                self.assertFalse(self.destination.exists())
+
+    def test_rejects_package_directory_rename_collisions(self) -> None:
+        self.write("apps/api/src/my_solution/keep.py", "must not overwrite")
+        with self.assertRaises(ValueError):
+            self.run_generator()
+        self.assertFalse(self.destination.exists())
+
+    def test_rejects_links_without_touching_their_targets(self) -> None:
+        outside = self.root / "outside"
+        outside.mkdir()
+        sentinel = outside / "keep.txt"
+        sentinel.write_text("unchanged")
+        link = self.source / "apps" / "link"
+        # Mock link detection so the safety test also runs without Windows symlink privileges.
+        link.mkdir()
+        original = is_link
+        with patch(__name__ + ".is_link", side_effect=lambda path: path == link or original(path)):
+            with self.assertRaises(ValueError):
+                self.run_generator()
+        self.assertEqual(sentinel.read_text(), "unchanged")
+        self.assertFalse(self.destination.exists())
+        with patch(__name__ + ".is_link", side_effect=lambda path: path == self.root):
+            with self.assertRaises(ValueError):
+                self.run_generator()
+
+    def test_check_failure_is_propagated_and_output_is_preserved_for_diagnosis(self) -> None:
+        error = subprocess.CalledProcessError(9, ["make", "check"])
+        with patch("subprocess.run", side_effect=[None, None, error]):
+            with self.assertRaises(subprocess.CalledProcessError):
+                self.run_generator()
+        self.assertTrue((self.destination / "ACCELERATOR_VERSION").exists())
+
+    def test_install_failure_stops_before_make_check(self) -> None:
+        error = subprocess.CalledProcessError(1, ["uv", "sync"])
+        with patch("subprocess.run", side_effect=error) as run:
+            with self.assertRaises(subprocess.CalledProcessError):
+                self.run_generator()
+        self.assertEqual(run.call_count, 1)
+
+    def test_replacements_are_simultaneous_and_do_not_change_substrings(self) -> None:
+        self.assertEqual(
+            replace_text(
+                "accelerator accelerator_extra fde-accelerator-api",
+                {"accelerator": "test_accelerator", "fde-accelerator-api": "test-api"},
+            ),
+            "test_accelerator accelerator_extra test-api",
+        )
+
+
+def main() -> int:
+    parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument("--name", default=os.environ.get("NAME"))
+    parser.add_argument("--display", default=os.environ.get("DISPLAY") or None)
+    parser.add_argument("--destination", type=Path, default=os.environ.get("DEST") or None)
+    parser.add_argument("--self-test", action="store_true", help="Run temporary-tree fixture tests")
+    parser.add_argument(
+        "--check-generated",
+        action="store_true",
+        help="Generate from the checked-in layout and run its make check in a temporary directory",
+    )
+    arguments = parser.parse_args()
+    if arguments.self_test:
+        suite = unittest.defaultTestLoader.loadTestsFromTestCase(GeneratorTests)
+        return 0 if unittest.TextTestRunner(verbosity=2).run(suite).wasSuccessful() else 1
+    if not arguments.name and not arguments.check_generated:
+        parser.error("Supply --name or NAME via make new-project")
+    try:
+        if arguments.check_generated:
+            with tempfile.TemporaryDirectory(prefix="accelerator-generator-") as temporary:
+                subprocess.run(
+                    [
+                        "make",
+                        "new-project",
+                        "NAME=generated-solution",
+                        "DISPLAY=Generated Solution",
+                        f"DEST={Path(temporary) / 'generated-solution'}",
+                    ],
+                    cwd=ROOT,
+                    check=True,
+                )
+        else:
+            destination = arguments.destination or ROOT.parent / arguments.name
+            generate(ROOT, destination, arguments.name, arguments.display or arguments.name)
+    except (ValueError, KeyError, OSError, subprocess.CalledProcessError) as error:
+        LOGGER.error("Generation failed: %s; any output is retained for diagnosis", error)
+        return 1
+    return 0
+
+
+if __name__ == "__main__":
+    logging.basicConfig(level=logging.INFO, format="%(levelname)s %(message)s")
+    sys.exit(main())

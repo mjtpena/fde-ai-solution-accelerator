@@ -1,0 +1,48 @@
+{
+  "schema_version": 1,
+  "version_file": "pyproject.toml",
+  "copy": [
+    ".github", ".vscode", ".env.example", ".gitignore", ".pre-commit-config.yaml",
+    "AGENTS.md", "CONTRIBUTING.md", "LICENSE", "Makefile", "apps", "contracts",
+    "docs", "engagement", "evaluations", "packages", "scripts", "tests",
+    "threat-model", "workers", "docker-compose.yml", "package.json",
+    "package-lock.json", "pyproject.toml", "uv.lock"
+  ],
+  "exclude_names": [
+    ".git", ".venv", "node_modules", "__pycache__", ".pytest_cache", ".mypy_cache",
+    ".ruff_cache", ".next", ".env", "build", "dist"
+  ],
+  "remove": [
+    "engagement/examples", "evaluations/example-datasets",
+    "scripts/new_project.py", "scripts/.gitkeep"
+  ],
+  "renames": {
+    "fde-ai-solution-accelerator": "{name}",
+    "fde-accelerator-api": "{name}-api",
+    "fde-accelerator-web": "{name}-web",
+    "fde-agent-core": "{name}-agent-core",
+    "fde-retrieval-core": "{name}-retrieval-core",
+    "fde-evaluation-core": "{name}-evaluation-core",
+    "fde-observability-core": "{name}-observability-core",
+    "fde-security-core": "{name}-security-core",
+    "fde-ingestion-worker": "{name}-ingestion-worker",
+    "evaluations/example-datasets": "evaluations/datasets",
+    "engagement/examples/fictional-engagement": "engagement/project",
+    "accelerator": "{module}",
+    "FDE AI Solution Accelerator": "{display}"
+  },
+  "templates": "engagement/templates",
+  "project_docs": "engagement/project",
+  "dataset": "evaluations/datasets/starter.jsonl",
+  "starter_row": {
+    "id": "starter-unsupported-001",
+    "category": "unsupported",
+    "query": "No project evidence has been supplied. Abstain.",
+    "scope_id": "fixture-scope",
+    "expected_answer": null,
+    "expected_evidence_ids": [],
+    "expected_tool": null,
+    "expected_abstain": true,
+    "tags": ["starter", "synthetic"]
+  }
+}
