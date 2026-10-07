@@ -46,6 +46,7 @@ files = [
     "packages/observability_core/src",
     "packages/retrieval_core",
     "packages/security_core",
+    "apps/api/src/accelerator/infrastructure/search",
     "workers/ingestion/src",
     "apps/api/src/accelerator/identity",
     "apps/api/tests/test_scope_resolver.py",
