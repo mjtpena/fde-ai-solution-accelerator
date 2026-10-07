@@ -1,7 +1,9 @@
+import asyncio
 import logging
 import math
 from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
+from datetime import UTC, datetime
 
 from azure.identity.aio import ManagedIdentityCredential
 from azure.search.documents.aio import SearchClient
@@ -16,6 +18,7 @@ from accelerator.retrieval_core.indexing.schema import (
 )
 from accelerator.retrieval_core.models import Evidence, RetrievalRequest
 from accelerator.retrieval_core.search import QueryEmbedder, Retriever, build_query
+from accelerator.retrieval_core.search.query import HybridQuery
 from accelerator.security_core.data_boundaries.context import ExecutionContext
 
 logger = logging.getLogger(__name__)
@@ -47,8 +50,22 @@ class AzureSearchRetriever:
         self._settings = settings
 
     async def retrieve(self, req: RetrievalRequest, ctx: ExecutionContext) -> list[Evidence]:
-        query = build_query(req, ctx)
+        remaining = self._remaining_seconds(ctx)
+        async with asyncio.timeout(remaining):
+            query = build_query(req, ctx)
+            return await self._retrieve(query, ctx)
+
+    @staticmethod
+    def _remaining_seconds(ctx: ExecutionContext) -> float:
+        remaining = (ctx.deadline_utc - datetime.now(UTC)).total_seconds()
+        if remaining <= 0:
+            raise TimeoutError("Retrieval execution deadline exceeded")
+        return remaining
+
+    async def _retrieve(self, query: HybridQuery, ctx: ExecutionContext) -> list[Evidence]:
+        self._remaining_seconds(ctx)
         vector = await self._embedder.embed(query.text)
+        self._remaining_seconds(ctx)
         if len(vector) != self._settings.vector_dimensions or not all(
             math.isfinite(value) for value in vector
         ):
@@ -73,8 +90,10 @@ class AzureSearchRetriever:
             ),
             semantic_error_mode="fail",
         )
+        self._remaining_seconds(ctx)
         evidence = []
         async for raw in results:
+            self._remaining_seconds(ctx)
             hit = SearchHit.model_validate(raw)
             if hit.scope_id not in ctx.scope_ids:
                 logger.error(
@@ -83,6 +102,7 @@ class AzureSearchRetriever:
                 )
                 raise PermissionError("Search returned evidence outside authorized scopes")
             evidence.append(hit.evidence())
+        self._remaining_seconds(ctx)
         return evidence
 
 

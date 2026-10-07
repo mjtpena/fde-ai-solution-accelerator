@@ -26,6 +26,17 @@ ANDed with the scope predicate and literals are OData-escaped. Results are
 validated and any out-of-scope hit aborts the whole retrieval, including already
 read hits. Callers receive only `Evidence`; its text remains untrusted data.
 
+Scope membership uses a single `search.in` clause rather than an unbounded OR tree.
+The scope representation has a 64 KiB UTF-8 safety budget, including escaping and
+syntax; oversized lists fail explicitly and are never truncated. A delimiter
+absent from every scope is selected from `|,;~^`; unrepresentable IDs fail closed.
+Vector dimensions must be 2 through 4096 in both settings and index definitions.
+
+The context's UTC deadline is checked before embedding and enforced by one async
+timeout through embedding, SDK calls/retries, and result paging. Expired contexts
+perform no I/O; timeouts cancel ongoing work and never return partial evidence.
+No caller-supplied timeout can widen the context's remaining budget.
+
 Credential-free integration tests exercise the real SDK request serialization,
 async HTTP pipeline, and evidence mapping against a controlled transport with
 two scopes, plus a deliberately noncompliant response. They do **not** establish
@@ -50,3 +61,6 @@ Strict type checks select retrieval through `--package accelerator.retrieval_cor
 so its installed public namespace is checked once; the file-based pass still checks
 the adapter and package-local search tests. Both passes run in `make check` and
 pre-commit without disabling or excluding any type errors.
+
+The security-sensitive search test directories are included in root pytest
+`testpaths`, so standard `make check` and pre-commit collect them automatically.

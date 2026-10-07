@@ -1,8 +1,10 @@
 """Credential-free integration through the real async Azure Search SDK HTTP pipeline."""
 
+import asyncio
 import json
 import importlib
 from datetime import UTC, datetime, timedelta
+from collections.abc import AsyncIterator
 from typing import Any
 from unittest.mock import AsyncMock, patch
 
@@ -106,7 +108,7 @@ async def test_hybrid_wire_query_is_scoped_before_vector_and_semantic_ranking() 
         payload = json.loads(request.body)
         requests.append(payload)
         # The test service enforces the exact expected predicate, not a substring approximation.
-        assert payload["filter"] == "(scope_id eq 'tenant-a')"
+        assert payload["filter"] == "(search.in(scope_id, 'tenant-a', '|'))"
         return Response(request, {"value": [row for row in corpus if row["scope_id"] == "tenant-a"]})
 
     transport.send.side_effect = send
@@ -155,7 +157,7 @@ async def test_all_context_scopes_are_allowed_but_metadata_filter_only_narrows()
         assert isinstance(request.body, str | bytes)
         payload = json.loads(request.body)
         assert payload["filter"] == (
-            "(scope_id eq 'tenant-a' or scope_id eq 'tenant-b') and (version eq 'v1')"
+            "(search.in(scope_id, 'tenant-a|tenant-b', '|')) and (version eq 'v1')"
         )
         return Response(request, {"value": [hit("tenant-a", "a"), hit("tenant-b", "b")]})
 
@@ -299,3 +301,124 @@ async def test_index_provisioning_uses_injected_client_and_propagates_errors() -
     index_client.create_or_update_index.side_effect = HttpResponseError(message="index failure")
     with pytest.raises(HttpResponseError, match="index failure"):
         await ensure_index(index_client, definition)
+
+
+@pytest.mark.parametrize("dimensions", [0, 1, 4097])
+def test_invalid_vector_dimensions_fail_before_index_or_client_creation(dimensions: int) -> None:
+    with pytest.raises(ValidationError):
+        settings(vector_dimensions=dimensions)
+    with pytest.raises(ValidationError):
+        IndexDefinition(name="test-chunks", vector_dimensions=dimensions)
+
+
+@pytest.mark.parametrize("dimensions", [2, 4096])
+def test_vector_dimension_service_boundaries_are_accepted(dimensions: int) -> None:
+    assert settings(vector_dimensions=dimensions).vector_dimensions == dimensions
+    assert IndexDefinition(name="test-chunks", vector_dimensions=dimensions).vector_dimensions == (
+        dimensions
+    )
+
+
+@pytest.mark.asyncio
+async def test_expired_context_never_embeds_or_calls_search() -> None:
+    transport = AsyncMock(spec=AsyncHttpTransport)
+    embedder = Embedder()
+    ctx = context("tenant-a").model_copy(
+        update={"deadline_utc": datetime.now(UTC) - timedelta(seconds=1)}
+    )
+    async with client(transport) as sdk:
+        with pytest.raises(TimeoutError, match="deadline"):
+            await AzureSearchRetriever(sdk, embedder, settings()).retrieve(
+                RetrievalRequest(query="policy"), ctx
+            )
+    assert embedder.calls == []
+    transport.send.assert_not_called()
+
+
+@pytest.mark.asyncio
+async def test_deadline_cancels_embedding_without_search_io() -> None:
+    transport = AsyncMock(spec=AsyncHttpTransport)
+    embedder = AsyncMock()
+    cancelled = asyncio.Event()
+
+    async def embed(query: str) -> list[float]:
+        try:
+            await asyncio.Event().wait()
+        finally:
+            cancelled.set()
+        return [0.1, 0.2, 0.3]
+
+    embedder.embed.side_effect = embed
+    ctx = context("tenant-a").model_copy(
+        update={"deadline_utc": datetime.now(UTC) + timedelta(milliseconds=50)}
+    )
+    async with client(transport) as sdk:
+        with pytest.raises(TimeoutError):
+            await AzureSearchRetriever(sdk, embedder, settings()).retrieve(
+                RetrievalRequest(query="policy"), ctx
+            )
+    assert cancelled.is_set()
+    transport.send.assert_not_called()
+
+
+@pytest.mark.asyncio
+async def test_deadline_cancels_real_sdk_http_call() -> None:
+    transport = AsyncMock(spec=AsyncHttpTransport)
+    cancelled = asyncio.Event()
+
+    async def send(request: HttpRequest, **kwargs: object) -> Response:
+        try:
+            await asyncio.Event().wait()
+        finally:
+            cancelled.set()
+        return Response(request, {"value": []})
+
+    transport.send.side_effect = send
+    ctx = context("tenant-a").model_copy(
+        update={"deadline_utc": datetime.now(UTC) + timedelta(milliseconds=50)}
+    )
+    async with client(transport) as sdk:
+        with pytest.raises(TimeoutError):
+            await AzureSearchRetriever(sdk, Embedder(), settings()).retrieve(
+                RetrievalRequest(query="policy"), ctx
+            )
+    assert cancelled.is_set()
+    transport.send.assert_awaited_once()
+
+
+@pytest.mark.asyncio
+async def test_deadline_covers_paging_without_returning_partial_evidence() -> None:
+    sdk = AsyncMock(spec=SearchClient)
+    cancelled = asyncio.Event()
+
+    async def rows() -> AsyncIterator[dict[str, object]]:
+        row = hit("tenant-a", "first")
+        row["@search.reranker_score"] = row.pop("@search.rerankerScore")
+        yield row
+        try:
+            await asyncio.Event().wait()
+        finally:
+            cancelled.set()
+
+    sdk.search.return_value = rows()
+    ctx = context("tenant-a").model_copy(
+        update={"deadline_utc": datetime.now(UTC) + timedelta(milliseconds=50)}
+    )
+    with pytest.raises(TimeoutError):
+        await AzureSearchRetriever(sdk, Embedder(), settings()).retrieve(
+            RetrievalRequest(query="policy"), ctx
+        )
+    assert cancelled.is_set()
+
+
+@pytest.mark.asyncio
+async def test_oversized_scope_filter_never_embeds_or_calls_search() -> None:
+    transport = AsyncMock(spec=AsyncHttpTransport)
+    embedder = Embedder()
+    async with client(transport) as sdk:
+        with pytest.raises(ValueError, match="64 KiB"):
+            await AzureSearchRetriever(sdk, embedder, settings()).retrieve(
+                RetrievalRequest(query="policy"), context("a" * 65536)
+            )
+    assert embedder.calls == []
+    transport.send.assert_not_called()

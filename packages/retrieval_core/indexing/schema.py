@@ -40,4 +40,4 @@ class IndexDefinition(BaseModel):
     model_config = ConfigDict(frozen=True, extra="forbid")
 
     name: str = Field(pattern=r"^[a-z0-9][a-z0-9-]{0,126}[a-z0-9]$")
-    vector_dimensions: int = Field(ge=1, le=4096)
+    vector_dimensions: int = Field(ge=2, le=4096)
