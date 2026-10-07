@@ -21,6 +21,9 @@ def test_workflow_separates_pr_execution_from_privileged_commenting() -> None:
     assert "github.event_name == 'workflow_run'" in publish["if"]
     assert "github.event.workflow_run.event == 'pull_request'" in publish["if"]
     assert publish["permissions"] == {"actions": "read", "pull-requests": "write"}
+    assert publish["concurrency"]["cancel-in-progress"] is False
+    assert "head_repository.full_name" in publish["concurrency"]["group"]
+    assert "head_branch" in publish["concurrency"]["group"]
     assert not any(
         "run" in step or "checkout" in step.get("uses", "")
         for step in publish["steps"]
@@ -30,6 +33,9 @@ def test_workflow_separates_pr_execution_from_privileged_commenting() -> None:
     )
     assert "pr.head.sha !== run.head_sha" in scripts
     assert "p.head.repo?.full_name === run.head_repository.full_name" in scripts
+    assert "p.head.ref === run.head_branch" in scripts
+    assert "matches.length > 1" in scripts
+    assert "core.setFailed" in scripts
     assert "github.rest.issues.updateComment" in scripts
     assert "github.rest.issues.createComment" in scripts
     assert "github-actions[bot]" in scripts

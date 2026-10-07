@@ -43,16 +43,25 @@ def main(argv: list[str] | None = None) -> int:
         write_report(report, args.output_dir, fixture=fixture)
     except (OSError, ValueError, ValidationError, yaml.YAMLError) as error:
         logger.exception("correlation_id=evaluation-smoke evaluation failed", extra=context)
-        args.output_dir.mkdir(parents=True, exist_ok=True)
-        (args.output_dir / "smoke.json").write_text(
-            json.dumps({"passed": False, "error": type(error).__name__}) + "\n",
-            encoding="utf-8",
-        )
-        (args.output_dir / "smoke.md").write_text(
-            "<!-- evaluation-report -->\n## Evaluation smoke: ERROR\n\n"
-            "Evaluation/configuration failed; see workflow logs. No baseline comparison passed.\n",
-            encoding="utf-8",
-        )
+        try:
+            args.output_dir.mkdir(parents=True, exist_ok=True)
+            (args.output_dir / "smoke.json").write_text(
+                json.dumps({"passed": False, "error": type(error).__name__}) + "\n",
+                encoding="utf-8",
+            )
+            (args.output_dir / "smoke.md").write_text(
+                "<!-- evaluation-report -->\n## Evaluation smoke: ERROR\n\n"
+                "Evaluation/configuration failed; see workflow logs. "
+                "No baseline comparison passed.\n",
+                encoding="utf-8",
+            )
+        except OSError:
+            # The report directory/files are best-effort diagnostics; the
+            # exit code below is the authoritative failure signal either way.
+            logger.exception(
+                "correlation_id=evaluation-smoke failed to write error artifacts",
+                extra=context,
+            )
         return 2
     logger.info(
         "correlation_id=evaluation-smoke passed=%s fixture=%s metrics=%d hard_failures=%d",

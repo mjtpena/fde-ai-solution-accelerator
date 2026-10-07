@@ -62,6 +62,12 @@ jobs:
     permissions:
       actions: read
       pull-requests: write
+    # One publish run per evaluated branch at a time, in FIFO order, so an
+    # older run can never overwrite a newer run's comment; never cancel a
+    # run that is already updating the PR comment.
+    concurrency:
+      group: evaluation-publish-${{ github.event.workflow_run.head_repository.full_name }}-${{ github.event.workflow_run.head_branch }}
+      cancel-in-progress: false
     steps:
       - name: Identify the evaluated PR and artifact
         id: report
@@ -74,15 +80,25 @@ jobs:
               github.rest.repos.listPullRequestsAssociatedWithCommit,
               {owner, repo, commit_sha: run.head_sha}
             );
-            const pr = candidates.find(p =>
+            const matches = candidates.filter(p =>
               p.state === 'open' &&
               p.head.sha === run.head_sha &&
+              p.head.ref === run.head_branch &&
               p.head.repo?.full_name === run.head_repository.full_name
             );
-            if (!pr) {
+            if (matches.length === 0) {
               core.notice('No open PR still matches the evaluated commit.');
               return;
             }
+            if (matches.length > 1) {
+              // Ambiguous: refuse to guess which PR should receive the comment.
+              core.setFailed(
+                `Commit ${run.head_sha} matches ${matches.length} open PRs ` +
+                `(${matches.map(p => p.number).join(', ')}); refusing to publish.`
+              );
+              return;
+            }
+            const pr = matches[0];
             core.setOutput('pr', pr.number);
             const artifacts = await github.paginate(
               github.rest.actions.listWorkflowRunArtifacts,

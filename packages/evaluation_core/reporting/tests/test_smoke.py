@@ -136,6 +136,25 @@ def test_invalid_baseline_does_not_fall_back_to_fixture(tmp_path: Path) -> None:
     assert smoke.main(cli_args(tmp_path, fixture=True)) == 2
 
 
+def test_error_exit_code_is_preserved_when_artifact_writing_also_fails(
+    tmp_path: Path,
+) -> None:
+    """The documented exit code 2 must not be masked by a secondary OSError
+    raised while writing the best-effort error artifacts themselves."""
+    baseline, _ = configure(tmp_path)
+    baseline.write_text("not valid json", encoding="utf-8")
+    # A file in place of the reports directory makes mkdir/write_text in the
+    # error handler raise OSError, independent of the original failure.
+    blocked_output = tmp_path / "reports"
+    blocked_output.write_text("not a directory", encoding="utf-8")
+    args = [
+        "--baseline", str(baseline),
+        "--thresholds", str(tmp_path / "thresholds.yml"),
+        "--output-dir", str(blocked_output),
+    ]
+    assert smoke.main(args) == 2
+
+
 def test_full_report_writer_uses_requested_name(tmp_path: Path) -> None:
     baseline, thresholds, _ = load_comparison_config(
         tmp_path / "missing.json", tmp_path / "missing.yml", allow_fixture=True
