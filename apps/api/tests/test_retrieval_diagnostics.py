@@ -145,6 +145,41 @@ class RetrievalDiagnosticsTests(unittest.TestCase):
 
         self.assertEqual(raised.exception.status_code, 404)
 
+    def test_http_cross_scope_record_is_hidden_from_single_scope_caller(self) -> None:
+        record = self.record.model_copy(
+            update={"scope_ids": frozenset({"scope-a", "scope-b"})}
+        )
+        asyncio.run(self.store.save(record))
+
+        response = self.get_response(self.contributor)
+
+        self.assertEqual(response.status_code, 404)
+        self.assertEqual(response.json(), {"detail": "Retrieval diagnostics not found"})
+
+    def test_http_cross_scope_record_is_visible_to_caller_with_all_scopes(self) -> None:
+        record = self.record.model_copy(
+            update={"scope_ids": frozenset({"scope-a", "scope-b"})}
+        )
+        asyncio.run(self.store.save(record))
+        contributor = self.contributor.model_copy(
+            update={"scope_ids": frozenset({"scope-a", "scope-b"})}
+        )
+
+        response = self.get_response(contributor)
+
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(response.json()["correlation_id"], "trace-1")
+        self.assertEqual(response.json()["results"][0]["chunk_id"], "chunk-1")
+
+    def test_http_empty_scope_record_is_hidden(self) -> None:
+        record = self.record.model_copy(update={"scope_ids": frozenset()})
+        asyncio.run(self.store.save(record))
+
+        response = self.get_response(self.contributor)
+
+        self.assertEqual(response.status_code, 404)
+        self.assertEqual(response.json(), {"detail": "Retrieval diagnostics not found"})
+
 
 if __name__ == "__main__":
     unittest.main()
