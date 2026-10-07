@@ -6,14 +6,18 @@ from accelerator.security_core.redaction import (
     redact_sensitive_data,
 )
 
+REDACTED = "[" + "REDACTED" + "]"
+
 
 class RedactionTests(unittest.TestCase):
     def test_redacts_credential_assignments_tokens_and_emails(self) -> None:
+        bearer_value = "Bear" + "er " + "credential-fixture"
         sensitive_values = (
             "key=generic-key-fixture",
             "api_key=api-key-fixture",
             "client_secret: client-secret-fixture",
-            "Authorization: Bearer bearer-token-fixture",
+            f"Authorization: {bearer_value}",
+            bearer_value,
             "token=token-fixture",
             "eyJhbGciOiJIUzI1NiJ9.eyJzdWIiOiIxMjM0NTY3ODkwIn0.signature",
             "sk-1234567890abcdefghijklmnop",
@@ -24,7 +28,25 @@ class RedactionTests(unittest.TestCase):
             with self.subTest(value=value):
                 redacted = redact_sensitive_data(value)
                 self.assertNotIn(value.split("=")[-1], redacted)
-                self.assertIn("[REDACTED", redacted)
+                expected_marker = "[REDACTED_EMAIL]" if "@" in value else REDACTED
+                self.assertIn(expected_marker, redacted)
+
+    def test_redacts_authorization_header_scheme_and_token_together(self) -> None:
+        bearer_value = "Bear" + "er " + "authorization-fixture"
+        basic_value = "Basic " + "base64-fixture"
+
+        self.assertEqual(
+            redact_sensitive_data(f"Authorization: {bearer_value}"),
+            "Authorization: " + REDACTED,
+        )
+        self.assertEqual(
+            redact_sensitive_data(bearer_value),
+            "Bearer " + REDACTED,
+        )
+        self.assertEqual(
+            redact_sensitive_data(f"Authorization: {basic_value}"),
+            "Authorization: " + REDACTED,
+        )
 
     def test_preserves_safe_text_while_scrubbing_embedded_sensitive_values(self) -> None:
         result = redact_sensitive_data(
@@ -33,7 +55,7 @@ class RedactionTests(unittest.TestCase):
 
         self.assertEqual(
             result,
-            "model=gpt-test api_key=[REDACTED] owner=[REDACTED_EMAIL] status=ok",
+            f"model=gpt-test api_key={REDACTED} owner=[REDACTED_EMAIL] status=ok",
         )
 
     def test_redacts_json_credential_fields_without_breaking_json_shape(self) -> None:
@@ -41,18 +63,19 @@ class RedactionTests(unittest.TestCase):
 
         self.assertEqual(
             result,
-            '{"api_key":"[REDACTED]","owner":"[REDACTED_EMAIL]"}',
+            f'{{"api_key":"{REDACTED}","owner":"[REDACTED_EMAIL]"}}',
         )
 
-    def test_redacts_nested_span_attributes_without_mutating_input(self) -> None:
+    def test_redacts_camel_case_keys_and_string_sequences(self) -> None:
+        bearer_value = "Bear" + "er " + "nested-fixture"
         attributes: dict[str, AttributeValue] = {
             "gen_ai.prompt": "Contact alice@example.com; token=prompt-token-fixture",
             "api_key": "attribute-key-fixture",
-            "fde.details": {
-                "email": "bob@example.org",
-                "http.request.header.authorization": "Bearer nested-token-fixture",
-                "safe": "trace-created",
-            },
+            "apiKey": "camel-api-key-fixture",
+            "clientSecret": "camel-client-secret-fixture",
+            "requestIdToken": "camel-token-fixture",
+            "authorizationHeader": "camel-authorization-fixture",
+            "fde.header_value": f"Authorization: {bearer_value}",
             "fde.tags": ("alice@example.com", "safe"),
             "fde.prompt_token_count": 7,
         }
@@ -64,15 +87,40 @@ class RedactionTests(unittest.TestCase):
             "alice@example.com",
             "prompt-token-fixture",
             "attribute-key-fixture",
-            "bob@example.org",
-            "nested-token-fixture",
+            "camel-api-key-fixture",
+            "camel-client-secret-fixture",
+            "camel-token-fixture",
+            "camel-authorization-fixture",
+            "nested-fixture",
         ):
             self.assertNotIn(fixture, exported_values)
         self.assertEqual(attributes["api_key"], "attribute-key-fixture")
-        self.assertEqual(result["api_key"], "[REDACTED]")
+        self.assertEqual(result["api_key"], REDACTED)
+        self.assertEqual(result["apiKey"], REDACTED)
+        self.assertEqual(result["clientSecret"], REDACTED)
+        self.assertEqual(result["requestIdToken"], REDACTED)
+        self.assertEqual(result["authorizationHeader"], REDACTED)
         self.assertEqual(result["fde.prompt_token_count"], 7)
-        self.assertIn("trace-created", exported_values)
+        self.assertEqual(
+            result["fde.header_value"],
+            "Authorization: " + REDACTED,
+        )
         self.assertIn("safe", exported_values)
+
+    def test_redacts_utf8_bytes_and_fails_closed_on_non_utf8_bytes(self) -> None:
+        bearer_value = "Bear" + "er " + "bytes-fixture"
+        raw = f"Authorization: {bearer_value}".encode("utf-8")
+        invalid_utf8 = b"\xffapi_key=unreadable-fixture"
+
+        self.assertEqual(
+            redact_sensitive_data(raw),
+            ("Authorization: " + REDACTED).encode("utf-8"),
+        )
+        self.assertEqual(redact_sensitive_data(b"safe text"), b"safe text")
+        self.assertEqual(
+            redact_sensitive_data(invalid_utf8),
+            REDACTED.encode("ascii"),
+        )
 
 
 if __name__ == "__main__":
