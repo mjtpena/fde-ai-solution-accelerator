@@ -118,6 +118,9 @@ jobs:
               return;
             }
             const marker = '<!-- evaluation-report -->';
+            if (process.env.HAS_ARTIFACT === 'true' && fs.statSync('report/smoke.md').size > 60000) {
+              throw new Error('Oversized evaluation report');
+            }
             const body = process.env.HAS_ARTIFACT === 'true'
               ? fs.readFileSync('report/smoke.md', 'utf8')
               : `${marker}\n## Evaluation smoke: ERROR\n\nNo report was generated. See workflow logs.`;

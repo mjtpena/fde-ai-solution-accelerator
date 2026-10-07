@@ -2,6 +2,7 @@ import pytest
 from pydantic import ValidationError
 
 from ..comparison import (
+    ComparisonReport,
     EvaluationResult,
     MetricThreshold,
     Thresholds,
@@ -117,3 +118,14 @@ def test_report_shape_and_markdown_are_stable() -> None:
 def test_metric_names_cannot_inject_markdown(name: str) -> None:
     with pytest.raises(ValidationError):
         EvaluationResult(metrics={name: 1})
+
+
+def test_empty_comparison_cannot_report_success() -> None:
+    with pytest.raises(ValidationError):
+        ComparisonReport(metrics=(), hard_failures=())
+
+
+@pytest.mark.parametrize("value", [True, "0.5", None])
+def test_wrong_metric_types_are_rejected(value: object) -> None:
+    with pytest.raises(ValidationError):
+        EvaluationResult.model_validate({"metrics": {"score": value}})

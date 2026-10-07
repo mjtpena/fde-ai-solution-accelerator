@@ -37,7 +37,7 @@ class MetricComparison(ReportModel):
 
 
 class ComparisonReport(ReportModel):
-    metrics: tuple[MetricComparison, ...]
+    metrics: tuple[MetricComparison, ...] = Field(min_length=1)
     hard_failures: tuple[MetricName, ...]
 
     @property
