@@ -7,13 +7,14 @@ from contextlib import asynccontextmanager
 from dataclasses import dataclass
 from datetime import UTC, datetime, timedelta
 from typing import ClassVar, cast
-from uuid import UUID
+from uuid import UUID, uuid4
 
 import pytest
 from pydantic import BaseModel
 from sqlalchemy.dialects import postgresql
 from sqlalchemy.engine import make_url
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker, create_async_engine
+from sqlalchemy.schema import CreateSchema, DropSchema
 
 from accelerator.agent_core.approvals import (
     Approval,
@@ -274,6 +275,7 @@ async def test_expired_approval_fails_and_is_audited(
     assert repository.audit_events[-1].transition == "expired"
 
 
+@pytest.mark.parametrize("decision", ["approve", "reject"])
 async def test_expiry_at_decision_time_fails_before_any_approval_or_rejection(
     service: ApprovalService[Arguments, Result],
     repository: InMemoryApprovalRepository,
@@ -281,6 +283,7 @@ async def test_expiry_at_decision_time_fails_before_any_approval_or_rejection(
     tool: Tool,
     args: Arguments,
     context: Context,
+    decision: str,
 ) -> None:
     approval = await service.create(
         tool_name=tool.name,
@@ -291,7 +294,7 @@ async def test_expiry_at_decision_time_fails_before_any_approval_or_rejection(
     clock.now += timedelta(seconds=1)
 
     with pytest.raises(ApprovalExpiredError):
-        await service.approve(approval_id=approval.id, ctx=context)
+        await getattr(service, decision)(approval_id=approval.id, ctx=context)
 
     assert repository.approvals[approval.id].status == "expired"
     assert repository.approvals[approval.id].decided_by is None
@@ -303,6 +306,47 @@ async def test_expiry_at_decision_time_fails_before_any_approval_or_rejection(
         await service.reject(approval_id=approval.id, ctx=context)
 
     assert repository.approvals[approval.id].status == "expired"
+
+
+@pytest.mark.parametrize("failure", ["update", "audit", "commit"])
+async def test_post_invocation_persistence_failure_can_repeat_external_write(
+    clock: Clock, tool: Tool, args: Arguments, context: Context, failure: str
+) -> None:
+    class FailingRepository(InMemoryApprovalRepository):
+        fail = False
+
+        @asynccontextmanager
+        async def transaction(self) -> AsyncIterator[None]:
+            async with super().transaction():
+                yield
+                if self.fail and failure == "commit":
+                    raise RuntimeError("injected commit failure")
+
+        async def update(self, approval: Approval) -> None:
+            if self.fail and failure == "update":
+                raise RuntimeError("injected update failure")
+            await super().update(approval)
+
+        async def add_audit_event(self, event: ApprovalAuditEvent) -> None:
+            if self.fail and failure == "audit":
+                raise RuntimeError("injected audit failure")
+            await super().add_audit_event(event)
+
+    repository = FailingRepository()
+    service = ApprovalService[Arguments, Result](repository, clock=clock)
+    approval = await _approved(service, tool=tool, args=args, context=context)
+    repository.fail = True
+
+    with pytest.raises(RuntimeError, match=f"injected {failure} failure"):
+        await service.execute(approval_id=approval.id, tool=tool, args=args, ctx=context)
+
+    assert tool.calls == 1
+    assert repository.approvals[approval.id].status == "approved"
+    assert [event.transition for event in repository.audit_events] == ["pending", "approved"]
+    repository.fail = False
+    await service.execute(approval_id=approval.id, tool=tool, args=args, ctx=context)
+    assert tool.calls == 2
+    assert repository.approvals[approval.id].status == "executed"
 
 
 async def test_validate_approval_receives_persisted_record_before_invocation(
@@ -451,8 +495,8 @@ async def test_get_for_update_uses_postgresql_row_lock() -> None:
 # happens inside one ``repository.transaction()``), using an in-memory
 # repository whose ``asyncio.Lock`` only serializes callers *within this one
 # process*. That is not evidence that the real adapter is safe across two
-# independent database connections/sessions, which is what "exactly-once"
-# actually depends on in production. The test below exercises the concrete
+# independent database connections/sessions. This proves serialization, not
+# crash-safe exactly-once external effects. The test below exercises the concrete
 # ``SQLAlchemyApprovalRepository`` against a real PostgreSQL server using two
 # separate engines/sessions (i.e. two separate backend connections), and
 # measures that the loser's ``SELECT ... FOR UPDATE`` genuinely blocks at the
@@ -487,7 +531,7 @@ requires_postgres = pytest.mark.skipif(
     not _postgres_reachable(POSTGRES_DSN),
     reason=(
         "Real PostgreSQL is not reachable at "
-        f"APPROVALS_TEST_POSTGRES_DSN={POSTGRES_DSN!r}. Start one with "
+        f"APPROVALS_TEST_POSTGRES_DSN={make_url(POSTGRES_DSN)!s}. Start one with "
         "`docker compose up -d postgres` to run this two-session row-lock "
         "concurrency test."
     ),
@@ -530,9 +574,16 @@ class SlowTool(Tool):
 
 @requires_postgres
 async def test_postgresql_row_lock_serializes_concurrent_execute_across_two_sessions() -> None:
-    engine_a = create_async_engine(POSTGRES_DSN)
-    engine_b = create_async_engine(POSTGRES_DSN)
+    schema = f"approval_test_{uuid4().hex}"
+    admin_engine = create_async_engine(POSTGRES_DSN)
+    connect_args = {"server_settings": {"search_path": schema}}
+    engine_a = create_async_engine(POSTGRES_DSN, connect_args=connect_args)
+    engine_b = create_async_engine(POSTGRES_DSN, connect_args=connect_args)
+    created = False
     try:
+        async with admin_engine.begin() as connection:
+            await connection.execute(CreateSchema(schema))
+        created = True
         async with engine_a.begin() as connection:
             await connection.run_sync(ApprovalBase.metadata.create_all)
 
@@ -582,8 +633,10 @@ async def test_postgresql_row_lock_serializes_concurrent_execute_across_two_sess
             assert elapsed >= LOCK_HOLD_SECONDS * 0.8
     finally:
         try:
-            async with engine_a.begin() as connection:
-                await connection.run_sync(ApprovalBase.metadata.drop_all)
+            if created:
+                async with admin_engine.begin() as connection:
+                    await connection.execute(DropSchema(schema, cascade=True))
         finally:
             await engine_a.dispose()
             await engine_b.dispose()
+            await admin_engine.dispose()

@@ -59,6 +59,15 @@ class ApprovalRepository(Protocol):
 
 
 class ApprovalService(Generic[TArgs, TResult]):
+    """Protect committed executions against replay, not external writes against crashes.
+
+    The row lock serializes callers and the executed state/audit commit together.
+    A tool's external side effect is not part of that transaction: persistence
+    failure after invocation leaves an approved record that can invoke it again.
+    Callers must not automatically retry an uncertain write unless its boundary
+    supplies durable idempotency or shares the approval's database transaction.
+    """
+
     def __init__(
         self,
         repository: ApprovalRepository,
@@ -129,9 +138,8 @@ class ApprovalService(Generic[TArgs, TResult]):
         against the stored ``requested_by``/``decided_by``/``scope_id``
         fields) without trusting any caller-supplied ``Approval`` data, and
         without a separate read that could race the lock. Raising from the
-        callback aborts execution: the transaction still commits (so audit
-        trail/state are preserved), no tool invocation occurs, and the
-        exception propagates to the caller.
+        callback aborts execution and rolls back this transaction: no tool
+        invocation occurs, and the exception propagates to the caller.
         """
         result: TResult | None = None
         expired = False
