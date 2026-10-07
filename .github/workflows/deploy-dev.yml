@@ -70,6 +70,10 @@ jobs:
       - name: Check
         run: make check
 
+      - name: Validate Bicep without credentials
+        shell: pwsh
+        run: ./infrastructure/scripts/validate-deployment.ps1 -BuildOnly
+
       - name: Smoke evaluation
         run: make eval-smoke
 
