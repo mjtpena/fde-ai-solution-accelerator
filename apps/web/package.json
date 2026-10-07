@@ -10,9 +10,11 @@
     "build": "npm run generate:api && next build",
     "start": "next start",
     "generate:api": "openapi-typescript ../../contracts/api/openapi.json -o lib/api/schema.d.ts",
+    "lint": "eslint .",
+    "format:check": "prettier --check --end-of-line auto --print-width 80 package.json eslint.config.mjs",
     "typecheck": "tsc --noEmit",
     "test": "vitest run",
-    "check": "npm run generate:api && npm run typecheck && npm run test"
+    "check": "npm run generate:api && npm run lint && npm run format:check && npm run typecheck && npm run test"
   },
   "dependencies": {
     "next": "16.4.0",
@@ -23,7 +25,10 @@
     "@types/node": "^22.19.0",
     "@types/react": "19.3.0",
     "@types/react-dom": "19.3.0",
+    "eslint": "10.12.0",
+    "eslint-config-next": "16.4.0",
     "openapi-typescript": "7.13.0",
+    "prettier": "3.9.9",
     "typescript": "^5.9.3",
     "vitest": "5.0.3"
   }
