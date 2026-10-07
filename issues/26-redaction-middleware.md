@@ -11,7 +11,7 @@ Keep secrets and content out of telemetry.
 - [ ] `make eval-smoke` passes
 
 ## Files in scope
-packages/observability_core/redaction/**
+packages/security_core/redaction/**, packages/observability_core/**
 
 ## Out of scope / do not touch
 Anything not listed in scope

@@ -12,7 +12,7 @@ Show evaluation movement on every PR.
 - [ ] `make eval-smoke` passes
 
 ## Files in scope
-packages/evaluation_core/reporting/**, .github/workflows/evaluation.yml
+packages/evaluation_core/reporting/**, .github/workflows/evaluation.yml, Makefile
 
 ## Out of scope / do not touch
 evaluations/baselines/**

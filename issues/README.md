@@ -18,7 +18,7 @@
 | 14 | M3 | Azure AI Search index and adapter | security-sensitive |
 | 15 | M3 | Evidence sufficiency and abstention | — |
 | 16 | M3 | Citation validation | security-sensitive |
-| 17 | M3 | Retrieval diagnostics endpoint | — |
+| 17 | M3 | Retrieval diagnostics endpoint | security-sensitive |
 | 18 | M4 | Agent factory (Microsoft Agent Framework + Foundry) | — |
 | 19 | M4 | EnterpriseTool base and registry | — |
 | 20 | M4 | Tool policy middleware | security-sensitive |

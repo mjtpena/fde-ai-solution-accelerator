@@ -32,7 +32,7 @@ gh issue create --title "[M3] Idempotent ingestion worker" --milestone "M3 Retri
 gh issue create --title "[M3] Azure AI Search index and adapter" --milestone "M3 Retrieval foundation" --label "copilot,security-sensitive" --body-file "issues/14-azure-ai-search-index-and-adapter.md"
 gh issue create --title "[M3] Evidence sufficiency and abstention" --milestone "M3 Retrieval foundation" --label "copilot" --body-file "issues/15-evidence-sufficiency-and-abstention.md"
 gh issue create --title "[M3] Citation validation" --milestone "M3 Retrieval foundation" --label "copilot,security-sensitive" --body-file "issues/16-citation-validation.md"
-gh issue create --title "[M3] Retrieval diagnostics endpoint" --milestone "M3 Retrieval foundation" --label "copilot" --body-file "issues/17-retrieval-diagnostics-endpoint.md"
+gh issue create --title "[M3] Retrieval diagnostics endpoint" --milestone "M3 Retrieval foundation" --label "copilot,security-sensitive" --body-file "issues/17-retrieval-diagnostics-endpoint.md"
 gh issue create --title "[M4] Agent factory (Microsoft Agent Framework + Foundry)" --milestone "M4 Agent foundation" --label "copilot" --body-file "issues/18-agent-factory--microsoft-agent-framework---foundry.md"
 gh issue create --title "[M4] EnterpriseTool base and registry" --milestone "M4 Agent foundation" --label "copilot" --body-file "issues/19-enterprisetool-base-and-registry.md"
 gh issue create --title "[M4] Tool policy middleware" --milestone "M4 Agent foundation" --label "copilot,security-sensitive" --body-file "issues/20-tool-policy-middleware.md"

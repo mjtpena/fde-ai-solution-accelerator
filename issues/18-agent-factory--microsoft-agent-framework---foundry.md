@@ -11,10 +11,11 @@ Create agents from configuration.
 - [ ] `make eval-smoke` passes
 
 ## Files in scope
-packages/agent_core/agents/**
+packages/agent_core/agents/**, apps/api/src/accelerator/infrastructure/foundry/**
 
 ## Out of scope / do not touch
-Anything not listed in scope
+Anything not listed in scope. Keep Foundry SDK client construction in the API
+infrastructure adapter and have the agent factory depend on its interface.
 
 ## References
 See `docs/spec.md` and `.github/instructions/`.

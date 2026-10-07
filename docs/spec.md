@@ -321,6 +321,33 @@ class Approval(BaseModel):
 
 ### 5.4 Retrieval
 
+#### Document and chunk contracts
+
+```python
+class Document(BaseModel):
+    document_id: str
+    title: str
+    source_uri: str
+    content_hash: str
+    version: str | None = None
+    effective_date: date | None = None
+
+
+class Chunk(BaseModel):
+    chunk_id: str
+    document_id: str
+    version: str | None = None
+    effective_date: date | None = None
+    section_heading: str | None = None
+    text: str
+```
+
+`document_id` identifies the source document. `chunk_id` identifies a chunk
+within the indexed corpus; ingestion uses it as the idempotent upsert key.
+`content_hash` is computed from the source content for deduplication.
+
+#### Evidence and retrieval
+
 ```python
 class Evidence(BaseModel):
     chunk_id: str

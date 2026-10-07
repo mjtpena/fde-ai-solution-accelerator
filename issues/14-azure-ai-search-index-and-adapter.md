@@ -12,10 +12,12 @@ Hybrid retrieval with mandatory scope filtering.
 - [ ] `make eval-smoke` passes
 
 ## Files in scope
-packages/retrieval_core/search/**, packages/retrieval_core/indexing/**
+packages/retrieval_core/search/**, packages/retrieval_core/indexing/**,
+apps/api/src/accelerator/infrastructure/search/**
 
 ## Out of scope / do not touch
-Anything not listed in scope
+Anything not listed in scope. Keep the `Retriever` interface in `retrieval_core`;
+Azure SDK calls belong only in the API infrastructure adapter.
 
 ## References
 See `docs/spec.md` and `.github/instructions/`.

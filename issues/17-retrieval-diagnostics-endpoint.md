@@ -20,7 +20,7 @@ Anything not listed in scope
 See `docs/spec.md` and `.github/instructions/`.
 
 ## Security-sensitive?
-No
+Yes — exposes retrieval filters/results and enforces access to diagnostic data
 
 ## Execution
-Suitable to assign to the Copilot coding agent.
+Do this in VS Code agent mode yourself (`/implement-issue`).
