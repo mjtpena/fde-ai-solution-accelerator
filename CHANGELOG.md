@@ -57,7 +57,7 @@ release PR is #57.
 
 PR #54 is currently reporting failures for Dependency review and the Trivy
 repository, web-image, and ingestion-image scans. PR #48's Quality checks are
-passing; PR #62 and #68 are drafts. These PR states are another reason the
+passing; PR #68 is a draft. These PR states are another reason the
 prerequisites are not ready to land.
 
 No v0.1.0 tag or GitHub Release was found. Do not tag or publish until the
