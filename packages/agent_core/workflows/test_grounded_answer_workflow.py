@@ -3,7 +3,12 @@ from dataclasses import dataclass
 
 import pytest
 
-from .grounded_answer import GroundedAnswerWorkflow, RetrievedEvidenceContext
+from .base import Workflow
+from .grounded_answer import (
+    GroundedAnswerResult,
+    GroundedAnswerWorkflow,
+    RetrievedEvidenceContext,
+)
 
 
 @dataclass(frozen=True)
@@ -221,6 +226,32 @@ async def test_insufficient_evidence_returns_structured_abstention_without_gener
         "Second retrieved text.",
         "First retrieved text.",
     )
+
+
+@pytest.mark.asyncio
+async def test_run_is_callable_through_base_interface_with_workflow_input_keyword() -> None:
+    """GroundedAnswerWorkflow must honor Workflow.run(workflow_input=..., ctx=...)."""
+    calls: list[str] = []
+    evidence = (FakeEvidence("chunk-1", "Evidence."),)
+    workflow: Workflow[str, FakeContext, GroundedAnswerResult] = GroundedAnswerWorkflow(
+        retriever=FakeRetriever(evidence, calls),
+        sufficiency_checker=FakeSufficiencyChecker(
+            FakeDecision(True, "Sufficient.", ("chunk-1",)), calls
+        ),
+        answer_generator=FakeAnswerGenerator(
+            FakeGeneratedAnswer("Grounded answer.", ("chunk-1",)), calls
+        ),
+        citation_validator=FakeCitationValidator(calls),
+        retrieval_request_factory=FakeRequest,
+    )
+
+    result = await workflow.run(
+        workflow_input="What does the document say?",
+        ctx=FakeContext("server-resolved-scope"),
+    )
+
+    assert calls == ["retrieve", "sufficiency", "generate", "validate"]
+    assert result.status == "answered"
 
 
 @pytest.mark.asyncio

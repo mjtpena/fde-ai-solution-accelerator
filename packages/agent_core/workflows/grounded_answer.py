@@ -124,7 +124,8 @@ class GroundedAnswerWorkflow(
         self._retrieval_request_factory = retrieval_request_factory
         self._capture_evaluation_context = capture_evaluation_context
 
-    async def run(self, query: str, ctx: ContextT) -> GroundedAnswerResult:
+    async def run(self, workflow_input: str, ctx: ContextT) -> GroundedAnswerResult:
+        query = workflow_input
         evidence = tuple(
             await self._retriever.retrieve(self._retrieval_request_factory(query), ctx)
         )
