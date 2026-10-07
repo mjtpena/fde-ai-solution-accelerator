@@ -1,0 +1,549 @@
+name: Deploy dev
+
+# Configure GitHub's `dev` environment with AZURE_CLIENT_ID,
+# AZURE_TENANT_ID, AZURE_SUBSCRIPTION_ID, and AZURE_LOCATION variables.
+# Add Entra federated credentials for
+# repo:mjtpena/fde-ai-solution-accelerator:environment:dev and audience
+# api://AzureADTokenExchange. Do not store Azure credentials as GitHub secrets.
+# Grant the OIDC principal least-privilege subscription deployment and ACR push
+# rights; app UAMIs receive registry pull rights from the Bicep deployment.
+# Configure the `production` environment with required reviewers before opting
+# into its promotion job, and federate
+# repo:mjtpena/fde-ai-solution-accelerator:environment:production.
+# Production resources are pre-provisioned separately. No API Dockerfile exists,
+# so this workflow does not create an API app or claim an HTTP app smoke test.
+# Also configure HOSTED_AGENT_NAME, HOSTED_APPLICATION_FACTORY (a trusted
+# module:callable), and the three EVALUATION_* variables in `dev`; set the
+# three AZURE_POSTGRES_ADMIN_* variables in `dev`, and the production Foundry
+# endpoint/deployment, resource group, and target app names in `production`.
+on:
+  push:
+    branches:
+      - main
+  workflow_dispatch:
+    inputs:
+      deploy_production:
+        description: Promote the tested images to pre-provisioned production resources
+        required: false
+        default: false
+        type: boolean
+
+permissions:
+  contents: read
+
+concurrency:
+  group: deploy-dev-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  quality:
+    name: Quality and smoke evaluation
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          persist-credentials: false
+
+      - uses: astral-sh/setup-uv@v10.2.0
+        with:
+          enable-cache: true
+          cache-dependency-glob: |
+            uv.lock
+            **/pyproject.toml
+
+      - uses: actions/setup-python@v7
+        with:
+          python-version: "3.12"
+
+      - uses: actions/setup-node@v7
+        with:
+          node-version: "22"
+          cache: npm
+          cache-dependency-path: package-lock.json
+
+      - name: Install dependencies
+        run: |
+          uv sync --all-packages --frozen
+          npm ci
+
+      - name: Check
+        run: make check
+
+      - name: Smoke evaluation
+        run: make eval-smoke
+
+      - name: Upload smoke evaluation report
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: smoke-evaluation-${{ github.sha }}
+          path: |
+            evaluations/reports/smoke.json
+            evaluations/reports/smoke.md
+          if-no-files-found: warn
+          retention-days: 30
+
+  deploy_dev:
+    name: Deploy dev resources and applications
+    needs: quality
+    if: github.ref == 'refs/heads/main'
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    environment:
+      name: dev
+    permissions:
+      contents: read
+      id-token: write
+    outputs:
+      resource_group_name: ${{ steps.outputs.outputs.resource_group_name }}
+      registry_name: ${{ steps.outputs.outputs.registry_name }}
+      registry_login_server: ${{ steps.outputs.outputs.registry_login_server }}
+      container_apps_environment_name: ${{ steps.outputs.outputs.container_apps_environment_name }}
+      registry_id: ${{ steps.outputs.outputs.registry_id }}
+      container_apps_environment_id: ${{ steps.outputs.outputs.container_apps_environment_id }}
+      api_container_app_name: ${{ steps.outputs.outputs.api_container_app_name }}
+      web_container_app_name: ${{ steps.outputs.outputs.web_container_app_name }}
+      worker_container_app_name: ${{ steps.outputs.outputs.worker_container_app_name }}
+      api_identity_id: ${{ steps.outputs.outputs.api_identity_id }}
+      api_identity_principal_id: ${{ steps.outputs.outputs.api_identity_principal_id }}
+      web_identity_id: ${{ steps.outputs.outputs.web_identity_id }}
+      web_identity_principal_id: ${{ steps.outputs.outputs.web_identity_principal_id }}
+      worker_identity_id: ${{ steps.outputs.outputs.worker_identity_id }}
+      worker_identity_principal_id: ${{ steps.outputs.outputs.worker_identity_principal_id }}
+      project_endpoint: ${{ steps.outputs.outputs.project_endpoint }}
+      foundry_project_id: ${{ steps.outputs.outputs.foundry_project_id }}
+      foundry_project_name: ${{ steps.outputs.outputs.foundry_project_name }}
+      model_deployment_name: ${{ steps.outputs.outputs.model_deployment_name }}
+      web_image: ${{ steps.images.outputs.web_image }}
+      worker_image: ${{ steps.images.outputs.worker_image }}
+      agent_image: ${{ steps.images.outputs.agent_image }}
+    env:
+      AZURE_CLIENT_ID: ${{ vars.AZURE_CLIENT_ID }}
+      AZURE_TENANT_ID: ${{ vars.AZURE_TENANT_ID }}
+      AZURE_SUBSCRIPTION_ID: ${{ vars.AZURE_SUBSCRIPTION_ID }}
+      AZURE_LOCATION: ${{ vars.AZURE_LOCATION }}
+      HOSTED_AGENT_NAME: ${{ vars.HOSTED_AGENT_NAME }}
+      HOSTED_APPLICATION_FACTORY: ${{ vars.HOSTED_APPLICATION_FACTORY }}
+      AZURE_POSTGRES_ADMIN_OBJECT_ID: ${{ vars.AZURE_POSTGRES_ADMIN_OBJECT_ID }}
+      AZURE_POSTGRES_ADMIN_NAME: ${{ vars.AZURE_POSTGRES_ADMIN_NAME }}
+      AZURE_POSTGRES_ADMIN_PRINCIPAL_TYPE: ${{ vars.AZURE_POSTGRES_ADMIN_PRINCIPAL_TYPE }}
+      EVALUATION_JUDGE_AZURE_ENDPOINT: ${{ vars.EVALUATION_JUDGE_AZURE_ENDPOINT }}
+      EVALUATION_JUDGE_AZURE_DEPLOYMENT: ${{ vars.EVALUATION_JUDGE_AZURE_DEPLOYMENT }}
+      EVALUATION_DATASET: ${{ vars.EVALUATION_DATASET }}
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          persist-credentials: false
+
+      - uses: astral-sh/setup-uv@v10.2.0
+        with:
+          enable-cache: true
+          cache-dependency-glob: |
+            uv.lock
+            **/pyproject.toml
+
+      - uses: actions/setup-python@v7
+        with:
+          python-version: "3.12"
+
+      - name: Validate deployment configuration
+        shell: bash
+        run: |
+          set -euo pipefail
+          for name in \
+            AZURE_SUBSCRIPTION_ID \
+            AZURE_LOCATION \
+            AZURE_POSTGRES_ADMIN_OBJECT_ID \
+            AZURE_POSTGRES_ADMIN_NAME \
+            AZURE_POSTGRES_ADMIN_PRINCIPAL_TYPE \
+            HOSTED_AGENT_NAME \
+            HOSTED_APPLICATION_FACTORY \
+            EVALUATION_JUDGE_AZURE_ENDPOINT \
+            EVALUATION_JUDGE_AZURE_DEPLOYMENT \
+            EVALUATION_DATASET; do
+            if [[ -z "${!name}" ]]; then
+              echo "::error::Configure the $name variable in the dev environment."
+              exit 1
+            fi
+          done
+
+      - name: Sign in to Azure with OIDC
+        uses: azure/login@v2
+        with:
+          client-id: ${{ env.AZURE_CLIENT_ID }}
+          tenant-id: ${{ env.AZURE_TENANT_ID }}
+          subscription-id: ${{ env.AZURE_SUBSCRIPTION_ID }}
+
+      - name: Validate Bicep deployment with what-if
+        shell: pwsh
+        run: |
+          ./infrastructure/scripts/validate-deployment.ps1 `
+            -SubscriptionId "$env:AZURE_SUBSCRIPTION_ID" `
+            -Location "$env:AZURE_LOCATION" `
+            -ParameterFile "infrastructure/parameters/dev.example.bicepparam"
+
+      - name: Deploy dev infrastructure
+        id: infrastructure
+        shell: bash
+        run: |
+          set -euo pipefail
+          deployment_name="fde-dev-$GITHUB_SHA"
+          az deployment sub create \
+            --subscription "$AZURE_SUBSCRIPTION_ID" \
+            --name "$deployment_name" \
+            --location "$AZURE_LOCATION" \
+            --template-file infrastructure/main.bicep \
+            --parameters infrastructure/parameters/dev.example.bicepparam \
+            --output none
+          echo "name=$deployment_name" >> "$GITHUB_OUTPUT"
+
+      - name: Read deployment outputs
+        id: outputs
+        shell: bash
+        env:
+          DEPLOYMENT_NAME: ${{ steps.infrastructure.outputs.name }}
+        run: |
+          set -euo pipefail
+          outputs="$(az deployment sub show \
+            --subscription "$AZURE_SUBSCRIPTION_ID" \
+            --name "$DEPLOYMENT_NAME" \
+            --query properties.outputs \
+            --output json)"
+          {
+            echo "resource_group_name=$(jq -er '.resourceGroupName.value' <<< "$outputs")"
+            echo "registry_name=$(jq -er '.registryName.value' <<< "$outputs")"
+            echo "registry_login_server=$(jq -er '.registryLoginServer.value' <<< "$outputs")"
+            echo "registry_id=$(jq -er '.registryId.value' <<< "$outputs")"
+            echo "container_apps_environment_name=$(jq -er '.containerAppsEnvironmentName.value' <<< "$outputs")"
+            echo "container_apps_environment_id=$(jq -er '.containerAppsEnvironmentId.value' <<< "$outputs")"
+            echo "api_container_app_name=$(jq -er '.containerAppNames.value.api' <<< "$outputs")"
+            echo "web_container_app_name=$(jq -er '.containerAppNames.value.web' <<< "$outputs")"
+            echo "worker_container_app_name=$(jq -er '.containerAppNames.value.worker' <<< "$outputs")"
+            echo "api_identity_id=$(jq -er '.apiIdentityId.value' <<< "$outputs")"
+            echo "api_identity_principal_id=$(jq -er '.apiIdentityPrincipalId.value' <<< "$outputs")"
+            echo "web_identity_id=$(jq -er '.webIdentityId.value' <<< "$outputs")"
+            echo "web_identity_principal_id=$(jq -er '.webIdentityPrincipalId.value' <<< "$outputs")"
+            echo "worker_identity_id=$(jq -er '.workerIdentityId.value' <<< "$outputs")"
+            echo "worker_identity_principal_id=$(jq -er '.workerIdentityPrincipalId.value' <<< "$outputs")"
+            echo "project_endpoint=$(jq -er '.projectEndpoint.value' <<< "$outputs")"
+            echo "foundry_project_id=$(jq -er '.foundryProjectId.value' <<< "$outputs")"
+            echo "foundry_project_name=$(jq -er '.foundryProjectName.value' <<< "$outputs")"
+            echo "model_deployment_name=$(jq -er '.modelDeploymentName.value' <<< "$outputs")"
+          } >> "$GITHUB_OUTPUT"
+
+      - name: Build and push application images
+        id: images
+        shell: bash
+        env:
+          REGISTRY_NAME: ${{ steps.outputs.outputs.registry_name }}
+          REGISTRY_LOGIN_SERVER: ${{ steps.outputs.outputs.registry_login_server }}
+        run: |
+          set -euo pipefail
+          tag="$GITHUB_SHA"
+          web_image="$REGISTRY_LOGIN_SERVER/web:$tag"
+          worker_image="$REGISTRY_LOGIN_SERVER/worker:$tag"
+          agent_image="$REGISTRY_LOGIN_SERVER/fde-agent:$tag"
+
+          az acr login --name "$REGISTRY_NAME"
+          docker buildx build --platform linux/amd64 \
+            --file apps/web/Dockerfile \
+            --tag "$web_image" \
+            --push .
+          docker buildx build --platform linux/amd64 \
+            --file workers/ingestion/Dockerfile \
+            --tag "$worker_image" \
+            --push .
+          docker buildx build --platform linux/amd64 \
+            --file infrastructure/hosted_agent/Dockerfile \
+            --tag "$agent_image" \
+            --push .
+
+          {
+            echo "web_image=$web_image"
+            echo "worker_image=$worker_image"
+            echo "agent_image=$agent_image"
+          } >> "$GITHUB_OUTPUT"
+
+      - name: Create or update web and worker apps
+        id: apps
+        shell: bash
+        env:
+          RESOURCE_GROUP_NAME: ${{ steps.outputs.outputs.resource_group_name }}
+          REGISTRY_LOGIN_SERVER: ${{ steps.outputs.outputs.registry_login_server }}
+          ENVIRONMENT_NAME: ${{ steps.outputs.outputs.container_apps_environment_name }}
+          WEB_APP_NAME: ${{ steps.outputs.outputs.web_container_app_name }}
+          WORKER_APP_NAME: ${{ steps.outputs.outputs.worker_container_app_name }}
+          WEB_IDENTITY_ID: ${{ steps.outputs.outputs.web_identity_id }}
+          WORKER_IDENTITY_ID: ${{ steps.outputs.outputs.worker_identity_id }}
+          WEB_IMAGE: ${{ steps.images.outputs.web_image }}
+          WORKER_IMAGE: ${{ steps.images.outputs.worker_image }}
+        run: |
+          set -euo pipefail
+          az extension add --name containerapp --upgrade
+
+          web_exists="$(az containerapp list \
+            --resource-group "$RESOURCE_GROUP_NAME" \
+            --query "[?name=='$WEB_APP_NAME'].name | [0]" \
+            --output tsv)"
+          if [[ -n "$web_exists" ]]; then
+            az containerapp identity assign \
+              --name "$WEB_APP_NAME" \
+              --resource-group "$RESOURCE_GROUP_NAME" \
+              --user-assigned "$WEB_IDENTITY_ID"
+            az containerapp registry set \
+              --name "$WEB_APP_NAME" \
+              --resource-group "$RESOURCE_GROUP_NAME" \
+              --server "$REGISTRY_LOGIN_SERVER" \
+              --identity "$WEB_IDENTITY_ID"
+            az containerapp update \
+              --name "$WEB_APP_NAME" \
+              --resource-group "$RESOURCE_GROUP_NAME" \
+              --image "$WEB_IMAGE"
+          else
+            az containerapp create \
+              --name "$WEB_APP_NAME" \
+              --resource-group "$RESOURCE_GROUP_NAME" \
+              --environment "$ENVIRONMENT_NAME" \
+              --image "$WEB_IMAGE" \
+              --target-port 3000 \
+              --ingress external \
+              --registry-server "$REGISTRY_LOGIN_SERVER" \
+              --registry-identity "$WEB_IDENTITY_ID" \
+              --user-assigned "$WEB_IDENTITY_ID"
+          fi
+          az containerapp ingress enable \
+            --name "$WEB_APP_NAME" \
+            --resource-group "$RESOURCE_GROUP_NAME" \
+            --type external \
+            --target-port 3000
+
+          worker_exists="$(az containerapp list \
+            --resource-group "$RESOURCE_GROUP_NAME" \
+            --query "[?name=='$WORKER_APP_NAME'].name | [0]" \
+            --output tsv)"
+          if [[ -n "$worker_exists" ]]; then
+            az containerapp identity assign \
+              --name "$WORKER_APP_NAME" \
+              --resource-group "$RESOURCE_GROUP_NAME" \
+              --user-assigned "$WORKER_IDENTITY_ID"
+            az containerapp registry set \
+              --name "$WORKER_APP_NAME" \
+              --resource-group "$RESOURCE_GROUP_NAME" \
+              --server "$REGISTRY_LOGIN_SERVER" \
+              --identity "$WORKER_IDENTITY_ID"
+            az containerapp update \
+              --name "$WORKER_APP_NAME" \
+              --resource-group "$RESOURCE_GROUP_NAME" \
+              --image "$WORKER_IMAGE"
+          else
+            az containerapp create \
+              --name "$WORKER_APP_NAME" \
+              --resource-group "$RESOURCE_GROUP_NAME" \
+              --environment "$ENVIRONMENT_NAME" \
+              --image "$WORKER_IMAGE" \
+              --registry-server "$REGISTRY_LOGIN_SERVER" \
+              --registry-identity "$WORKER_IDENTITY_ID" \
+              --user-assigned "$WORKER_IDENTITY_ID" \
+              --min-replicas 1
+          fi
+
+      - name: Smoke test deployed Azure infrastructure
+        shell: bash
+        env:
+          DEPLOYMENT_NAME: ${{ steps.infrastructure.outputs.name }}
+          REGISTRY_ID: ${{ steps.outputs.outputs.registry_id }}
+          ENVIRONMENT_ID: ${{ steps.outputs.outputs.container_apps_environment_id }}
+          FOUNDRY_PROJECT_ID: ${{ steps.outputs.outputs.foundry_project_id }}
+        run: |
+          set -euo pipefail
+          deployment_state="$(az deployment sub show \
+            --subscription "$AZURE_SUBSCRIPTION_ID" \
+            --name "$DEPLOYMENT_NAME" \
+            --query properties.provisioningState \
+            --output tsv)"
+          registry_state="$(az resource show \
+            --ids "$REGISTRY_ID" \
+            --query properties.provisioningState \
+            --output tsv)"
+          environment_state="$(az resource show \
+            --ids "$ENVIRONMENT_ID" \
+            --query properties.provisioningState \
+            --output tsv)"
+          project_state="$(az resource show \
+            --ids "$FOUNDRY_PROJECT_ID" \
+            --query properties.provisioningState \
+            --output tsv)"
+          if [[ "$deployment_state" != "Succeeded" ]]; then
+            echo "::error::Subscription deployment state was '$deployment_state'."
+            exit 1
+          fi
+          if [[ "$registry_state" != "Succeeded" ]]; then
+            echo "::error::Container registry provisioning state was '$registry_state'."
+            exit 1
+          fi
+          if [[ "$environment_state" != "Succeeded" ]]; then
+            echo "::error::Container Apps environment provisioning state was '$environment_state'."
+            exit 1
+          fi
+          if [[ "$project_state" != "Succeeded" ]]; then
+            echo "::error::Foundry project provisioning state was '$project_state'."
+            exit 1
+          fi
+
+      - name: Deploy and smoke test Foundry hosted agent
+        shell: bash
+        env:
+          HOSTED_PROJECT_ENDPOINT: ${{ steps.outputs.outputs.project_endpoint }}
+          HOSTED_MODEL_DEPLOYMENT: ${{ steps.outputs.outputs.model_deployment_name }}
+          HOSTED_IMAGE: ${{ steps.images.outputs.agent_image }}
+          HOSTED_CREDENTIAL_MODE: azure-cli
+        run: |
+          set -euo pipefail
+          : "${HOSTED_APPLICATION_FACTORY:?Configure HOSTED_APPLICATION_FACTORY in the dev environment; refusing an untrusted fallback.}"
+          uv sync --project infrastructure/hosted_agent --frozen
+          uv run --project infrastructure/hosted_agent \
+            python -m infrastructure.hosted_agent.cli deploy
+          uv run --project infrastructure/hosted_agent \
+            python -m infrastructure.hosted_agent.cli smoke
+
+  full_evaluation:
+    name: Full evaluation
+    needs: deploy_dev
+    if: github.ref == 'refs/heads/main'
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    environment:
+      name: dev
+    permissions:
+      contents: read
+      id-token: write
+    env:
+      AZURE_CLIENT_ID: ${{ vars.AZURE_CLIENT_ID }}
+      AZURE_TENANT_ID: ${{ vars.AZURE_TENANT_ID }}
+      AZURE_SUBSCRIPTION_ID: ${{ vars.AZURE_SUBSCRIPTION_ID }}
+      EVALUATION_JUDGE_AZURE_ENDPOINT: ${{ vars.EVALUATION_JUDGE_AZURE_ENDPOINT }}
+      EVALUATION_JUDGE_AZURE_DEPLOYMENT: ${{ vars.EVALUATION_JUDGE_AZURE_DEPLOYMENT }}
+      EVALUATION_DATASET: ${{ vars.EVALUATION_DATASET }}
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          persist-credentials: false
+
+      - uses: astral-sh/setup-uv@v10.2.0
+        with:
+          enable-cache: true
+          cache-dependency-glob: |
+            uv.lock
+            **/pyproject.toml
+
+      - uses: actions/setup-python@v7
+        with:
+          python-version: "3.12"
+
+      - name: Sign in to Azure with OIDC
+        uses: azure/login@v2
+        with:
+          client-id: ${{ env.AZURE_CLIENT_ID }}
+          tenant-id: ${{ env.AZURE_TENANT_ID }}
+          subscription-id: ${{ env.AZURE_SUBSCRIPTION_ID }}
+
+      - name: Run full evaluation
+        run: |
+          uv sync --all-packages --frozen
+          make eval-full
+
+  deploy_production:
+    name: Promote to production
+    needs:
+      - deploy_dev
+      - full_evaluation
+    if: github.event_name == 'workflow_dispatch' && inputs.deploy_production
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    environment:
+      name: production
+    permissions:
+      contents: read
+      id-token: write
+    env:
+      AZURE_CLIENT_ID: ${{ vars.AZURE_CLIENT_ID }}
+      AZURE_TENANT_ID: ${{ vars.AZURE_TENANT_ID }}
+      AZURE_SUBSCRIPTION_ID: ${{ vars.AZURE_SUBSCRIPTION_ID }}
+      RESOURCE_GROUP_NAME: ${{ vars.AZURE_RESOURCE_GROUP }}
+      WEB_APP_NAME: ${{ vars.AZURE_WEB_CONTAINER_APP_NAME }}
+      WORKER_APP_NAME: ${{ vars.AZURE_WORKER_CONTAINER_APP_NAME }}
+      HOSTED_AGENT_NAME: ${{ vars.HOSTED_AGENT_NAME }}
+      HOSTED_APPLICATION_FACTORY: ${{ vars.HOSTED_APPLICATION_FACTORY }}
+      HOSTED_PROJECT_ENDPOINT: ${{ vars.HOSTED_PROJECT_ENDPOINT }}
+      HOSTED_MODEL_DEPLOYMENT: ${{ vars.HOSTED_MODEL_DEPLOYMENT }}
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          persist-credentials: false
+
+      - uses: astral-sh/setup-uv@v10.2.0
+        with:
+          enable-cache: true
+          cache-dependency-glob: |
+            uv.lock
+            **/pyproject.toml
+
+      - uses: actions/setup-python@v7
+        with:
+          python-version: "3.12"
+
+      - name: Sign in to Azure with OIDC
+        uses: azure/login@v2
+        with:
+          client-id: ${{ env.AZURE_CLIENT_ID }}
+          tenant-id: ${{ env.AZURE_TENANT_ID }}
+          subscription-id: ${{ env.AZURE_SUBSCRIPTION_ID }}
+
+      - name: Validate production configuration
+        shell: bash
+        run: |
+          set -euo pipefail
+          for name in \
+            RESOURCE_GROUP_NAME \
+            WEB_APP_NAME \
+            WORKER_APP_NAME \
+            HOSTED_AGENT_NAME \
+            HOSTED_APPLICATION_FACTORY \
+            HOSTED_PROJECT_ENDPOINT \
+            HOSTED_MODEL_DEPLOYMENT; do
+            if [[ -z "${!name}" ]]; then
+              echo "::error::Configure the $name variable in the protected production environment."
+              exit 1
+            fi
+          done
+
+      - name: Deploy tested web and worker images
+        shell: bash
+        env:
+          WEB_IMAGE: ${{ needs.deploy_dev.outputs.web_image }}
+          WORKER_IMAGE: ${{ needs.deploy_dev.outputs.worker_image }}
+        run: |
+          set -euo pipefail
+          az extension add --name containerapp --upgrade
+          az containerapp update \
+            --name "$WEB_APP_NAME" \
+            --resource-group "$RESOURCE_GROUP_NAME" \
+            --image "$WEB_IMAGE"
+          az containerapp update \
+            --name "$WORKER_APP_NAME" \
+            --resource-group "$RESOURCE_GROUP_NAME" \
+            --image "$WORKER_IMAGE"
+
+      - name: Deploy and smoke test Foundry hosted agent
+        env:
+          HOSTED_IMAGE: ${{ needs.deploy_dev.outputs.agent_image }}
+          HOSTED_CREDENTIAL_MODE: azure-cli
+        run: |
+          set -euo pipefail
+          : "${HOSTED_APPLICATION_FACTORY:?Configure HOSTED_APPLICATION_FACTORY in the protected production environment; refusing an untrusted fallback.}"
+          uv sync --project infrastructure/hosted_agent --frozen
+          uv run --project infrastructure/hosted_agent \
+            python -m infrastructure.hosted_agent.cli deploy
+          uv run --project infrastructure/hosted_agent \
+            python -m infrastructure.hosted_agent.cli smoke
