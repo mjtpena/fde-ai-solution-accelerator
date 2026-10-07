@@ -6,6 +6,7 @@ from fastapi import Depends, FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
 from accelerator.api.audit import AuthFailureAuditMiddleware, router as audit_router
+from accelerator.api.chat import ChatTurnPort, router as chat_router
 from accelerator.api.cost_guard import (
     ContextDependency,
     create_cost_guard_dependency,
@@ -39,6 +40,7 @@ def create_app(
     audit_repository: AuditRepository | None = None,
     get_execution_context: ContextDependency | None = None,
     rate_limiter: RateLimiter | None = None,
+    chat_turn: ChatTurnPort | None = None,
 ) -> FastAPI:
     app = FastAPI(
         title="FDE AI Solution Accelerator API",
@@ -79,5 +81,8 @@ def create_app(
     app.include_router(health_router)
     app.include_router(retrieval_diagnostics_router)
     app.include_router(audit_router)
+    if chat_turn is not None:
+        app.state.chat_turn = chat_turn
+    app.include_router(chat_router)
     install_scope_boundary(app)
     return app
