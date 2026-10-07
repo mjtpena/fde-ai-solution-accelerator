@@ -2,6 +2,7 @@ import json
 from collections.abc import AsyncIterator
 from datetime import UTC, datetime
 from uuid import UUID, uuid4
+from unittest.mock import AsyncMock
 
 import httpx
 import jwt
@@ -12,6 +13,7 @@ from sqlalchemy.ext.asyncio import create_async_engine
 
 from accelerator.api.app import create_app
 from accelerator.configuration.settings import Settings
+from accelerator.domain.audit import AuditRepository
 from accelerator.identity.authentication import Principal, get_current_principal
 from accelerator.identity.scope_resolver import configure_scope_resolver, get_execution_context
 from accelerator.security_core.data_boundaries.context import ExecutionContext
@@ -55,7 +57,8 @@ def token(
 async def client(signing_key: rsa.RSAPrivateKey) -> AsyncIterator[httpx.AsyncClient]:
     engine = create_async_engine("sqlite+aiosqlite:///:memory:")
     app = create_app(
-        Settings(environment="test", entra_tenant_id=TENANT, entra_audience="api://test")
+        Settings(environment="test", entra_tenant_id=TENANT, entra_audience="api://test"),
+        audit_repository=AsyncMock(spec=AuditRepository),
     )
     jwk = json.loads(jwt.algorithms.RSAAlgorithm.to_jwk(signing_key.public_key()))
     jwk["kid"] = "test-key"
