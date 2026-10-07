@@ -40,6 +40,9 @@ error log. The shared repository itself propagates database errors.
 or is generated if absent. Invalid values return 400. The same ID is stored in
 `request.state.correlation_id`, the execution context, structured resolver logs,
 and the response header (including authentication/authorization error responses).
+Unhandled server errors use an outer Starlette exception handler to preserve the
+same header and log the correlation ID and exception class without leaking error
+messages to clients or resolver logs. Starlette still re-raises the exception.
 Successful resolution also stores `request.state.execution_context`. Session ID
 is unset; it is not accepted from request input. The UTC deadline starts before
 the membership query and defaults to 30 seconds, configurable through
