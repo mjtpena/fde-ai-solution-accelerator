@@ -1,6 +1,7 @@
 import asyncio
 from datetime import UTC, datetime, timedelta
 import unittest
+from unittest.mock import AsyncMock
 from uuid import UUID
 
 import httpx
@@ -17,6 +18,7 @@ from accelerator.agent_core.workflows.grounded_answer import (
 from accelerator.api.app import create_app
 from accelerator.api.chat import ChatRequest, stream_chat
 from accelerator.configuration.settings import Settings
+from accelerator.domain.audit import AuditRepository
 from accelerator.identity.authentication import AppRole, Principal, get_current_principal
 from accelerator.identity.scope_resolver import configure_scope_resolver
 from accelerator.security_core.data_boundaries.context import ExecutionContext
@@ -207,7 +209,10 @@ class ChatOpenApiTests(unittest.TestCase):
 
 @pytest.mark.asyncio
 async def test_http_requires_authentication_before_running_chat() -> None:
-    app = create_app(make_test_settings())
+    app = create_app(
+        make_test_settings(),
+        audit_repository=AsyncMock(spec=AuditRepository),
+    )
     async with httpx.AsyncClient(
         transport=httpx.ASGITransport(app=app), base_url="http://test"
     ) as client:
