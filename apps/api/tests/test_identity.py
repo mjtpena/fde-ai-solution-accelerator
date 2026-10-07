@@ -2,6 +2,7 @@ import asyncio
 import json
 from typing import Any
 from uuid import UUID
+from unittest.mock import AsyncMock
 
 import httpx
 import jwt
@@ -12,6 +13,7 @@ from fastapi.testclient import TestClient
 
 from accelerator.api.app import create_app
 from accelerator.configuration.settings import Settings
+from accelerator.domain.audit import AuditRepository
 from accelerator.identity.authentication import (
     AppRole,
     Principal,
@@ -35,7 +37,9 @@ def make_settings() -> Settings:
 
 
 def test_missing_token_returns_401() -> None:
-    with TestClient(create_app(make_settings())) as client:
+    with TestClient(
+        create_app(make_settings(), audit_repository=AsyncMock(spec=AuditRepository))
+    ) as client:
         health_response = client.get("/healthz")
         ready_response = client.get("/readyz")
 
@@ -98,7 +102,7 @@ def test_configured_web_origin_can_preflight_authenticated_requests() -> None:
 
 
 def test_invalid_token_returns_401() -> None:
-    app = create_app(make_settings())
+    app = create_app(make_settings(), audit_repository=AsyncMock(spec=AuditRepository))
 
     class RejectingValidator:
         async def validate(self, token: str, client: httpx.AsyncClient) -> Principal:

@@ -5,6 +5,7 @@ import httpx
 from fastapi import Depends, FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
+from accelerator.api.audit import AuthFailureAuditMiddleware, router as audit_router
 from accelerator.api.health import router as health_router
 from accelerator.api.retrieval_diagnostics import (
     InMemoryRetrievalDiagnosticsStore,
@@ -12,6 +13,7 @@ from accelerator.api.retrieval_diagnostics import (
     router as retrieval_diagnostics_router,
 )
 from accelerator.configuration.settings import Settings
+from accelerator.domain.audit import AuditRepository
 from accelerator.identity.authentication import AppRole, require_any_role
 from accelerator.identity.jwt_validator import EntraTokenValidator
 from accelerator.identity.scope_resolver import install_scope_boundary
@@ -27,6 +29,8 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
 def create_app(
     settings: Settings,
     diagnostics_store: RetrievalDiagnosticsStore | None = None,
+    *,
+    audit_repository: AuditRepository | None = None,
 ) -> FastAPI:
     app = FastAPI(
         title="FDE AI Solution Accelerator API",
@@ -39,6 +43,7 @@ def create_app(
         responses={
             401: {"description": "Missing or invalid bearer token."},
             403: {"description": "Insufficient app role."},
+            503: {"description": "Identity, scope, or audit persistence is unavailable."},
         },
     )
     app.state.settings = settings
@@ -48,6 +53,8 @@ def create_app(
         else InMemoryRetrievalDiagnosticsStore()
     )
     app.state.token_validator = EntraTokenValidator(settings)
+    app.state.audit_repository = audit_repository
+    app.add_middleware(AuthFailureAuditMiddleware)
     app.add_middleware(
         CORSMiddleware,
         allow_origins=[settings.web_origin],
@@ -56,5 +63,6 @@ def create_app(
     )
     app.include_router(health_router)
     app.include_router(retrieval_diagnostics_router)
+    app.include_router(audit_router)
     install_scope_boundary(app)
     return app
