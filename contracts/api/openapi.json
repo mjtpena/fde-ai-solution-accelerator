@@ -22,6 +22,12 @@
                 }
               }
             }
+          },
+          "401": {
+            "description": "Missing or invalid bearer token."
+          },
+          "403": {
+            "description": "Insufficient app role."
           }
         },
         "security": [
@@ -48,6 +54,12 @@
                 }
               }
             }
+          },
+          "401": {
+            "description": "Missing or invalid bearer token."
+          },
+          "403": {
+            "description": "Insufficient app role."
           }
         },
         "security": [
