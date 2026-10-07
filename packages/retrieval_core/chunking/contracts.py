@@ -1,4 +1,7 @@
 from dataclasses import dataclass
+from typing import Protocol
+
+from ..parsing.contracts import ParsedDocument
 
 
 @dataclass(frozen=True, slots=True)
@@ -20,3 +23,7 @@ class ChunkingConfig:
 class ChunkContent:
     text: str
     section_heading: str | None = None
+
+
+class Chunker(Protocol):
+    def chunk(self, document: ParsedDocument) -> tuple[ChunkContent, ...]: ...

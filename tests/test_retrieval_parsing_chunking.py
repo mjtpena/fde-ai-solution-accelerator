@@ -5,7 +5,7 @@ from pypdf import PdfWriter
 from pypdf.generic import DecodedStreamObject, DictionaryObject, NameObject
 import pytest
 
-from accelerator.retrieval_core.chunking import ChunkingConfig, TextChunker
+from accelerator.retrieval_core.chunking import Chunker, ChunkingConfig, TextChunker
 from accelerator.retrieval_core.parsing import MarkdownParser, PdfParser, TextParser
 
 FIXTURES = Path(__file__).parent / "fixtures" / "retrieval"
@@ -56,6 +56,41 @@ def test_markdown_parser_preserves_heading_sections() -> None:
     assert document.sections[1].text == "First section content."
 
 
+def test_markdown_parser_preserves_literal_hashes_in_headings() -> None:
+    document = MarkdownParser().parse(b"## C#\n\n### C##\n\n## Closing hashes ###\n")
+
+    assert [section.heading for section in document.sections] == [
+        "C#",
+        "C##",
+        "Closing hashes",
+    ]
+
+
+def test_markdown_parser_ignores_headings_inside_fenced_code() -> None:
+    markdown = (
+        b"````markdown\n"
+        b"# inside backtick fence\n"
+        b"```\n"
+        b"## still inside longer fence\n"
+        b"````\n"
+        b"~~~markdown\n"
+        b"### inside tilde fence\n"
+        b"~~~\n"
+        b"## Outside heading\n"
+        b"Outside content.\n"
+    )
+
+    document = MarkdownParser().parse(markdown)
+
+    assert [section.heading for section in document.sections] == [
+        None,
+        "Outside heading",
+    ]
+    assert "# inside backtick fence" in document.sections[0].text
+    assert "## still inside longer fence" in document.sections[0].text
+    assert "### inside tilde fence" in document.sections[0].text
+
+
 def test_pdf_parser_extracts_fixture_page_text(pdf_fixture: bytes) -> None:
     document = PdfParser().parse(pdf_fixture)
 
@@ -85,3 +120,19 @@ def test_heading_aware_chunking_keeps_sections_separate() -> None:
 def test_chunking_config_rejects_invalid_overlap() -> None:
     with pytest.raises(ValueError, match="overlap must be smaller than size"):
         ChunkingConfig(size=10, overlap=10)
+
+
+def test_chunking_config_rejects_nonpositive_size() -> None:
+    with pytest.raises(ValueError, match="size must be greater than zero"):
+        ChunkingConfig(size=0, overlap=0)
+
+
+def test_chunking_config_rejects_negative_overlap() -> None:
+    with pytest.raises(ValueError, match="overlap cannot be negative"):
+        ChunkingConfig(size=10, overlap=-1)
+
+
+def test_text_chunker_implements_chunker_protocol() -> None:
+    chunker: Chunker = TextChunker(ChunkingConfig(size=10, overlap=0))
+
+    assert chunker.chunk(TextParser().parse(b"protocol"))[0].text == "protocol"

@@ -1,4 +1,4 @@
 from .chunker import TextChunker
-from .contracts import ChunkContent, ChunkingConfig
+from .contracts import ChunkContent, Chunker, ChunkingConfig
 
-__all__ = ["ChunkContent", "ChunkingConfig", "TextChunker"]
+__all__ = ["ChunkContent", "Chunker", "ChunkingConfig", "TextChunker"]
