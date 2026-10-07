@@ -272,3 +272,30 @@ async def test_streaming_failure_propagates_without_recording_exception_content(
         assert span.status.status_code == StatusCode.ERROR
         assert span.status.description is None
         assert "private" not in str(span.attributes)
+
+
+async def test_pre_send_failure_still_exports_response_child(
+    runtime: tuple[Telemetry, InMemorySpanExporter],
+) -> None:
+    telemetry, exporter = runtime
+
+    async def app(scope: Scope, receive: ASGIReceiveCallable, send: ASGISendCallable) -> None:
+        raise ValueError("private model output before response headers")
+
+    communicator = ApplicationCommunicator(
+        TracingMiddleware(app, telemetry), {"type": "http", "method": "POST", "headers": []}
+    )
+    with pytest.raises(ValueError, match="private model output before response headers"):
+        await communicator.wait()
+
+    spans = {span.name: span for span in exporter.get_finished_spans()}
+    assert set(spans) == {"http.request", "response"}
+    request, response = spans["http.request"], spans["response"]
+    assert response.parent.span_id == request.context.span_id
+    assert response.context.trace_id == request.context.trace_id
+    for span in spans.values():
+        assert span.status.status_code == StatusCode.ERROR
+        assert span.status.description is None
+        assert span.attributes["error.type"] == "ValueError"
+        assert not span.events
+        assert "private" not in str(span.attributes)

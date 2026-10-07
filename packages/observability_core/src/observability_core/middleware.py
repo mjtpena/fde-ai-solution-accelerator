@@ -46,12 +46,9 @@ class TracingMiddleware:
             ) as request_span,
             ExitStack() as responses,
         ):
-            response_span: Span | None = None
+            response_span: Span = responses.enter_context(self.telemetry.response(request_span))
 
             async def traced_send(message: ASGISendEvent) -> None:
-                nonlocal response_span
-                if response_span is None:
-                    response_span = responses.enter_context(self.telemetry.response(request_span))
                 if message["type"] == "http.response.start":
                     status = message["status"]
                     request_span.set_attribute("http.response.status_code", status)

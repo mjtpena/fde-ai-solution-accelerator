@@ -80,7 +80,9 @@ http.request
 `-- response
 ```
 
-Middleware produces one server request span and one response span across all
+Middleware produces one server request span and eagerly creates its response
+child before calling the ASGI app. This preserves the response span even when the
+app fails before its first `send`; its duration includes app processing and all
 streaming sends. The response is always a direct request child, including when a
 workflow initiates streaming. Other spans follow the current context across
 `await`; concurrent requests have separate correlation IDs. Only W3C
