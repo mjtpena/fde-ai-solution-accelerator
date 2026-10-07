@@ -1,6 +1,7 @@
 """Credential-free integration through the real async Azure Search SDK HTTP pipeline."""
 
 import json
+import importlib
 from datetime import UTC, datetime, timedelta
 from typing import Any
 from unittest.mock import AsyncMock, patch
@@ -248,6 +249,15 @@ def test_index_schema_has_lineage_filterable_scope_and_matching_ranker_vector_pr
 def test_missing_settings_fail_fast() -> None:
     with pytest.raises(ValidationError):
         SearchSettings.model_validate({})
+
+
+def test_api_namespace_composes_retrieval_and_security_workspace_packages() -> None:
+    api = importlib.import_module("accelerator.infrastructure.search")
+    retrieval = importlib.import_module("accelerator.retrieval_core.search")
+    security = importlib.import_module("accelerator.security_core.data_boundaries.context")
+    assert api.AzureSearchRetriever is AzureSearchRetriever
+    assert retrieval.Retriever is not None
+    assert security.ExecutionContext is ExecutionContext
 
 
 def test_insecure_endpoint_fails_fast() -> None:

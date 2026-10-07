@@ -38,3 +38,15 @@ uv run --all-packages pytest packages/retrieval_core/search/tests apps/api/src/a
 Dependencies: #12 supplies `Evidence` and `RetrievalRequest` from
 `accelerator.retrieval_core.models`; #10 supplies
 `accelerator.security_core.data_boundaries.context.ExecutionContext`.
+
+The workspace config uses setuptools strict editable mode for `fde-retrieval-core`.
+This exposes its mapped namespace as a real package tree so strict mypy can resolve
+the typed shared contracts without suppressing import errors. After adding new
+retrieval modules, rerun `uv sync --all-packages --reinstall-package fde-retrieval-core`
+to refresh that editable tree.
+
+The API `accelerator` package extends its namespace to include workspace packages.
+Strict type checks select retrieval through `--package accelerator.retrieval_core`
+so its installed public namespace is checked once; the file-based pass still checks
+the adapter and package-local search tests. Both passes run in `make check` and
+pre-commit without disabling or excluding any type errors.
