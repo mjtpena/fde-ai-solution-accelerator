@@ -55,9 +55,9 @@ Several PRs depend on other unmerged branches, including #60 on #48, #52 and
 #67/#71 on #60, #62 on #52, #66 on #65, #69 on #55, and #77 on #75. The
 release PR is #57.
 
-PR #62 is currently reporting failures for Dependency review and the Trivy
+PR #54 is currently reporting failures for Dependency review and the Trivy
 repository, web-image, and ingestion-image scans. PR #48's Quality checks are
-in progress. PR #68 is a draft. These PR states are another reason the
+passing; PR #62 and #68 are drafts. These PR states are another reason the
 prerequisites are not ready to land.
 
 No v0.1.0 tag or GitHub Release was found. Do not tag or publish until the
