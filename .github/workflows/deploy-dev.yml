@@ -10,8 +10,15 @@ name: Deploy dev
 # Configure the `production` environment with required reviewers before opting
 # into its promotion job, and federate
 # repo:mjtpena/fde-ai-solution-accelerator:environment:production.
-# Production resources are pre-provisioned separately. No API Dockerfile exists,
-# so this workflow does not create an API app or claim an HTTP app smoke test.
+# Production resources are pre-provisioned separately. No API Dockerfile exists:
+# configure API_IMAGE as a trusted digest reference in the bootstrap ACR.
+# Bicep owns all dev apps; DEPLOY_APPLICATIONS selects bootstrap/app deployment.
+# The protected `dev-database` environment needs DB-admin OIDC variables,
+# AZURE_POSTGRES_ADMIN_NAME and POSTGRES_CA_CERTIFICATE_PATH. Use an ephemeral
+# Linux runner labelled by repository-level POSTGRES_RUNNER_LABEL with Azure CLI,
+# pwsh, psql, trusted PEM, and federation scoped to
+# repo:mjtpena/fde-ai-solution-accelerator:environment:dev-database.
+# VNet routing and private DNS. Bootstrap roles separately before verification.
 # Also configure HOSTED_AGENT_NAME, HOSTED_APPLICATION_FACTORY (a trusted
 # module:callable), and the three EVALUATION_* variables in `dev`; set the
 # three AZURE_POSTGRES_ADMIN_* variables in `dev`, and the production Foundry
@@ -72,7 +79,9 @@ jobs:
 
       - name: Validate Bicep without credentials
         shell: pwsh
-        run: ./infrastructure/scripts/validate-deployment.ps1 -BuildOnly
+        run: |
+          ./infrastructure/tests/validate-infrastructure.ps1
+          ./infrastructure/scripts/validate-deployment.ps1 -BuildOnly
 
       - name: Smoke evaluation
         run: make eval-smoke
@@ -122,6 +131,8 @@ jobs:
       web_image: ${{ steps.images.outputs.web_image }}
       worker_image: ${{ steps.images.outputs.worker_image }}
       agent_image: ${{ steps.images.outputs.agent_image }}
+      postgres_fqdn: ${{ steps.outputs.outputs.postgres_fqdn }}
+      postgres_database_name: ${{ steps.outputs.outputs.postgres_database_name }}
     env:
       AZURE_CLIENT_ID: ${{ vars.AZURE_CLIENT_ID }}
       AZURE_TENANT_ID: ${{ vars.AZURE_TENANT_ID }}
@@ -135,6 +146,11 @@ jobs:
       EVALUATION_JUDGE_AZURE_ENDPOINT: ${{ vars.EVALUATION_JUDGE_AZURE_ENDPOINT }}
       EVALUATION_JUDGE_AZURE_DEPLOYMENT: ${{ vars.EVALUATION_JUDGE_AZURE_DEPLOYMENT }}
       EVALUATION_DATASET: ${{ vars.EVALUATION_DATASET }}
+      DEPLOY_APPLICATIONS: "false"
+      API_IMAGE: ${{ vars.API_IMAGE }}
+      API_ENTRA_TENANT_ID: ${{ vars.API_ENTRA_TENANT_ID }}
+      API_ENTRA_AUDIENCE: ${{ vars.API_ENTRA_AUDIENCE }}
+      POSTGRES_RUNNER_LABEL: ${{ vars.POSTGRES_RUNNER_LABEL }}
     steps:
       - uses: actions/checkout@v7
         with:
@@ -161,6 +177,10 @@ jobs:
             AZURE_POSTGRES_ADMIN_OBJECT_ID \
             AZURE_POSTGRES_ADMIN_NAME \
             AZURE_POSTGRES_ADMIN_PRINCIPAL_TYPE \
+            API_IMAGE \
+            API_ENTRA_TENANT_ID \
+            API_ENTRA_AUDIENCE \
+            POSTGRES_RUNNER_LABEL \
             HOSTED_AGENT_NAME \
             HOSTED_APPLICATION_FACTORY \
             EVALUATION_JUDGE_AZURE_ENDPOINT \
@@ -171,6 +191,10 @@ jobs:
               exit 1
             fi
           done
+          if [[ ! "$API_IMAGE" =~ ^[^[:space:]]+/[^[:space:]]+@sha256:[a-fA-F0-9]{64}$ ]]; then
+            echo "::error::API_IMAGE must be a trusted registry/repository@sha256 digest."
+            exit 1
+          fi
 
       - name: Sign in to Azure with OIDC
         uses: azure/login@v2
@@ -193,7 +217,7 @@ jobs:
         if: steps.what_if.outcome == 'success'
         uses: actions/upload-artifact@v4
         with:
-          name: dev-subscription-what-if-${{ github.sha }}
+          name: dev-bootstrap-what-if-${{ github.sha }}
           path: ${{ runner.temp }}/deployment-what-if.json
           if-no-files-found: error
           retention-days: 30
@@ -245,6 +269,8 @@ jobs:
             echo "foundry_project_id=$(jq -er '.foundryProjectId.value' <<< "$outputs")"
             echo "foundry_project_name=$(jq -er '.foundryProjectName.value' <<< "$outputs")"
             echo "model_deployment_name=$(jq -er '.modelDeploymentName.value' <<< "$outputs")"
+            echo "postgres_fqdn=$(jq -er '.postgresFqdn.value' <<< "$outputs")"
+            echo "postgres_database_name=$(jq -er '.postgresDatabaseName.value' <<< "$outputs")"
           } >> "$GITHUB_OUTPUT"
 
       - name: Build and push application images
@@ -259,109 +285,33 @@ jobs:
           web_image="$REGISTRY_LOGIN_SERVER/web:$tag"
           worker_image="$REGISTRY_LOGIN_SERVER/worker:$tag"
           agent_image="$REGISTRY_LOGIN_SERVER/fde-agent:$tag"
+          if [[ "$API_IMAGE" != "$REGISTRY_LOGIN_SERVER/"* ]]; then
+            echo "::error::API_IMAGE must be hosted in the Bicep registry with configured UAMI pull access."
+            exit 1
+          fi
 
           az acr login --name "$REGISTRY_NAME"
           docker buildx build --platform linux/amd64 \
             --file apps/web/Dockerfile \
             --tag "$web_image" \
+            --metadata-file "$RUNNER_TEMP/web-image.json" \
             --push .
           docker buildx build --platform linux/amd64 \
             --file workers/ingestion/Dockerfile \
             --tag "$worker_image" \
+            --metadata-file "$RUNNER_TEMP/worker-image.json" \
             --push .
           docker buildx build --platform linux/amd64 \
             --file infrastructure/hosted_agent/Dockerfile \
             --tag "$agent_image" \
+            --metadata-file "$RUNNER_TEMP/agent-image.json" \
             --push .
 
           {
-            echo "web_image=$web_image"
-            echo "worker_image=$worker_image"
-            echo "agent_image=$agent_image"
+            echo "web_image=$REGISTRY_LOGIN_SERVER/web@$(jq -er '.["containerimage.digest"]' "$RUNNER_TEMP/web-image.json")"
+            echo "worker_image=$REGISTRY_LOGIN_SERVER/worker@$(jq -er '.["containerimage.digest"]' "$RUNNER_TEMP/worker-image.json")"
+            echo "agent_image=$REGISTRY_LOGIN_SERVER/fde-agent@$(jq -er '.["containerimage.digest"]' "$RUNNER_TEMP/agent-image.json")"
           } >> "$GITHUB_OUTPUT"
-
-      - name: Create or update web and worker apps
-        id: apps
-        shell: bash
-        env:
-          RESOURCE_GROUP_NAME: ${{ steps.outputs.outputs.resource_group_name }}
-          REGISTRY_LOGIN_SERVER: ${{ steps.outputs.outputs.registry_login_server }}
-          ENVIRONMENT_NAME: ${{ steps.outputs.outputs.container_apps_environment_name }}
-          WEB_APP_NAME: ${{ steps.outputs.outputs.web_container_app_name }}
-          WORKER_APP_NAME: ${{ steps.outputs.outputs.worker_container_app_name }}
-          WEB_IDENTITY_ID: ${{ steps.outputs.outputs.web_identity_id }}
-          WORKER_IDENTITY_ID: ${{ steps.outputs.outputs.worker_identity_id }}
-          WEB_IMAGE: ${{ steps.images.outputs.web_image }}
-          WORKER_IMAGE: ${{ steps.images.outputs.worker_image }}
-        run: |
-          set -euo pipefail
-          az extension add --name containerapp --upgrade
-
-          web_exists="$(az containerapp list \
-            --resource-group "$RESOURCE_GROUP_NAME" \
-            --query "[?name=='$WEB_APP_NAME'].name | [0]" \
-            --output tsv)"
-          if [[ -n "$web_exists" ]]; then
-            az containerapp identity assign \
-              --name "$WEB_APP_NAME" \
-              --resource-group "$RESOURCE_GROUP_NAME" \
-              --user-assigned "$WEB_IDENTITY_ID"
-            az containerapp registry set \
-              --name "$WEB_APP_NAME" \
-              --resource-group "$RESOURCE_GROUP_NAME" \
-              --server "$REGISTRY_LOGIN_SERVER" \
-              --identity "$WEB_IDENTITY_ID"
-            az containerapp update \
-              --name "$WEB_APP_NAME" \
-              --resource-group "$RESOURCE_GROUP_NAME" \
-              --image "$WEB_IMAGE"
-          else
-            az containerapp create \
-              --name "$WEB_APP_NAME" \
-              --resource-group "$RESOURCE_GROUP_NAME" \
-              --environment "$ENVIRONMENT_NAME" \
-              --image "$WEB_IMAGE" \
-              --target-port 3000 \
-              --ingress external \
-              --registry-server "$REGISTRY_LOGIN_SERVER" \
-              --registry-identity "$WEB_IDENTITY_ID" \
-              --user-assigned "$WEB_IDENTITY_ID"
-          fi
-          az containerapp ingress enable \
-            --name "$WEB_APP_NAME" \
-            --resource-group "$RESOURCE_GROUP_NAME" \
-            --type external \
-            --target-port 3000
-
-          worker_exists="$(az containerapp list \
-            --resource-group "$RESOURCE_GROUP_NAME" \
-            --query "[?name=='$WORKER_APP_NAME'].name | [0]" \
-            --output tsv)"
-          if [[ -n "$worker_exists" ]]; then
-            az containerapp identity assign \
-              --name "$WORKER_APP_NAME" \
-              --resource-group "$RESOURCE_GROUP_NAME" \
-              --user-assigned "$WORKER_IDENTITY_ID"
-            az containerapp registry set \
-              --name "$WORKER_APP_NAME" \
-              --resource-group "$RESOURCE_GROUP_NAME" \
-              --server "$REGISTRY_LOGIN_SERVER" \
-              --identity "$WORKER_IDENTITY_ID"
-            az containerapp update \
-              --name "$WORKER_APP_NAME" \
-              --resource-group "$RESOURCE_GROUP_NAME" \
-              --image "$WORKER_IMAGE"
-          else
-            az containerapp create \
-              --name "$WORKER_APP_NAME" \
-              --resource-group "$RESOURCE_GROUP_NAME" \
-              --environment "$ENVIRONMENT_NAME" \
-              --image "$WORKER_IMAGE" \
-              --registry-server "$REGISTRY_LOGIN_SERVER" \
-              --registry-identity "$WORKER_IDENTITY_ID" \
-              --user-assigned "$WORKER_IDENTITY_ID" \
-              --min-replicas 1
-          fi
 
       - name: Smoke test deployed Azure infrastructure
         shell: bash
@@ -406,12 +356,135 @@ jobs:
             exit 1
           fi
 
+  verify_database:
+    name: Verify private PostgreSQL principals
+    needs: deploy_dev
+    if: github.ref == 'refs/heads/main'
+    runs-on: [self-hosted, linux, "${{ vars.POSTGRES_RUNNER_LABEL }}"]
+    timeout-minutes: 15
+    environment: dev-database
+    permissions:
+      contents: read
+      id-token: write
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          persist-credentials: false
+
+      - uses: azure/login@v2
+        with:
+          client-id: ${{ vars.AZURE_CLIENT_ID }}
+          tenant-id: ${{ vars.AZURE_TENANT_ID }}
+          subscription-id: ${{ vars.AZURE_SUBSCRIPTION_ID }}
+
+      - name: Verify OID-bound database roles without modifying them
+        shell: pwsh
+        env:
+          POSTGRES_HOST: ${{ needs.deploy_dev.outputs.postgres_fqdn }}
+          POSTGRES_DATABASE: ${{ needs.deploy_dev.outputs.postgres_database_name }}
+          POSTGRES_ADMIN: ${{ vars.AZURE_POSTGRES_ADMIN_NAME }}
+          POSTGRES_CA: ${{ vars.POSTGRES_CA_CERTIFICATE_PATH }}
+          API_PRINCIPAL: ${{ needs.deploy_dev.outputs.api_identity_principal_id }}
+          WORKER_PRINCIPAL: ${{ needs.deploy_dev.outputs.worker_identity_principal_id }}
+        run: |
+          ./infrastructure/scripts/bootstrap-postgres.ps1 `
+            -HostName $env:POSTGRES_HOST -DatabaseName $env:POSTGRES_DATABASE `
+            -AdministratorName $env:POSTGRES_ADMIN `
+            -ApiPrincipalId $env:API_PRINCIPAL -WorkerPrincipalId $env:WORKER_PRINCIPAL `
+            -CaCertificatePath $env:POSTGRES_CA -VerifyOnly
+
+  deploy_applications:
+    name: Deploy Bicep-owned applications
+    needs: [deploy_dev, verify_database]
+    if: github.ref == 'refs/heads/main'
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    environment: dev
+    permissions:
+      contents: read
+      id-token: write
+    env:
+      AZURE_SUBSCRIPTION_ID: ${{ vars.AZURE_SUBSCRIPTION_ID }}
+      AZURE_LOCATION: ${{ vars.AZURE_LOCATION }}
+      AZURE_POSTGRES_ADMIN_OBJECT_ID: ${{ vars.AZURE_POSTGRES_ADMIN_OBJECT_ID }}
+      AZURE_POSTGRES_ADMIN_NAME: ${{ vars.AZURE_POSTGRES_ADMIN_NAME }}
+      AZURE_POSTGRES_ADMIN_PRINCIPAL_TYPE: ${{ vars.AZURE_POSTGRES_ADMIN_PRINCIPAL_TYPE }}
+      DEPLOY_APPLICATIONS: "true"
+      API_IMAGE: ${{ vars.API_IMAGE }}
+      WEB_IMAGE: ${{ needs.deploy_dev.outputs.web_image }}
+      WORKER_IMAGE: ${{ needs.deploy_dev.outputs.worker_image }}
+      API_ENTRA_TENANT_ID: ${{ vars.API_ENTRA_TENANT_ID }}
+      API_ENTRA_AUDIENCE: ${{ vars.API_ENTRA_AUDIENCE }}
+      HOSTED_AGENT_NAME: ${{ vars.HOSTED_AGENT_NAME }}
+      HOSTED_APPLICATION_FACTORY: ${{ vars.HOSTED_APPLICATION_FACTORY }}
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          persist-credentials: false
+      - uses: astral-sh/setup-uv@v10.2.0
+      - uses: actions/setup-python@v7
+        with:
+          python-version: "3.12"
+      - uses: azure/login@v2
+        with:
+          client-id: ${{ vars.AZURE_CLIENT_ID }}
+          tenant-id: ${{ vars.AZURE_TENANT_ID }}
+          subscription-id: ${{ env.AZURE_SUBSCRIPTION_ID }}
+
+      - name: Validate application deployment with what-if
+        id: what_if
+        shell: pwsh
+        run: |
+          ./infrastructure/scripts/validate-deployment.ps1 `
+            -SubscriptionId $env:AZURE_SUBSCRIPTION_ID -Location $env:AZURE_LOCATION `
+            -ParameterFile "infrastructure/parameters/dev.example.bicepparam" `
+            -WhatIfOutputPath (Join-Path $env:RUNNER_TEMP "applications-what-if.json")
+
+      - name: Upload successful application what-if evidence
+        if: steps.what_if.outcome == 'success'
+        uses: actions/upload-artifact@v4
+        with:
+          name: dev-applications-what-if-${{ github.sha }}
+          path: ${{ runner.temp }}/applications-what-if.json
+          if-no-files-found: error
+          retention-days: 30
+
+      - name: Deploy application resources through Bicep
+        shell: bash
+        run: |
+          set -euo pipefail
+          az deployment sub create \
+            --subscription "$AZURE_SUBSCRIPTION_ID" --location "$AZURE_LOCATION" \
+            --name "fde-dev-apps-$GITHUB_SHA" \
+            --template-file infrastructure/main.bicep \
+            --parameters infrastructure/parameters/dev.example.bicepparam \
+            --output none
+
+      - name: Verify application resource provisioning
+        shell: bash
+        env:
+          RESOURCE_GROUP_NAME: ${{ needs.deploy_dev.outputs.resource_group_name }}
+          API_APP_NAME: ${{ needs.deploy_dev.outputs.api_container_app_name }}
+          WEB_APP_NAME: ${{ needs.deploy_dev.outputs.web_container_app_name }}
+          WORKER_APP_NAME: ${{ needs.deploy_dev.outputs.worker_container_app_name }}
+        run: |
+          set -euo pipefail
+          for app in "$API_APP_NAME" "$WEB_APP_NAME" "$WORKER_APP_NAME"; do
+            state="$(az resource show --resource-group "$RESOURCE_GROUP_NAME" \
+              --resource-type Microsoft.App/containerApps --name "$app" \
+              --query properties.provisioningState --output tsv)"
+            if [[ "$state" != "Succeeded" ]]; then
+              echo "::error::Application provisioning did not succeed."
+              exit 1
+            fi
+          done
+
       - name: Deploy and smoke test Foundry hosted agent
         shell: bash
         env:
-          HOSTED_PROJECT_ENDPOINT: ${{ steps.outputs.outputs.project_endpoint }}
-          HOSTED_MODEL_DEPLOYMENT: ${{ steps.outputs.outputs.model_deployment_name }}
-          HOSTED_IMAGE: ${{ steps.images.outputs.agent_image }}
+          HOSTED_PROJECT_ENDPOINT: ${{ needs.deploy_dev.outputs.project_endpoint }}
+          HOSTED_MODEL_DEPLOYMENT: ${{ needs.deploy_dev.outputs.model_deployment_name }}
+          HOSTED_IMAGE: ${{ needs.deploy_dev.outputs.agent_image }}
           HOSTED_CREDENTIAL_MODE: azure-cli
         run: |
           set -euo pipefail
@@ -424,7 +497,7 @@ jobs:
 
   full_evaluation:
     name: Full evaluation
-    needs: deploy_dev
+    needs: deploy_applications
     if: github.ref == 'refs/heads/main'
     runs-on: ubuntu-latest
     timeout-minutes: 60
@@ -472,6 +545,7 @@ jobs:
     name: Promote to production
     needs:
       - deploy_dev
+      - deploy_applications
       - full_evaluation
     if: github.event_name == 'workflow_dispatch' && inputs.deploy_production
     runs-on: ubuntu-latest
