@@ -7,12 +7,12 @@ import httpx
 import jwt
 import pytest
 from cryptography.hazmat.primitives.asymmetric import rsa
-from fastapi import Depends
+from fastapi import Depends, Request
 from sqlalchemy.ext.asyncio import create_async_engine
 
 from accelerator.api.app import create_app
 from accelerator.configuration.settings import Settings
-from accelerator.identity.authentication import Principal, get_current_principal
+from accelerator.identity.authentication import AppRole, Principal, get_current_principal
 from accelerator.identity.scope_resolver import configure_scope_resolver, get_execution_context
 from accelerator.security_core.data_boundaries.context import ExecutionContext
 from accelerator.security_core.infrastructure.database import Base, create_session_factory
@@ -195,7 +195,7 @@ async def test_unavailable_repository_fails_closed_with_correlated_log(
         return context
 
     async def principal() -> Principal:
-        return Principal(subject="subject", object_id=CALLER)
+        return Principal(subject="subject", object_id=CALLER, roles=frozenset({AppRole.READER}))
 
     app.dependency_overrides[get_current_principal] = principal
     engine = create_async_engine("sqlite+aiosqlite:///:memory:")
@@ -241,7 +241,7 @@ async def test_context_is_cached_for_shared_route_dependencies() -> None:
     configure_scope_resolver(app, RecordingRepository())
 
     async def principal() -> Principal:
-        return Principal(subject="subject", object_id=CALLER)
+        return Principal(subject="subject", object_id=CALLER, roles=frozenset({AppRole.READER}))
 
     app.dependency_overrides[get_current_principal] = principal
 
@@ -264,3 +264,61 @@ async def test_context_is_cached_for_shared_route_dependencies() -> None:
         response = await test_client.get("/shared-context")
     assert response.status_code == 200
     assert lookups == [CALLER]
+
+
+@pytest.mark.parametrize("incoming", [None, CORRELATION])
+async def test_unhandled_server_error_preserves_correlation(
+    incoming: str | None, caplog: pytest.LogCaptureFixture
+) -> None:
+    app = create_app(
+        Settings(environment="test", entra_tenant_id=TENANT, entra_audience="api://test")
+    )
+    observed_ids: list[str] = []
+
+    class FailingRepository:
+        async def scope_ids_for(self, object_id: str) -> frozenset[str]:
+            raise RuntimeError("untrusted-sensitive-error-content")
+
+    configure_scope_resolver(app, FailingRepository())
+
+    async def principal() -> Principal:
+        return Principal(subject="subject", object_id=CALLER, roles=frozenset({AppRole.READER}))
+
+    app.dependency_overrides[get_current_principal] = principal
+
+    @app.get("/unexpected-error")
+    async def unexpected_error(
+        request: Request,
+    ) -> ExecutionContext:
+        observed_ids.append(request.state.correlation_id)
+        return await get_execution_context(request, await principal())
+
+    headers = {} if incoming is None else {"X-Correlation-ID": incoming}
+    async with httpx.AsyncClient(
+        transport=httpx.ASGITransport(app=app, raise_app_exceptions=False),
+        base_url="http://test",
+    ) as test_client:
+        response = await test_client.get("/unexpected-error", headers=headers)
+
+    assert response.status_code == 500
+    assert response.json() == {"detail": "Internal server error."}
+    correlation_id = response.headers["x-correlation-id"]
+    UUID(correlation_id)
+    assert observed_ids == [correlation_id]
+    if incoming is not None:
+        assert correlation_id == incoming
+    assert any(
+        record.message == "unexpected_request_failure"
+        and getattr(record, "correlation_id", None) == correlation_id
+        and getattr(record, "exception_type", None) == "RuntimeError"
+        for record in caplog.records
+    )
+    assert "untrusted-sensitive-error-content" not in response.text
+    assert "untrusted-sensitive-error-content" not in caplog.text
+
+    async with httpx.AsyncClient(
+        transport=httpx.ASGITransport(app=app, raise_app_exceptions=True),
+        base_url="http://test",
+    ) as test_client:
+        with pytest.raises(RuntimeError, match="untrusted-sensitive-error-content"):
+            await test_client.get("/unexpected-error", headers=headers)

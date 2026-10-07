@@ -110,5 +110,20 @@ async def get_execution_context(
     return context
 
 
+async def correlated_server_error(request: Request, exc: Exception) -> JSONResponse:
+    correlation_id: str = getattr(request.state, "correlation_id", str(uuid4()))
+    logger.error(
+        "unexpected_request_failure",
+        extra={"correlation_id": correlation_id, "exception_type": type(exc).__name__},
+    )
+    return JSONResponse(
+        {"detail": "Internal server error."},
+        status_code=500,
+        headers={"X-Correlation-ID": correlation_id},
+    )
+
+
 def install_scope_boundary(app: FastAPI) -> None:
     app.add_middleware(CorrelationIdMiddleware)
+    # Starlette invokes this from outside user middleware for unhandled exceptions.
+    app.add_exception_handler(Exception, correlated_server_error)

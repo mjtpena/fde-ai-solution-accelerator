@@ -18,6 +18,7 @@ from accelerator.identity.authentication import (
     get_current_principal,
     require_any_role,
 )
+from accelerator.identity.errors import AuthProviderUnavailable
 from accelerator.identity.jwt_validator import EntraTokenValidator
 
 TENANT_ID = UUID("00000000-0000-0000-0000-000000000001")
@@ -41,6 +42,44 @@ def test_missing_token_returns_401() -> None:
     assert health_response.status_code == 401
     assert health_response.headers["www-authenticate"] == "Bearer"
     assert ready_response.status_code == 401
+
+
+def test_public_api_documentation_routes_are_disabled() -> None:
+    with TestClient(create_app(make_settings())) as client:
+        responses = [
+            client.get("/docs"),
+            client.get("/redoc"),
+            client.get("/openapi.json"),
+        ]
+
+    assert [response.status_code for response in responses] == [404, 404, 404]
+
+
+def test_reader_role_can_access_real_health_routes() -> None:
+    app = create_app(make_settings())
+
+    async def reader() -> Principal:
+        return Principal(subject="reader", roles=frozenset({AppRole.READER}))
+
+    app.dependency_overrides[get_current_principal] = reader
+    with TestClient(app) as client:
+        response = client.get("/healthz")
+
+    assert response.status_code == 200
+    assert response.json() == {"status": "ok"}
+
+
+def test_empty_role_set_is_forbidden_on_real_health_routes() -> None:
+    app = create_app(make_settings())
+
+    async def unassigned() -> Principal:
+        return Principal(subject="unassigned")
+
+    app.dependency_overrides[get_current_principal] = unassigned
+    with TestClient(app) as client:
+        response = client.get("/healthz")
+
+    assert response.status_code == 403
 
 
 def test_configured_web_origin_can_preflight_authenticated_requests() -> None:
@@ -71,6 +110,20 @@ def test_invalid_token_returns_401() -> None:
 
     assert response.status_code == 401
     assert response.headers["www-authenticate"] == "Bearer"
+
+
+def test_identity_provider_unavailable_returns_503() -> None:
+    app = create_app(make_settings())
+
+    class UnavailableValidator:
+        async def validate(self, token: str, client: httpx.AsyncClient) -> Principal:
+            raise AuthProviderUnavailable
+
+    app.state.token_validator = UnavailableValidator()
+    with TestClient(app) as client:
+        response = client.get("/healthz", headers={"Authorization": "Bearer token"})
+
+    assert response.status_code == 503
 
 
 def test_insufficient_role_returns_403() -> None:
