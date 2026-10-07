@@ -7,10 +7,15 @@
 
 ### Added
 
-- Established the Python and npm workspace scaffolding, API and web starter
-  baselines, and shared package boundaries.
-- Added a local Docker Compose configuration, quality tooling, and pull request
-  CI.
+- Established Python and npm workspace scaffolding, API and web starter
+  baselines, shared package boundaries, local Docker Compose, quality tooling,
+  and pull request CI.
+- Added Entra ID authentication, server-side scope resolution, append-only audit
+  events, cost guardrails, and retrieval diagnostics.
+- Added document parsing and chunking, idempotent ingestion, evaluation dataset
+  schemas, and grounded-workflow primitives.
+- Added a manifest-driven project generator, engagement templates with a
+  fictional example, and operations runbook and handover checklist.
 - Added repository-specific Copilot instructions and reusable prompts.
 
 ### Known limitations
@@ -19,48 +24,72 @@
   are still roadmap items.
 - The `make eval-smoke` target currently reports that it is not implemented.
 - `make eval-full` is not defined.
+- There is no `make deploy-dev` target or checked-in Bicep/deployment workflow
+  on `main`.
 - The v0.1.0 definition of done in `docs/spec.md` is not met on `main`.
 
-### Release readiness snapshot (2026-10-07)
+### Release readiness snapshot (2026-10-07; `main` at `907f009b5764`)
 
-Assessed against `main` at `2a42ae6`. The implementation PRs listed below are
-open and are not included in this snapshot.
+This snapshot is based on the merged tree at
+`907f009b5764a39ce21e70ccfce81e2ea988cb69`. It is a readiness assessment, not
+release approval.
 
 - [ ] Clean clone, setup and local startup provide working chat over example
-  documents.
+  documents. There are workflow primitives, but no complete chat/retrieval
+  path; the streaming chat PR #79 is still open.
 - [ ] Bicep and GitHub Actions deploy a dev environment from zero without
-  stored secrets.
+  stored secrets. No Bicep or deployment workflow is on `main`; PRs #77 and
+  #80 are open, with #80 still a draft.
 - [ ] Grounded answers cite valid evidence and unsupported questions abstain.
-- [ ] Tests prove write tools require args-bound approval.
-- [ ] Tests prove cross-scope retrieval is impossible.
-- [ ] Every request has a full trace visible in Application Insights.
-- [ ] Evaluation runs in CI and blocks regressions.
-- [ ] The generator produces a project that builds and passes checks.
-- [ ] Engagement templates and handover docs are complete.
-- [x] Known limitations are documented honestly in the README.
+  Search indexing, citation validation, and evidence sufficiency remain in
+  open PRs #62, #53, and #58.
+- [ ] Tests prove write tools require args-bound approval. Approval and tool
+  policy work remains in open PRs #70 and #74.
+- [ ] Tests prove cross-scope retrieval is impossible. Server-side scope
+  resolution is present, but the scope-bound search adapter PR #62 is not
+  merged.
+- [ ] Every request has a full trace visible in Application Insights. The
+  OpenTelemetry PR #55 is open; no end-to-end trace evidence is available.
+- [ ] Evaluation runs in CI and blocks regressions. `make eval-smoke` remains a
+  placeholder, `make eval-full` is undefined, and evaluator/gating PRs #65,
+  #66, and #68 are open.
+- [x] The generator produces a project that builds and passes checks. Verified
+  by `make check` on this `main` snapshot, including generated-project checks.
+- [x] Engagement templates and handover docs are complete. The templates,
+  fictional example, runbook, and handover checklist are present on `main`;
+  environment-specific operational acceptance is still pending.
+- [x] Known limitations are documented honestly in the README and operations
+  runbook, including the unavailable deployment and real evaluation gates.
 
-The M2–M7 issues #9–#39 remain open. Current open implementation PRs are:
+`make check` passed on this `main` snapshot: Ruff and strict mypy passed,
+148 Python tests passed, the generated project passed its own checks (including
+148 Python and 9 web tests), and the root web lint, format, typecheck, and
+3 Vitest tests passed. The environment used Node 24.16.0 despite the web
+workspace specifying Node 22, producing engine warnings.
 
-- M2: #48, #60, #67.
-- M3: #52, #53, #56, #58, #61, #62, #71.
-- M4: #51, #63, #70, #72, #74, #76.
-- M5: #50, #55, #65, #66, #68, #69.
-- M6: #54, #73, #75, #77.
-- M7: #49, #59, #64.
+`make eval-smoke` exits successfully but only prints
+`eval-smoke: not implemented until M5 (issue 30)`; no evaluation ran.
+`make eval-full` fails because there is no such Make target. No real or
+service-backed evaluation is available.
 
-M4 issue #24 (streaming chat endpoint and UI) and M6 issue #34 (GitHub OIDC
-deployment) have no open PR in the refreshed PR list.
+Open milestone issues are #10, #12, #15–#17, #19–#22, #24–#27, and #29–#35.
+The remaining open implementation PRs at this snapshot are:
 
-Several PRs depend on other unmerged branches, including #60 on #48, #52 and
-#67/#71 on #60, #62 on #52, #66 on #65, #69 on #55, and #77 on #75. The
-release PR is #57.
+- M2: no open PR; issue #10 remains open although scope-resolution code is on
+  `main` from merged PR #60.
+- M3: #52, #53, #58, #62.
+- M4: #51, #70, #72, #74, #76, #79.
+- M5: #55, #65, #66, #68, #69.
+- M6: #54, #75, #77, #80.
 
-PR #54 is currently reporting failures for Dependency review and the Trivy
-repository, web-image, and ingestion-image scans. PR #48's Quality checks are
-passing; PR #68 is a draft. These PR states are another reason the
-prerequisites are not ready to land.
+PRs #68 and #80 are drafts. Stacked PRs include #70 on #51, #74 on #70,
+#79 on #74, #77 on #75, and #80 on #77; #62 is based on the M3 contracts PR
+#52, and #66/#69 depend on M5 PRs #65/#55 respectively. PR #54's latest
+security workflow has failing Trivy repository and web-image checks. The M4
+agent factory PR #72 has a failing quality check; PR #70's quality check was
+in progress at the time of this snapshot.
 
-No v0.1.0 tag or GitHub Release was found. Do not tag or publish until the
-prerequisites have landed, each unchecked definition-of-done item is verified,
-and a real evaluation target and service-backed evaluation are available and
-passing.
+The v0.1.0 release remains **Unreleased**. No v0.1.0 tag or GitHub Release was
+found. Do not tag or publish until all DoD items are verified, deployment and
+security gates pass, and real smoke/full service-backed evaluation is
+available and passing.
