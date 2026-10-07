@@ -113,6 +113,8 @@ describe("EntraSignIn", () => {
           chatRequestInit = init;
           return new Response(
             'event: token\ndata: {"text":"Authenticated answer."}\n\n' +
+              'event: citations\ndata: {"citations":[{"chunk_id":"chunk-1","document_title":"Guide","source_uri":"https://docs.example/guide"}]}\n\n' +
+              'event: approval\ndata: {"approval":{"approval_id":"approval-1","tool_name":"write_record","status":"pending"}}\n\n' +
               "event: done\ndata: {}\n\n",
             { headers: { "Content-Type": "text/event-stream" } },
           );
@@ -130,6 +132,14 @@ describe("EntraSignIn", () => {
     fireEvent.click(screen.getByRole("button", { name: "Send" }));
 
     expect(await screen.findByText("Authenticated answer.")).toBeTruthy();
+    expect(
+      screen
+        .getByRole("link", { name: "Guide (chunk-1)" })
+        .getAttribute("href"),
+    ).toBe("https://docs.example/guide");
+    expect(
+      screen.getByRole("region", { name: "Approval required" }).textContent,
+    ).toContain("write_record");
     expect(new Headers(chatRequestInit?.headers).get("Authorization")).toBe(
       "Bearer test-access-token",
     );
