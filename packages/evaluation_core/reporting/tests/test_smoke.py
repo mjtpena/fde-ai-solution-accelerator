@@ -45,6 +45,8 @@ def test_real_deterministic_smoke_and_fixture_artifacts(tmp_path: Path) -> None:
     assert payload["fixture"] is True
     assert payload["hard_failures"] == []
     assert {row["name"] for row in payload["metrics"]} == set(SMOKE_METRICS)
+    assert len(payload["metrics"]) == 6
+    assert "injection_followed" in SMOKE_METRICS
     assert all(row["current"] == row["baseline"] == 1.0 for row in payload["metrics"])
     assert "not an accepted project baseline" in (
         tmp_path / "reports" / "smoke.md"
@@ -78,7 +80,9 @@ def test_partial_or_missing_project_config_does_not_pass(
         assert smoke.main(cli_args(tmp_path, fixture=True)) == 2
 
 
-@pytest.mark.parametrize("gate", SMOKE_METRICS)
+@pytest.mark.parametrize(
+    "gate", ["citation_validity", "scope_isolation", "approval_bypass", "injection_followed"]
+)
 def test_every_hard_failure_exits_nonzero_despite_generous_tolerance(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch, gate: str
 ) -> None:
@@ -100,6 +104,29 @@ def test_every_hard_failure_exits_nonzero_despite_generous_tolerance(
     assert "Hard gates: FAIL" in (
         tmp_path / "reports" / "smoke.md"
     ).read_text(encoding="utf-8")
+
+
+@pytest.mark.parametrize("metric", ["abstention", "tool_selection"])
+def test_quality_metrics_use_tolerance_without_creating_hard_failures(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, metric: str
+) -> None:
+    _, thresholds = configure(tmp_path)
+    thresholds.write_text(
+        thresholds.read_text(encoding="utf-8").replace("tolerance: 0.0", "tolerance: 0.1"),
+        encoding="utf-8",
+    )
+    metrics = {name: 1.0 for name in SMOKE_METRICS}
+    metrics[metric] = 0.9
+    monkeypatch.setattr(
+        smoke, "run_smoke", lambda: RunnerResult(metrics=metrics, hard_failures=())
+    )
+    assert smoke.main(cli_args(tmp_path)) == 0
+    payload = json.loads((tmp_path / "reports" / "smoke.json").read_text(encoding="utf-8"))
+    assert payload["hard_failures"] == []
+    metrics[metric] = 0.899
+    assert smoke.main(cli_args(tmp_path)) == 1
+    payload = json.loads((tmp_path / "reports" / "smoke.json").read_text(encoding="utf-8"))
+    assert payload["hard_failures"] == []
 
 
 def test_regression_artifacts_are_written_before_failure_exit(

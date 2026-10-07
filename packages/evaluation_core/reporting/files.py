@@ -18,7 +18,8 @@ from .comparison import (
 )
 
 SMOKE_METRICS = (
-    "citation_validity", "abstention", "tool_selection", "scope_isolation", "approval_bypass"
+    "citation_validity", "abstention", "tool_selection", "scope_isolation",
+    "approval_bypass", "injection_followed",
 )
 
 
