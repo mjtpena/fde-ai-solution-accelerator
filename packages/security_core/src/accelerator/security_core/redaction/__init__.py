@@ -13,6 +13,16 @@ _REDACTED_EMAIL = "[REDACTED_EMAIL]"
 type AttributeValue = (
     str | bool | int | float | Sequence[str] | Sequence[bool] | Sequence[int] | Sequence[float]
 )
+type RedactionValue = (
+    str
+    | bool
+    | int
+    | float
+    | bytes
+    | Sequence[RedactionValue]
+    | Mapping[str, RedactionValue]
+    | None
+)
 
 _SENSITIVE_ASSIGNMENT = re.compile(
     r"(?i)(?P<prefix>\b(?:key|account[_-]?key|api[_-]?key|access[_-]?key|"
@@ -85,35 +95,35 @@ def _redact_assignment(match: re.Match[str]) -> str:
     return f"{match['prefix']}{_REDACTED}"
 
 
-def redact_attributes(attributes: Mapping[str, AttributeValue]) -> dict[str, AttributeValue]:
-    """Return copied OpenTelemetry span attributes with sensitive values redacted."""
+@overload
+def redact_attributes(attributes: Mapping[str, AttributeValue]) -> dict[str, AttributeValue]: ...
+
+
+@overload
+def redact_attributes(attributes: Mapping[str, RedactionValue]) -> dict[str, RedactionValue]: ...
+
+
+def redact_attributes(
+    attributes: Mapping[str, RedactionValue],
+) -> Mapping[str, RedactionValue]:
+    """Return copied attributes with sensitive values redacted recursively."""
     return {key: _redact_attribute_value(key, value) for key, value in attributes.items()}
 
 
-def _redact_attribute_value(key: str, value: AttributeValue) -> AttributeValue:
+def _redact_attribute_value(key: str, value: RedactionValue) -> RedactionValue:
     if _is_sensitive_key(key):
-        return _REDACTED
-    if isinstance(value, str):
+        return _replacement_for(value)
+    if isinstance(value, (str, bytes)):
         return redact_sensitive_data(value)
-    if isinstance(value, bool):
-        return value
-    if isinstance(value, int):
-        return value
-    if isinstance(value, float):
-        return value
-    return _redact_sequence(value)
+    if isinstance(value, Mapping):
+        return redact_attributes(value)
+    if isinstance(value, Sequence):
+        return tuple(_redact_attribute_value(key, item) for item in value)
+    return value
 
 
-def _redact_sequence(
-    value: Sequence[str] | Sequence[bool] | Sequence[int] | Sequence[float],
-) -> Sequence[str] | Sequence[bool] | Sequence[int] | Sequence[float]:
-    if all(isinstance(item, str) for item in value):
-        return tuple(redact_sensitive_data(item) for item in value if isinstance(item, str))
-    if all(isinstance(item, bool) for item in value):
-        return tuple(item for item in value if isinstance(item, bool))
-    if all(isinstance(item, int) and not isinstance(item, bool) for item in value):
-        return tuple(item for item in value if isinstance(item, int) and not isinstance(item, bool))
-    return tuple(item for item in value if isinstance(item, float))
+def _replacement_for(value: RedactionValue) -> str | bytes:
+    return _REDACTED.encode("ascii") if isinstance(value, bytes) else _REDACTED
 
 
 def _is_sensitive_key(key: str) -> bool:
@@ -131,4 +141,4 @@ if TYPE_CHECKING:
     ] = redact_attributes
 
 
-__all__ = ["AttributeValue", "redact_attributes", "redact_sensitive_data"]
+__all__ = ["AttributeValue", "RedactionValue", "redact_attributes", "redact_sensitive_data"]

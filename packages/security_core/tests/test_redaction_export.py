@@ -48,6 +48,8 @@ def test_redaction_hook_removes_sensitive_fixtures_from_exported_spans() -> None
     exported_spans = exporter.get_finished_spans()
     assert len(exported_spans) == 1
     exported = exported_spans[0]
+    assert exported.attributes is not None
+    assert exported.events[0].attributes is not None
     exported_content = repr((exported.attributes, exported.events))
 
     for fixture in (
