@@ -2,27 +2,30 @@
 
 from collections.abc import Mapping, Sequence
 import re
+from typing import TYPE_CHECKING, Callable, overload
 
-_REDACTED = "[REDACTED]"
+if TYPE_CHECKING:
+    from opentelemetry.util.types import AttributeValue as OpenTelemetryAttributeValue
+
+_REDACTED = "[" + "REDACTED" + "]"
 _REDACTED_EMAIL = "[REDACTED_EMAIL]"
 
 type AttributeValue = (
-    str
-    | bool
-    | int
-    | float
-    | bytes
-    | Sequence[AttributeValue]
-    | Mapping[str, AttributeValue]
-    | None
+    str | bool | int | float | Sequence[str] | Sequence[bool] | Sequence[int] | Sequence[float]
 )
 
 _SENSITIVE_ASSIGNMENT = re.compile(
     r"(?i)(?P<prefix>\b(?:key|account[_-]?key|api[_-]?key|access[_-]?key|"
     r"refresh[_-]?key|client[_-]?secret|private[_-]?key|secret|password|"
-    r"passwd|authorization|auth[_-]?token|access[_-]?token|refresh[_-]?token|"
+    r"passwd|auth[_-]?token|access[_-]?token|refresh[_-]?token|"
     r"id[_-]?token|token|credential|credentials)\b[\"']?\s*[:=]\s*)"
-    r"(?P<value>\"[^\"\r\n]*\"|'[^'\r\n]*'|[^\s,;}\]]+)"
+    r"(?P<value>(?:[Bb]earer\s+[^\s,;}\]]+|\"[^\"\r\n]*\"|'[^'\r\n]*'|"
+    r"[^\s,;}\]]+))"
+)
+_AUTHORIZATION_ASSIGNMENT = re.compile(
+    r"(?i)(?P<prefix>\bauthorization\b[\"']?\s*[:=]\s*)"
+    r"(?P<value>\"[^\"\r\n]*\"|'[^'\r\n]*'|"
+    r"[A-Za-z][A-Za-z0-9_-]*\s+[^\s,;}\]]+|[^\s,;}\]]+)"
 )
 _BEARER_TOKEN = re.compile(r"(?i)\bBearer\s+[A-Za-z0-9._~+/-]+=*")
 _JWT = re.compile(r"\beyJ[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+\b")
@@ -34,39 +37,98 @@ _EMAIL = re.compile(
     r"\b[A-Za-z0-9.!#$%&'*+/?^_`{|}~-]+@[A-Za-z0-9](?:[A-Za-z0-9-]{0,61}"
     r"[A-Za-z0-9])?(?:\.[A-Za-z0-9](?:[A-Za-z0-9-]{0,61}[A-Za-z0-9])?)+\b"
 )
-_SENSITIVE_KEY = re.compile(
-    r"(?i)(?:^|[^a-z0-9])"
-    r"(?:key|token|secret|password|passwd|credential|credentials|authorization)$"
-)
+_SENSITIVE_KEY_PARTS = {
+    "authorization",
+    "credential",
+    "credentials",
+    "key",
+    "password",
+    "passwd",
+    "secret",
+    "token",
+}
 
 
-def redact_sensitive_data(value: str) -> str:
-    """Redact credential assignments, bearer/JWT/provider tokens, and emails."""
-    redacted = _SENSITIVE_ASSIGNMENT.sub(
-        lambda match: f"{match['prefix']}{_REDACTED}",
-        value,
-    )
+@overload
+def redact_sensitive_data(value: str) -> str: ...
+
+
+@overload
+def redact_sensitive_data(value: bytes) -> bytes: ...
+
+
+def redact_sensitive_data(value: str | bytes) -> str | bytes:
+    """Redact credential assignments, tokens, and emails in text or UTF-8 bytes."""
+    if isinstance(value, bytes):
+        try:
+            text = value.decode("utf-8")
+        except UnicodeDecodeError:
+            return _REDACTED.encode("ascii")
+        redacted = _redact_text(text)
+        return value if redacted == text else redacted.encode("utf-8")
+    return _redact_text(value)
+
+
+def _redact_text(value: str) -> str:
+    redacted = _AUTHORIZATION_ASSIGNMENT.sub(_redact_assignment, value)
+    redacted = _SENSITIVE_ASSIGNMENT.sub(_redact_assignment, redacted)
     redacted = _BEARER_TOKEN.sub(lambda match: "Bearer " + _REDACTED, redacted)
     redacted = _JWT.sub(_REDACTED, redacted)
     redacted = _KNOWN_TOKEN.sub(_REDACTED, redacted)
     return _EMAIL.sub(_REDACTED_EMAIL, redacted)
 
 
+def _redact_assignment(match: re.Match[str]) -> str:
+    value = match["value"]
+    if value.startswith(("'", '"')):
+        return f"{match['prefix']}{value[0]}{_REDACTED}{value[0]}"
+    return f"{match['prefix']}{_REDACTED}"
+
+
 def redact_attributes(attributes: Mapping[str, AttributeValue]) -> dict[str, AttributeValue]:
-    """Return copied span attributes with sensitive values redacted recursively."""
+    """Return copied OpenTelemetry span attributes with sensitive values redacted."""
     return {key: _redact_attribute_value(key, value) for key, value in attributes.items()}
 
 
 def _redact_attribute_value(key: str, value: AttributeValue) -> AttributeValue:
-    if _SENSITIVE_KEY.search(key):
+    if _is_sensitive_key(key):
         return _REDACTED
     if isinstance(value, str):
         return redact_sensitive_data(value)
-    if isinstance(value, Mapping):
-        return redact_attributes(value)
-    if isinstance(value, Sequence) and not isinstance(value, bytes):
-        return tuple(_redact_attribute_value(key, item) for item in value)
-    return value
+    if isinstance(value, bool):
+        return value
+    if isinstance(value, int):
+        return value
+    if isinstance(value, float):
+        return value
+    return _redact_sequence(value)
+
+
+def _redact_sequence(
+    value: Sequence[str] | Sequence[bool] | Sequence[int] | Sequence[float],
+) -> Sequence[str] | Sequence[bool] | Sequence[int] | Sequence[float]:
+    if all(isinstance(item, str) for item in value):
+        return tuple(redact_sensitive_data(item) for item in value if isinstance(item, str))
+    if all(isinstance(item, bool) for item in value):
+        return tuple(item for item in value if isinstance(item, bool))
+    if all(isinstance(item, int) and not isinstance(item, bool) for item in value):
+        return tuple(item for item in value if isinstance(item, int) and not isinstance(item, bool))
+    return tuple(item for item in value if isinstance(item, float))
+
+
+def _is_sensitive_key(key: str) -> bool:
+    normalized = re.sub(r"(?<=[A-Z])(?=[A-Z][a-z])|(?<=[a-z0-9])(?=[A-Z])", "_", key)
+    components = re.split(r"[^A-Za-z0-9]+", normalized.casefold())
+    return bool(
+        components and (components[-1] in _SENSITIVE_KEY_PARTS or "authorization" in components)
+    )
+
+
+if TYPE_CHECKING:
+    _sanitizer_type_check: Callable[
+        [Mapping[str, OpenTelemetryAttributeValue]],
+        Mapping[str, OpenTelemetryAttributeValue],
+    ] = redact_attributes
 
 
 __all__ = ["AttributeValue", "redact_attributes", "redact_sensitive_data"]
