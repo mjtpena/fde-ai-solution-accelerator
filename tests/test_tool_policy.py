@@ -3,20 +3,33 @@ from __future__ import annotations
 import asyncio
 import hashlib
 import json
+from collections.abc import AsyncIterator
+from contextlib import asynccontextmanager
 from dataclasses import dataclass, field, replace
 from datetime import datetime, timedelta, timezone
 from enum import StrEnum
+from typing import ClassVar
 from uuid import UUID, uuid4
 
 import pytest
 from pydantic import BaseModel
 
+from accelerator.agent_core.approvals import (
+    Approval,
+    ApprovalAuditEvent,
+    ApprovalExpiredError,
+    ApprovalMismatchError,
+    ApprovalReplayError,
+    ApprovalService,
+)
 from accelerator.agent_core.middleware.tool_policy import (
     ToolCallLimitExceeded,
     ToolCallLimits,
     ToolExecutionTimeout,
     ToolPolicyMiddleware,
 )
+from accelerator.agent_core.tools import EnterpriseTool, ExecutionContextProtocol, ToolRisk
+from accelerator.security_core.data_boundaries.context import ExecutionContext
 from accelerator.security_core.tool_policy.models import (
     ApprovalRequired,
     ToolPolicyViolation,
@@ -385,3 +398,112 @@ async def test_write_tool_requires_one_context_scope() -> None:
 
     assert service.created == []
     assert tool.calls == 0
+
+
+class InMemoryApprovalRepository:
+    def __init__(self) -> None:
+        self.approvals: dict[UUID, Approval] = {}
+        self.audit_events: list[ApprovalAuditEvent] = []
+        self._lock = asyncio.Lock()
+
+    @asynccontextmanager
+    async def transaction(self) -> AsyncIterator[None]:
+        async with self._lock:
+            yield
+
+    async def get_for_update(self, approval_id: UUID) -> Approval | None:
+        return self.approvals.get(approval_id)
+
+    async def add(self, approval: Approval) -> None:
+        self.approvals[approval.id] = approval
+
+    async def update(self, approval: Approval) -> None:
+        self.approvals[approval.id] = approval
+
+    async def add_audit_event(self, event: ApprovalAuditEvent) -> None:
+        self.audit_events.append(event)
+
+
+class WriteTool(EnterpriseTool[ToolArgs, ToolResult]):
+    name = "write_tool"
+    description = "Write only after an args-bound approval."
+    risk = ToolRisk.LOW_IMPACT_WRITE
+    args_model: ClassVar[type[BaseModel]] = ToolArgs
+
+    def __init__(self) -> None:
+        self.calls = 0
+
+    async def execute(self, args: ToolArgs, ctx: ExecutionContextProtocol) -> ToolResult:
+        self.calls += 1
+        return ToolResult(value=f"{ctx.user_id}:{args.value}")
+
+
+def _server_context() -> ExecutionContext:
+    return ExecutionContext(
+        correlation_id="correlation-1",
+        user_id="requester",
+        roles=frozenset(),
+        scope_ids=frozenset({"scope-a"}),
+        session_id="session-1",
+        deadline_utc=datetime.now(timezone.utc) + timedelta(minutes=1),
+    )
+
+
+@pytest.mark.asyncio
+async def test_public_contract_creates_card_and_executes_real_approval_once() -> None:
+    repository = InMemoryApprovalRepository()
+    service = ApprovalService[ToolArgs, ToolResult](repository)
+    middleware = ToolPolicyMiddleware(approval_service=service)
+    tool = WriteTool()
+    context = _server_context()
+    args = ToolArgs(value="approved")
+
+    card = await middleware.invoke(tool, args, context, turn_id="turn-1")
+
+    assert isinstance(card, ApprovalRequired)
+    assert repository.approvals[card.approval_id].status == "pending"
+    assert card.scope_id == next(iter(context.scope_ids))
+    assert tool.calls == 0
+    approval = await service.approve(approval_id=card.approval_id, ctx=context)
+    result = await middleware.invoke(tool, args, context, turn_id="turn-2", approval=approval)
+
+    assert result == ToolResult(value="requester:approved")
+    assert repository.approvals[approval.id].status == "executed"
+    assert [event.transition for event in repository.audit_events] == [
+        "pending",
+        "approved",
+        "executed",
+    ]
+    with pytest.raises(ApprovalReplayError):
+        await middleware.invoke(tool, args, context, turn_id="turn-3", approval=approval)
+    assert tool.calls == 1
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("failure", ["changed_args", "expired", "wrong_scope"])
+async def test_real_approval_failures_never_invoke_tool(failure: str) -> None:
+    repository = InMemoryApprovalRepository()
+    now = datetime.now(timezone.utc)
+    service = ApprovalService[ToolArgs, ToolResult](repository, clock=lambda: now)
+    middleware = ToolPolicyMiddleware(approval_service=service)
+    tool = WriteTool()
+    context = _server_context()
+    args = ToolArgs(value="approved")
+    approval = await service.create(tool_name=tool.name, args=args, ctx=context)
+    approval = await service.approve(approval_id=approval.id, ctx=context)
+    expected_error: type[Exception]
+    if failure == "changed_args":
+        args = ToolArgs(value="changed")
+        expected_error = ApprovalMismatchError
+    elif failure == "expired":
+        now += timedelta(minutes=11)
+        expected_error = ApprovalExpiredError
+    else:
+        context = context.model_copy(update={"scope_ids": frozenset({"scope-b"})})
+        expected_error = ToolPolicyViolation
+
+    with pytest.raises(expected_error):
+        await middleware.invoke(tool, args, context, turn_id="turn-1", approval=approval)
+
+    assert tool.calls == 0
+    assert not any(event.transition == "executed" for event in repository.audit_events)

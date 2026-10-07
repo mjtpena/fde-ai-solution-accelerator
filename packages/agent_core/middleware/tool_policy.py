@@ -4,19 +4,16 @@ import asyncio
 import math
 from dataclasses import dataclass
 from datetime import datetime, timezone
-from typing import TYPE_CHECKING, TypeVar
+from typing import TYPE_CHECKING, Generic, TypeVar
 
 from pydantic import BaseModel
 
-from accelerator.security_core.tool_policy.models import ApprovalRequired, ToolPolicyViolation  # type: ignore[import-untyped]
-from accelerator.security_core.tool_policy.policy import ToolPolicy  # type: ignore[import-untyped]
+from accelerator.security_core.tool_policy.models import ApprovalRequired, ToolPolicyViolation
+from accelerator.security_core.tool_policy.policy import ToolPolicy
 
 if TYPE_CHECKING:
-    from accelerator.agent_core.approvals import Approval, ApprovalService  # type: ignore[import-untyped]
-    from accelerator.agent_core.tools import (  # type: ignore[import-untyped]
-        EnterpriseTool,
-        ExecutionContextProtocol,
-    )
+    from ..approvals import Approval, ApprovalService
+    from ..tools import EnterpriseTool, ExecutionContextProtocol
 
 
 ArgsT = TypeVar("ArgsT", bound=BaseModel)
@@ -65,11 +62,11 @@ class _InMemoryCallCounter:
             self._turn_counts[key] = turn_count + 1
 
 
-class ToolPolicyMiddleware:
+class ToolPolicyMiddleware(Generic[ArgsT, ResultT]):
     def __init__(
         self,
         *,
-        approval_service: ApprovalService | None = None,
+        approval_service: ApprovalService[ArgsT, ResultT] | None = None,
         policy: ToolPolicy | None = None,
         limits: ToolCallLimits | None = None,
         privileged_approver_roles: frozenset[str] = frozenset(),
