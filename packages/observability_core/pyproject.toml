@@ -9,8 +9,5 @@ requires-python = "==3.12.*"
 dependencies = []
 
 [tool.setuptools]
-package-dir = {"" = "src"}
-
-[tool.setuptools.packages.find]
-where = ["src"]
-include = ["observability_core*"]
+packages = ["accelerator.observability_core"]
+package-dir = {"accelerator.observability_core" = "src/observability_core"}

@@ -8,6 +8,15 @@ version = "0.1.0"
 requires-python = "==3.12.*"
 dependencies = []
 
-[tool.setuptools.packages.find]
-where = ["."]
-include = ["agents*", "workflows*", "tools*", "middleware*", "approvals*", "sessions*", "policies*"]
+[tool.setuptools]
+packages = [
+    "accelerator.agent_core",
+    "accelerator.agent_core.agents",
+    "accelerator.agent_core.workflows",
+    "accelerator.agent_core.tools",
+    "accelerator.agent_core.middleware",
+    "accelerator.agent_core.approvals",
+    "accelerator.agent_core.sessions",
+    "accelerator.agent_core.policies",
+]
+package-dir = {"accelerator.agent_core" = "."}

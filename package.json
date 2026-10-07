@@ -1,0 +1,10 @@
+{
+  "name": "fde-ai-solution-accelerator",
+  "version": "0.1.0",
+  "private": true,
+  "workspaces": ["apps/web"],
+  "engines": {
+    "node": ">=22",
+    "npm": ">=10"
+  }
+}

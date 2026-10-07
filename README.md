@@ -45,14 +45,16 @@ The reference architecture in [`docs/spec.md`](docs/spec.md) describes the inten
 
 - Python 3.12
 - [uv](https://docs.astral.sh/uv/)
+- Node.js 22 or newer and npm 10 or newer
 - GNU Make, if using the Makefile commands
 
-### Set up the Python workspace
+### Set up the workspace
 
 From the repository root:
 
 ```sh
 uv sync --all-packages --frozen
+npm ci
 ```
 
 Or run the equivalent setup target:
@@ -67,11 +69,18 @@ make setup
 make check
 ```
 
-This currently parses the Python source files to catch syntax errors. The smoke-evaluation target is a placeholder until the evaluation milestone is implemented:
+This parses Python source files, runs the scaffold's standard-library regression tests, and runs any npm workspace check scripts. Lint/type-check tooling and the web application are delivered in later issues. The smoke-evaluation target is a placeholder until the evaluation milestone is implemented:
 
 ```sh
 make eval-smoke
 ```
+
+Python distributions install under the `accelerator` import namespace:
+`accelerator.agent_core`, `accelerator.retrieval_core`,
+`accelerator.evaluation_core`, `accelerator.observability_core`,
+`accelerator.security_core`, and `accelerator.ingestion`. The API owns
+`accelerator.api`, `accelerator.application`, and its other existing layers.
+The npm workspace currently contains only the `apps/web` package metadata.
 
 ## Security boundaries
 

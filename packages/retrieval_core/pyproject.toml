@@ -8,6 +8,15 @@ version = "0.1.0"
 requires-python = "==3.12.*"
 dependencies = []
 
-[tool.setuptools.packages.find]
-where = ["."]
-include = ["models*", "parsing*", "chunking*", "indexing*", "search*", "citations*", "sufficiency*"]
+[tool.setuptools]
+packages = [
+    "accelerator.retrieval_core",
+    "accelerator.retrieval_core.models",
+    "accelerator.retrieval_core.parsing",
+    "accelerator.retrieval_core.chunking",
+    "accelerator.retrieval_core.indexing",
+    "accelerator.retrieval_core.search",
+    "accelerator.retrieval_core.citations",
+    "accelerator.retrieval_core.sufficiency",
+]
+package-dir = {"accelerator.retrieval_core" = "."}
