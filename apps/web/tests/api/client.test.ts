@@ -13,15 +13,20 @@ describe("getHealth", () => {
       });
     };
 
-    await expect(getHealth(fetcher)).resolves.toEqual({ status: "ok" });
+    await expect(getHealth("test-access-token", fetcher)).resolves.toEqual({
+      status: "ok",
+    });
     expect(requestUrl?.pathname).toBe("/healthz");
     expect(requestInit?.cache).toBe("no-store");
+    expect(new Headers(requestInit?.headers).get("Authorization")).toBe(
+      "Bearer test-access-token",
+    );
   });
 
   it("reports non-success API responses", async () => {
     const fetcher: typeof fetch = async () => new Response(null, { status: 503 });
 
-    await expect(getHealth(fetcher)).rejects.toThrow(
+    await expect(getHealth("test-access-token", fetcher)).rejects.toThrow(
       "API health check failed with status 503.",
     );
   });
@@ -32,7 +37,7 @@ describe("getHealth", () => {
         headers: { "Content-Type": "application/json" },
       });
 
-    await expect(getHealth(fetcher)).rejects.toThrow(
+    await expect(getHealth("test-access-token", fetcher)).rejects.toThrow(
       "API health check returned an invalid response.",
     );
   });

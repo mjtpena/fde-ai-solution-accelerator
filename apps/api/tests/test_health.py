@@ -1,6 +1,7 @@
 import asyncio
 import os
 import unittest
+from uuid import UUID
 from unittest.mock import patch
 
 from pydantic import ValidationError
@@ -10,9 +11,17 @@ from accelerator.api.health import HealthResponse, healthz, readyz
 from accelerator.configuration.settings import Settings
 
 
+def make_test_settings() -> Settings:
+    return Settings(
+        environment="test",
+        entra_tenant_id=UUID("00000000-0000-0000-0000-000000000001"),
+        entra_audience="api://test",
+    )
+
+
 class HealthEndpointTests(unittest.TestCase):
     def setUp(self) -> None:
-        self.app = create_app(Settings(environment="test"))
+        self.app = create_app(make_test_settings())
 
     def test_healthz_returns_ok(self) -> None:
         operation = self.app.openapi()["paths"]["/healthz"]["get"]
