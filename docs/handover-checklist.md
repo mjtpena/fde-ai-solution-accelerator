@@ -38,8 +38,12 @@ document contents.
 
 - [ ] The approved deployment workflow exists, its permissions and environment
       protections are understood, and a successful run is linked.
-- [ ] Required pre-deploy gates are documented: `make check`,
-      `make eval-smoke`, and the applicable full evaluation.
+- [ ] Required pre-deploy gates are documented: `make check` and the
+      solution-specific smoke and full evaluation suites.
+- [ ] The solution-specific evaluation suite, project-owned thresholds, and
+      accepted baseline exist; the candidate revision passed the required
+      evaluation gates. The `make eval-smoke` placeholder and `make check`
+      result alone are not evaluation evidence.
 - [ ] The current deployed revision, last known-good immutable artifact, and
       matching configuration are recorded.
 - [ ] Compatibility/recovery considerations for database, index, and contract
@@ -79,6 +83,11 @@ document contents.
 
 ## Evaluation and observability
 
+- [ ] The solution-specific smoke and full evaluation suites run real
+      evaluations, project-owned thresholds are configured, and an accepted
+      baseline exists. Until all are available and required gates pass,
+      deployment and model promotion remain blocked and handover status must be
+      `blocked`.
 - [ ] Dataset, evaluator, threshold, and accepted-baseline ownership is assigned
       to a role/team.
 - [ ] Safety failures and out-of-tolerance regressions are understood to block
@@ -106,7 +115,9 @@ document contents.
 - [ ] Known limitations and recovery expectations have been acknowledged by
       both the service owner and receiving operations role.
 
-Handover status: `ready` / `blocked`
+Handover status: `ready` only when every mandatory item above is verified,
+including a real solution-specific evaluation suite, project-owned thresholds,
+and an accepted baseline; otherwise `blocked`.
 
 Outstanding blockers and tracking references:
 

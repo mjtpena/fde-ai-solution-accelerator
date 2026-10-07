@@ -14,6 +14,16 @@ substituting local credentials or running undocumented commands. Treat deploymen
 and rollback as blocked until the approved OIDC workflow and environment
 configuration are available and verified.
 
+Evaluation is also unavailable in this checkout: `make eval-smoke` only prints
+a placeholder message and exits successfully; there is no `make eval-full`
+target, solution-specific evaluation suite, or accepted evaluation baseline.
+Neither a successful exit from the placeholder nor `make check` is evaluation
+evidence. Block deployment, model promotion, and `ready` handover status until
+the solution provides a real evaluation suite, project-owned thresholds, and an
+accepted baseline, and the required evaluation gates pass for the candidate
+revision. Do not represent the scaffold's placeholder target as a passing
+evaluation.
+
 Before executing any procedure, record the target environment, approved change
 or incident reference, operator role, approver role, application revision, and
 the location of the relevant workflow run, evaluation report, and dashboards.
@@ -42,8 +52,11 @@ connection strings, tokens, document contents, or personal data in this record.
 ## Deploy
 
 1. Confirm the change is approved for the target environment and the target
-   revision has passed `make check` and `make eval-smoke`. Confirm the expected
-   evaluation baseline and the last known-good deployed revision are recorded.
+   revision has passed `make check` and the solution's real evaluation suite.
+   Confirm the project-owned thresholds and accepted baseline are recorded and
+   that the candidate passed the required gates. `make eval-smoke` is only a
+   successful placeholder in this checkout, and `make eval-full` is unavailable;
+   neither satisfies this release gate.
 2. Confirm the deployment workflow and environment protection rules are present.
    The specification names `.github/workflows/deploy-dev.yml` and `make
 deploy-dev`; use the checked-in workflow's actual name and inputs if they have
@@ -56,9 +69,11 @@ deploy-dev`; use the checked-in workflow's actual name and inputs if they have
 4. Wait for the workflow's deployment and smoke-test stages. Verify service
    health, authentication, scope isolation, and a representative retrieval
    smoke query using approved synthetic or non-sensitive test data.
-5. Review the full evaluation result for the deployed build and compare it with
-   the accepted baseline. A failed safety check or regression beyond the
-   project's approved tolerance blocks promotion.
+5. Review the solution's full evaluation result for the deployed build and
+   compare it with the accepted baseline. A failed safety check or regression
+   beyond the project's approved tolerance blocks promotion. If the suite or
+   accepted baseline is unavailable, block deployment and promotion; a smoke
+   check or placeholder command is not a substitute.
 6. Inspect Application Insights for request traces, error rate, latency,
    retrieval outcomes, token usage, abstention rate, and evaluation pass rate.
    Confirm traces are correlated and redacted as configured.
@@ -161,12 +176,17 @@ or change production configuration out of band.
    deployment/configuration, the reason for the change, the owner, and the
    rollback configuration. Do not put credentials or customer prompts in the
    change record.
-2. Run `make check` and `make eval-smoke`. Review groundedness, relevance,
-   completeness, citation validity, abstention, tool behavior, safety, token
-   usage, and latency against the project's thresholds and accepted baseline.
-3. Deploy the change to the approved dev environment using the protected
-   workflow. Run the full evaluation suite and review its report before
-   promotion.
+2. Run `make check`. Review groundedness, relevance, completeness, citation
+   validity, abstention, tool behavior, safety, token usage, and latency using
+   the project's real evaluation suite, thresholds, and accepted baseline. The
+   `make eval-smoke` target in this checkout is a placeholder, not an
+   evaluation; `make eval-full` is unavailable. Require a real
+   solution-specific suite and accepted baseline. If either is missing, block
+   model deployment and promotion.
+3. Only after the real suite and accepted baseline exist and required checks
+   pass, deploy the change to the approved dev environment using the protected
+   workflow. Run the full solution-specific evaluation and review its report
+   before promotion.
 4. Promote only after the evaluation and operational owners approve the results.
    Monitor health, evaluation pass rate, latency, token usage, and safety signals
    after deployment.
@@ -177,8 +197,12 @@ or change production configuration out of band.
 
 ## Respond to an evaluation regression
 
-Evaluation is a release gate. A failed safety assertion always blocks release;
-other metrics block release when they exceed the tolerance in the
+Evaluation is a release gate. In this checkout, `make eval-smoke` is a
+placeholder that exits successfully without running an evaluation, and
+`make eval-full` is unavailable. A solution-specific suite and accepted
+baseline are prerequisites: until both exist, deployment and model promotion
+remain blocked. Once available, a failed safety assertion always blocks
+release; other metrics block release when they exceed the tolerance in the
 project-owned `thresholds.yml`.
 
 1. Capture the commit/artifact, dataset and evaluation versions, environment,
@@ -193,8 +217,10 @@ project-owned `thresholds.yml`.
    safety, cost, and latency. Use redacted trace metadata to correlate relevant
    spans.
 4. Keep the release blocked while investigating. Fix the behavior/configuration
-   in a reviewed change and rerun `make check`, `make eval-smoke`, and the
-   applicable full evaluation before promotion.
+   in a reviewed change and rerun `make check` plus the real solution-specific
+   smoke and full evaluation gates before promotion. The placeholder
+   `make eval-smoke` and unavailable `make eval-full` in this checkout do not
+   satisfy those gates.
 5. Do not weaken thresholds or replace `baselines/accepted.json` to make a
    failure pass. A baseline update requires an explicit reviewed change that
    explains the evidence and rationale, as well as the project's required
@@ -208,7 +234,9 @@ project-owned `thresholds.yml`.
 - Architecture, identity, ingestion, observability, and evaluation contracts:
   [`spec.md`](spec.md).
 - Handover record and completion gates: [`handover-checklist.md`](handover-checklist.md).
-- Local validation: `make check` and `make eval-smoke`.
+- Local validation: `make check`; this checkout's `make eval-smoke` target is a
+  placeholder and `make eval-full` is unavailable. Neither supplies evaluation
+  evidence.
 - The specification also defines `make eval-full` and `make deploy-dev`; confirm
   those targets and their environment-specific prerequisites exist before
   relying on them.
