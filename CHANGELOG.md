@@ -14,6 +14,7 @@
   events, cost guardrails, and retrieval diagnostics.
 - Added document parsing and chunking, idempotent ingestion, evaluation dataset
   schemas, and grounded-workflow primitives.
+- Added validated document, chunk, evidence, and retrieval-request contracts.
 - Added the agent factory, Foundry hosted-agent packaging, tool registry,
   args-bound approval service and policy middleware, plus the streaming chat
   API/UI.
@@ -33,10 +34,10 @@
   on `main`.
 - The v0.1.0 definition of done in `docs/spec.md` is not met on `main`.
 
-### Release readiness snapshot (2026-10-08; `main` at `4495986ecec3`)
+### Release readiness snapshot (2026-10-08; `main` at `6a46f8235c69`)
 
 This snapshot is based on the merged tree at
-`4495986ecec3ef6675d8dfef6b8e8712df234e0a`. It is a readiness assessment, not
+`6a46f8235c697d14a60f0c8baa622f106aa55dd0`. It is a readiness assessment, not
 release approval.
 
 - [ ] Clean clone, setup and local startup provide working chat over example
@@ -70,36 +71,38 @@ release approval.
 - [x] Known limitations are documented honestly in the README and operations
   runbook, including the unavailable deployment and real evaluation gates.
 
-On this `main` snapshot, `make check` did not fully pass. Ruff, strict mypy,
-and 257 Python tests passed (one skipped); the generator self-tests and
-generated-project checks also passed. The root web lint and format checks
-passed, but its typecheck failed because `@playwright/test` is not available
-from the locked workspace install; Playwright test types and dependent
-parameters consequently cannot be resolved. The environment used Node
-24.16.0 despite the web workspace specifying Node 22, producing engine
-warnings. This check failure is an additional release blocker.
+On this `main` snapshot, `make check` passed after restoring dependencies
+with `npm ci`: Ruff, strict mypy, and 267 Python tests passed (one skipped);
+the 12 generator self-tests and generated-project checks also passed
+(267 Python tests passed, one skipped, and 14 web tests passed). Root web
+lint, format, typecheck, and all 14 Vitest tests passed. The earlier missing
+Playwright types were a local dependency-installation issue, not a remaining
+check failure. The environment used Node 24.16.0 despite the web workspace
+specifying Node 22, producing engine warnings. `npm ci` reported five
+high-severity vulnerabilities; this is not evidence of security acceptance.
 
 `make eval-smoke` exits successfully but only prints
 `eval-smoke: not implemented until M5 (issue 30)`; no evaluation ran.
 `make eval-full` fails because there is no such Make target. No real or
 service-backed evaluation is available.
 
-Open milestone issues are #12, #15–#17, #26, #27, #29–#35, and #40. The
+Open milestone issues are #15–#17, #26, #27, #29–#35, and #40. The
 remaining open implementation PRs at this snapshot are:
 
 - M2: no open milestone issue or PR; scope-resolution code is on `main` from
   merged PR #60.
-- M3: #52, #53, #58, #62.
+- M3: #53, #58, #62.
 - M5: #55, #65, #66, #68, #69.
 - M6: #54, #75, #77, #80.
 
-M4 PRs #51, #70, #72, #74, #76, and #79 have merged. PRs #68 and #80 are
-drafts. Remaining stacked work includes #62 based on #52, #66 based on #65,
-#69 based on #55, #77 based on #75, and #80 based on #77. PRs #55, #62, and
-#65 are marked DIRTY. PR #77's Quality check fails (its Bicep validation
-passes). PR #54's Trivy repository scan fails; its other listed checks pass.
-PR #75's Bicep validation and Quality checks pass, but its dependent #77 is not
-ready.
+M3 contracts PR #52 and M4 PRs #51, #70, #72, #74, #76, and #79 have merged.
+PRs #68 and #80 are drafts. Remaining stacked work includes #66 based on #65,
+#69 based on #55, #77 based on #75, and #80 based on #77. PRs #66 and #77 are
+marked DIRTY. PR #77's Quality check fails (its Bicep validation passes).
+PR #54's Trivy repository scan fails; its other listed checks pass. PR #75's
+Bicep validation and Quality checks pass, but its dependent #77 is not ready.
+PR #65's Quality check was running at the time of refresh. PRs #53, #55, #58,
+and #62 are CLEAN with passing Quality checks, but remain unmerged.
 
 The v0.1.0 release remains **Unreleased**. No v0.1.0 tag or GitHub Release was
 found. Do not tag or publish until all DoD items are verified, deployment and
