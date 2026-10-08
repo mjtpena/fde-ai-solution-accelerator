@@ -118,3 +118,21 @@ class AgentFactoryTests(unittest.TestCase):
                                 tools=tool_names,
                             )
                         )
+
+    def test_rejects_non_markdown_instructions_before_resolving_tools(self) -> None:
+        with TemporaryDirectory() as directory:
+            root = Path(directory)
+            (root / "assistant.txt").write_text("Not Markdown.", encoding="utf-8")
+            runtime = FakeRuntime()
+            factory = AgentFactory(runtime, lambda name: {"known": object()}[name], root)
+
+            with self.assertRaisesRegex(ValueError, "relative Markdown"):
+                factory.create(
+                    AgentConfig(
+                        name="assistant",
+                        model="deployment",
+                        instructions_file="assistant.txt",
+                        tools=("unknown",),
+                    )
+                )
+            self.assertIsNone(runtime.arguments)
