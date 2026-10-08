@@ -8,6 +8,7 @@ version = "0.1.0"
 requires-python = "==3.12.*"
 dependencies = [
     "pypdf>=5.0,<7",
+    "pydantic>=2.7,<3",
 ]
 
 [tool.setuptools]
@@ -22,3 +23,6 @@ packages = [
     "accelerator.retrieval_core.sufficiency",
 ]
 package-dir = {"accelerator.retrieval_core" = "."}
+
+[tool.setuptools.package-data]
+"accelerator.retrieval_core" = ["py.typed"]
