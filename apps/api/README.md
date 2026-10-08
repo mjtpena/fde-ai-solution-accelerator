@@ -1,5 +1,31 @@
 # API audit events
 
+## Streaming chat host composition
+
+The host constructs the authenticated application with
+`create_app(settings, chat_turn=workflow, scope_repository=memberships)`.
+`workflow` implements `accelerator.api.chat.ChatTurnPort`; it can be the existing
+`GroundedAnswerWorkflow` composed with the host's retriever, sufficiency checker,
+answer generator, citation validator, and retrieval-request factory, or the
+tool-policy workflow that returns `ApprovalRequired`. `memberships` implements
+`ScopeMembershipRepository` and uses the host-managed database session factory.
+The host owns provider configuration and managed-identity engine lifecycle.
+Existing `configure_scope_resolver(app, memberships)` remains supported.
+
+`POST /chat/stream` accepts only `message`. Authentication validates the bearer
+token before scope resolution; identity and memberships are never supplied by
+the browser. It emits validated answer chunks, clickable citation metadata,
+structured abstentions, or a pending approval reference. Approval cards do not
+execute tools or expose bound arguments. Answer chunks are emitted only after
+the workflow completes citation validation, not during unvalidated generation.
+
+The default ASGI entry point has no host providers: absent workflow or scope
+repository returns 503, never a synthetic answer or permissive scope. Configure
+audit persistence as described below so authentication failures can be recorded.
+`test_configured_app_authenticates_and_streams_without_dependency_overrides`
+exercises this composition seam with a signed test JWT, real authentication and
+scope resolution, and test-only workflow/repository/JWKS fixtures.
+
 `AuditRecorder` exposes async `auth_failure`, `approval`, and `tool_execution`
 hooks. Call approval/tool hooks from trusted API application code with the
 authenticated execution context, after the decision or execution result is known.

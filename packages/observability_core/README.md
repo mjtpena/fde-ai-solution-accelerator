@@ -141,8 +141,8 @@ metrics/evaluation reporting pipeline.
 
 Run `uv run --all-packages pytest packages/observability_core/tests` (use native
 path separators on Windows), followed by `make check` and `make eval-smoke`.
-The root scaffold's default pytest paths do not include package-local tests;
-run the targeted command explicitly. Tests verify exact parent IDs, one trace,
+The root pytest discovery includes this package's suite, so `make check` runs
+these tests. Tests verify exact parent IDs, one trace,
 GenAI metadata, concurrent isolation, W3C propagation, streaming, privacy on
 failures, batch export, managed-identity construction, and credential cleanup.
 

@@ -46,7 +46,9 @@ services:
       - -c
       - >-
         cp -a /workspace/apps/api /tmp/accelerator-api
-        && python -m pip install --no-cache-dir /tmp/accelerator-api 'uvicorn[standard]>=0.30,<1'
+        && cp -a /workspace/packages/agent_core /tmp/accelerator-agent-core
+        && cp -a /workspace/packages/security_core /tmp/accelerator-security-core
+        && python -m pip install --no-cache-dir /tmp/accelerator-agent-core /tmp/accelerator-security-core /tmp/accelerator-api 'uvicorn[standard]>=0.30,<1'
         && python -m uvicorn accelerator.api.main:app --host 0.0.0.0 --port 8000
     environment:
       API_ENVIRONMENT: ${API_ENVIRONMENT:-development}

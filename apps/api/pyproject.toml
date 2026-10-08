@@ -7,6 +7,9 @@ name = "fde-accelerator-api"
 version = "0.1.0"
 requires-python = "==3.12.*"
 dependencies = [
+    "agent-framework-foundry>=1.14,<2",
+    "azure-identity>=1.26,<2",
+    "fde-agent-core",
     "fde-security-core",
     "fastapi>=0.115,<1",
     "httpx>=0.28,<1",
@@ -16,10 +19,14 @@ dependencies = [
 ]
 
 [tool.uv.sources]
+fde-agent-core = { workspace = true }
 fde-security-core = { workspace = true }
 
 [dependency-groups]
-dev = ["asyncpg>=0.30,<1"]
+dev = [
+    "asyncpg>=0.30,<1",
+    "httpx2>=2.13,<3",
+]
 
 [tool.mypy]
 plugins = ["pydantic.mypy"]
