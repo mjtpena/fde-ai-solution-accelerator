@@ -1,0 +1,2 @@
+{"id":"q-0001","category":"factual","query":"What does the synthetic source say?","scope_id":"synthetic-scope","expected_answer":"The synthetic source states a fact.","expected_evidence_ids":["synthetic-chunk-1"],"expected_tool":null,"expected_abstain":false,"tags":["smoke"]}
+{"id":"q-0002","category":"unsupported","query":"What is not in the synthetic source?","scope_id":"synthetic-scope","expected_answer":null,"expected_evidence_ids":[],"expected_tool":null,"expected_abstain":true,"tags":["smoke"]}
