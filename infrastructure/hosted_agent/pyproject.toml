@@ -1,0 +1,25 @@
+[project]
+name = "fde-hosted-agent-runtime"
+version = "0.1.0"
+requires-python = "==3.12.*"
+dependencies = [
+    "fde-agent-core",
+    "fde-accelerator-api",
+    "agent-framework-foundry==1.14.0",
+    "azure-ai-agentserver-invocations==1.2.0",
+    "azure-ai-projects==2.7.0",
+    "azure-identity==1.26.0",
+    "httpx==0.28.1",
+    "pydantic-settings==2.11.0",
+]
+
+[tool.uv]
+package = false
+
+[tool.uv.sources]
+fde-agent-core = { path = "../../packages/agent_core" }
+fde-accelerator-api = { path = "../../apps/api" }
+
+[tool.mypy]
+strict = true
+plugins = ["pydantic.mypy"]

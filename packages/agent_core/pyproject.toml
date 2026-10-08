@@ -22,8 +22,10 @@ packages = [
     "accelerator.agent_core.approvals",
     "accelerator.agent_core.sessions",
     "accelerator.agent_core.policies",
+    "accelerator.agent_core.hosting",
 ]
 package-dir = {"accelerator.agent_core" = "."}
 
 [tool.setuptools.package-data]
 "accelerator.agent_core.workflows" = ["instructions/*.md"]
+"accelerator.agent_core" = ["py.typed"]
