@@ -19,7 +19,10 @@ dependencies = [
 fde-security-core = { workspace = true }
 
 [dependency-groups]
-dev = ["asyncpg>=0.30,<1"]
+dev = [
+    "asyncpg>=0.30,<1",
+    "httpx2>=2.13,<3",
+]
 
 [tool.mypy]
 plugins = ["pydantic.mypy"]
