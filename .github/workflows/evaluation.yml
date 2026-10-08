@@ -1,0 +1,167 @@
+name: Evaluation
+
+on:
+  pull_request:
+  workflow_run:
+    workflows: [Evaluation]
+    types: [completed]
+
+permissions:
+  contents: read
+
+jobs:
+  smoke:
+    if: github.event_name == 'pull_request'
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          persist-credentials: false
+      - uses: astral-sh/setup-uv@v10.2.0
+        with:
+          enable-cache: true
+          cache-dependency-glob: |
+            uv.lock
+            **/pyproject.toml
+      - uses: actions/setup-python@v7
+        with:
+          python-version: "3.12"
+      - run: uv sync --all-packages --frozen
+      - name: Reporting contract tests
+        run: uv run --all-packages pytest packages/evaluation_core/reporting/tests
+      - name: Deterministic smoke evaluation
+        run: make eval-smoke
+      - name: Job summary
+        if: always()
+        shell: bash
+        run: |
+          if [ -f evaluations/reports/smoke.md ]; then
+            cat evaluations/reports/smoke.md >> "$GITHUB_STEP_SUMMARY"
+          else
+            echo "Evaluation failed before a report could be generated. See job logs." >> "$GITHUB_STEP_SUMMARY"
+          fi
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: evaluation-report
+          path: evaluations/reports/
+          if-no-files-found: warn
+          retention-days: 14
+
+  # Runs the default-branch workflow, never PR code, with comment permission.
+  # This also publishes fork PR reports without giving their evaluation a write token.
+  publish:
+    if: >-
+      github.event_name == 'workflow_run' &&
+      github.event.workflow_run.event == 'pull_request'
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    permissions:
+      actions: read
+      pull-requests: write
+    # Serialize publishers per evaluated branch without canceling an
+    # in-progress comment update. SHA checks prevent stale reports replacing
+    # reports for newer commits.
+    concurrency:
+      group: evaluation-publish-${{ github.event.workflow_run.head_repository.full_name }}-${{ github.event.workflow_run.head_branch }}
+      cancel-in-progress: false
+    steps:
+      - name: Identify the evaluated PR and artifact
+        id: report
+        uses: actions/github-script@v8
+        with:
+          script: |
+            const run = context.payload.workflow_run;
+            const {owner, repo} = context.repo;
+            const candidates = await github.paginate(
+              github.rest.repos.listPullRequestsAssociatedWithCommit,
+              {owner, repo, commit_sha: run.head_sha}
+            );
+            let matches = candidates.filter(p =>
+              p.state === 'open' &&
+              p.head.sha === run.head_sha &&
+              p.head.ref === run.head_branch &&
+              p.head.repo?.full_name === run.head_repository.full_name
+            );
+            const runPrNumbers = new Set(
+              (run.pull_requests || []).map(pull => pull.number)
+            );
+            if (runPrNumbers.size > 0) {
+              matches = matches.filter(p => runPrNumbers.has(p.number));
+            }
+            if (matches.length === 0) {
+              core.notice('No open PR still matches the evaluated commit.');
+              return;
+            }
+            if (matches.length > 1) {
+              // Ambiguous: refuse to guess which PR should receive the comment.
+              core.setFailed(
+                `Commit ${run.head_sha} matches ${matches.length} open PRs ` +
+                `(${matches.map(p => p.number).join(', ')}); refusing to publish.`
+              );
+              return;
+            }
+            const pr = matches[0];
+            core.setOutput('pr', pr.number);
+            const artifacts = await github.paginate(
+              github.rest.actions.listWorkflowRunArtifacts,
+              {owner, repo, run_id: run.id}
+            );
+            core.setOutput('has_artifact', artifacts.some(a =>
+              a.name === 'evaluation-report' && !a.expired
+            ));
+      - uses: actions/download-artifact@v4
+        if: steps.report.outputs.has_artifact == 'true'
+        with:
+          name: evaluation-report
+          path: report
+          github-token: ${{ github.token }}
+          run-id: ${{ github.event.workflow_run.id }}
+      - name: Publish Markdown without executing artifact contents
+        if: steps.report.outputs.pr != ''
+        uses: actions/github-script@v8
+        env:
+          PR_NUMBER: ${{ steps.report.outputs.pr }}
+          HAS_ARTIFACT: ${{ steps.report.outputs.has_artifact }}
+        with:
+          script: |
+            const fs = require('node:fs');
+            const {owner, repo} = context.repo;
+            const run = context.payload.workflow_run;
+            const issue_number = Number(process.env.PR_NUMBER);
+            const {data: pr} = await github.rest.pulls.get({
+              owner, repo, pull_number: issue_number
+            });
+            if (pr.state !== 'open' || pr.head.sha !== run.head_sha) {
+              core.notice('PR changed while downloading the evaluation report.');
+              return;
+            }
+            const marker = '<!-- evaluation-report -->';
+            if (process.env.HAS_ARTIFACT === 'true' && fs.statSync('report/smoke.md').size > 60000) {
+              throw new Error('Oversized evaluation report');
+            }
+            const body = process.env.HAS_ARTIFACT === 'true'
+              ? fs.readFileSync('report/smoke.md', 'utf8')
+              : `${marker}\n## Evaluation smoke: ERROR\n\nNo report was generated. See workflow logs.`;
+            if (!body.startsWith(marker) || Buffer.byteLength(body, 'utf8') > 60000) {
+              throw new Error('Invalid or oversized evaluation report');
+            }
+            const content = `${body}\nWorkflow conclusion: **${run.conclusion}**. [Run details](${run.html_url})`;
+            const comments = await github.paginate(github.rest.issues.listComments, {
+              owner, repo, issue_number
+            });
+            const previous = comments.find(c =>
+              c.user?.login === 'github-actions[bot]' && c.body?.startsWith(marker)
+            );
+            if (previous) {
+              await github.rest.issues.updateComment({
+                owner, repo, comment_id: previous.id, body: content
+              });
+            } else {
+              await github.rest.issues.createComment({
+                owner, repo, issue_number, body: content
+              });
+            }
