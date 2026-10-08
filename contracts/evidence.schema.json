@@ -1,0 +1,62 @@
+{
+  "properties": {
+    "chunk_id": {
+      "title": "Chunk Id",
+      "type": "string"
+    },
+    "document_id": {
+      "title": "Document Id",
+      "type": "string"
+    },
+    "document_title": {
+      "title": "Document Title",
+      "type": "string"
+    },
+    "reranker_score": {
+      "anyOf": [
+        {
+          "type": "number"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "title": "Reranker Score"
+    },
+    "score": {
+      "title": "Score",
+      "type": "number"
+    },
+    "source_uri": {
+      "title": "Source Uri",
+      "type": "string"
+    },
+    "text": {
+      "title": "Text",
+      "type": "string"
+    },
+    "version": {
+      "anyOf": [
+        {
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "title": "Version"
+    }
+  },
+  "required": [
+    "chunk_id",
+    "document_id",
+    "document_title",
+    "version",
+    "score",
+    "reranker_score",
+    "text",
+    "source_uri"
+  ],
+  "title": "Evidence",
+  "type": "object"
+}

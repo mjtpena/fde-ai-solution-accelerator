@@ -60,5 +60,6 @@ testpaths = [
     "packages/retrieval_core/search/tests",
     "apps/api/src/accelerator/infrastructure/search/tests",
     "packages/agent_core",
+    "packages/retrieval_core/models",
     "packages/security_core/tests",
 ]
