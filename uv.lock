@@ -476,12 +476,14 @@ version = "0.1.0"
 source = { editable = "packages/agent_core" }
 dependencies = [
     { name = "agent-framework-core" },
+    { name = "fde-security-core" },
     { name = "pydantic" },
 ]
 
 [package.metadata]
 requires-dist = [
     { name = "agent-framework-core", specifier = ">=1.20,<2" },
+    { name = "fde-security-core", editable = "packages/security_core" },
     { name = "pydantic", specifier = ">=2.7,<3" },
 ]
 
