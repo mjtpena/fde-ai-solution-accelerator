@@ -62,5 +62,6 @@ testpaths = [
     "packages/agent_core",
     "packages/retrieval_core/models",
     "packages/security_core/tests",
+    "packages/security_core/redaction",
     "packages/observability_core/tests",
 ]
