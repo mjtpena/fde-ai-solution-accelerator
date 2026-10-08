@@ -98,7 +98,10 @@ quota. No local compile proves model availability in a subscription.
 
 ## Outstanding external evidence
 
-No real Azure deployment or subscription-level what-if has run as part of this
-change. Issue #34 owns authenticated CI invocation and successful artifact upload.
-The issue remains incomplete until the configured hosted what-if, private database
+A maintainer reported an authenticated local subscription-level what-if against
+the current template: 30 changes were `Create` and 9 were `Unsupported`. This is
+not hosted OIDC evidence, and the unsupported changes were not validated. No Azure
+deployment or database bootstrap/verification has run. Issue #34 owns hosted
+authenticated CI invocation and successful artifact upload. The issue remains
+incomplete until hosted what-if evidence and private database
 bootstrap/verification, real image deployment, and application smoke checks pass.
