@@ -49,4 +49,4 @@ files = [
 
 [tool.pytest.ini_options]
 asyncio_mode = "auto"
-testpaths = ["tests", "apps/api/tests"]
+testpaths = ["tests", "apps/api/tests", "packages/evaluation_core"]
