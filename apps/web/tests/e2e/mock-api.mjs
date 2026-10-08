@@ -24,7 +24,7 @@ const server = createServer(async (request, response) => {
     response.writeHead(404).end();
     return;
   }
-  if (!request.headers.authorization?.startsWith("Bearer ")) {
+  if (request.headers.authorization !== "Bearer playwright-test-access-token") {
     response.writeHead(401).end();
     return;
   }

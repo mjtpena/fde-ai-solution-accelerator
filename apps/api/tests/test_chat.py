@@ -1,11 +1,14 @@
 import asyncio
+import json
 from datetime import UTC, datetime, timedelta
 import unittest
 from unittest.mock import AsyncMock
 from uuid import UUID
 
 import httpx
+import jwt
 import pytest
+from cryptography.hazmat.primitives.asymmetric import rsa
 from fastapi.responses import StreamingResponse
 from pydantic import BaseModel, ValidationError
 
@@ -81,6 +84,27 @@ async def collect_stream(response: StreamingResponse) -> str:
 
 
 class ChatEndpointTests(unittest.TestCase):
+    def test_rejects_citation_metadata_mismatch_before_streaming(self) -> None:
+        workflow = FakeChatTurn(
+            GroundedAnswerResult(
+                status="answered",
+                answer="Answer must not be streamed.",
+                citations=("chunk-1",),
+                citation_sources=(
+                    CitationSource(
+                        chunk_id="chunk-other",
+                        document_title="Other guide",
+                        source_uri="https://docs.example/other",
+                    ),
+                ),
+                abstention=None,
+            )
+        )
+        with self.assertRaisesRegex(ValueError, "does not match validated citations"):
+            asyncio.run(
+                stream_chat(ChatRequest(message="Question"), execution_context(), workflow)
+            )
+
     def test_request_rejects_caller_supplied_scope(self) -> None:
         with self.assertRaises(ValidationError):
             ChatRequest(message="What is supported?", scope_ids=["scope-2"])
@@ -274,6 +298,91 @@ async def test_http_fails_closed_without_host_scope_repository() -> None:
     ) as client:
         response = await client.post("/chat/stream", json={"message": "Question"})
     assert response.status_code == 503
+    assert response.headers["X-Correlation-ID"]
+
+
+@pytest.mark.asyncio
+async def test_configured_app_authenticates_and_streams_without_dependency_overrides() -> None:
+    settings = make_test_settings()
+    workflow = FakeChatTurn(
+        GroundedAnswerResult(
+            status="answered",
+            answer="Configured grounded answer.",
+            citations=("chunk-1",),
+            citation_sources=(
+                CitationSource(
+                    chunk_id="chunk-1",
+                    document_title="Guide",
+                    source_uri="https://docs.example/guide",
+                ),
+            ),
+            abstention=None,
+        )
+    )
+    app = create_app(
+        settings, chat_turn=workflow, scope_repository=InMemoryMemberships()
+    )
+    private_key = rsa.generate_private_key(public_exponent=65537, key_size=2048)
+    jwk = json.loads(jwt.algorithms.RSAAlgorithm.to_jwk(private_key.public_key()))
+    jwk.update({"kid": "chat-test-key", "use": "sig", "alg": "RS256"})
+    token = jwt.encode(
+        {
+            "iss": f"https://login.microsoftonline.com/{settings.entra_tenant_id}/v2.0",
+            "aud": settings.entra_audience,
+            "sub": "subject",
+            "oid": "user-1",
+            "roles": ["Reader"],
+            "exp": int((datetime.now(UTC) + timedelta(minutes=5)).timestamp()),
+        },
+        private_key,
+        algorithm="RS256",
+        headers={"kid": "chat-test-key"},
+    )
+    async with httpx.AsyncClient(
+        transport=httpx.MockTransport(
+            lambda _: httpx.Response(200, json={"keys": [jwk]})
+        )
+    ) as identity_client:
+        app.state.http_client = identity_client
+        async with httpx.AsyncClient(
+            transport=httpx.ASGITransport(app=app), base_url="http://test"
+        ) as client:
+            response = await client.post(
+                "/chat/stream",
+                json={"message": "Question"},
+                headers={"Authorization": f"Bearer {token}"},
+            )
+
+    assert not app.dependency_overrides
+    assert response.status_code == 200
+    assert response.headers["content-type"].startswith("text/event-stream")
+    assert "Configured grounded answer." in response.text
+    assert '"chunk_id":"chunk-1"' in response.text
+    assert response.text.endswith("event: done\ndata: {}\n\n")
+    assert workflow.context is not None
+    assert workflow.context.user_id == "user-1"
+    assert workflow.context.scope_ids == frozenset({"scope-1"})
+    assert workflow.context.roles == frozenset({"Reader"})
+    assert workflow.context.correlation_id == response.headers["X-Correlation-ID"]
+
+
+@pytest.mark.asyncio
+async def test_http_fails_closed_without_host_chat_workflow() -> None:
+    app = create_app(make_test_settings())
+
+    async def principal() -> Principal:
+        return Principal(
+            subject="subject", object_id="user-1", roles=frozenset({AppRole.READER})
+        )
+
+    app.dependency_overrides[get_current_principal] = principal
+    configure_scope_resolver(app, InMemoryMemberships())
+    async with httpx.AsyncClient(
+        transport=httpx.ASGITransport(app=app), base_url="http://test"
+    ) as client:
+        response = await client.post("/chat/stream", json={"message": "Question"})
+    assert response.status_code == 503
+    assert response.json() == {"detail": "The chat workflow is not configured."}
     assert response.headers["X-Correlation-ID"]
 
 

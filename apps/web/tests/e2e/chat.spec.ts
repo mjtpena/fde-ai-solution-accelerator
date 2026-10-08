@@ -92,6 +92,10 @@ test("streams an authenticated answer with citations and an approval card", asyn
   await page.getByLabel("Message").fill("What does the guide say?");
   await page.getByRole("button", { name: "Send" }).click();
 
+  await expect(page.getByTestId("answer-text")).toHaveText("Streaming", {
+    timeout: 1_000,
+  });
+  await expect(page.getByRole("button", { name: "Generating…" })).toBeDisabled();
   await expect(page.getByTestId("answer-text")).toHaveText("Streaming answer.");
   await expect(
     page.getByRole("link", { name: "Guide (chunk-1)" }),
