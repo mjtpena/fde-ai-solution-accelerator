@@ -95,10 +95,11 @@ remaining open implementation PRs at this snapshot are:
 
 M4 PRs #51, #70, #72, #74, #76, and #79 have merged. PRs #68 and #80 are
 drafts. Remaining stacked work includes #62 based on #52, #66 based on #65,
-#69 based on #55, #77 based on #75, and #80 based on #77. PR #55 is marked
-DIRTY. PR #77's Quality check fails (its Bicep validation passes). PR #54's
-Trivy repository scan fails; its other listed checks pass. PR #75's Bicep
-validation and Quality checks pass, but its dependent #77 is not ready.
+#69 based on #55, #77 based on #75, and #80 based on #77. PRs #55, #62, and
+#65 are marked DIRTY. PR #77's Quality check fails (its Bicep validation
+passes). PR #54's Trivy repository scan fails; its other listed checks pass.
+PR #75's Bicep validation and Quality checks pass, but its dependent #77 is not
+ready.
 
 The v0.1.0 release remains **Unreleased**. No v0.1.0 tag or GitHub Release was
 found. Do not tag or publish until all DoD items are verified, deployment and
