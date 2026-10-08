@@ -6,12 +6,14 @@ from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
 from dataclasses import dataclass
 from datetime import UTC, datetime, timedelta
+from pathlib import Path
 from typing import ClassVar, cast
 from uuid import UUID, uuid4
 
 import pytest
 from pydantic import BaseModel
 from sqlalchemy.dialects import postgresql
+from sqlalchemy import text
 from sqlalchemy.engine import make_url
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker, create_async_engine
 from sqlalchemy.schema import CreateSchema, DropSchema
@@ -25,10 +27,16 @@ from accelerator.agent_core.approvals import (
     ApprovalReplayError,
     ApprovalScopeError,
     ApprovalService,
+    ApprovalStateError,
     ApprovalTool,
     canonical_args_hash,
 )
-from accelerator.agent_core.tools import EnterpriseTool, ExecutionContextProtocol, ToolRisk
+from accelerator.agent_core.tools import (
+    EnterpriseTool,
+    ExecutionContextProtocol,
+    IdempotentWriteTool,
+    ToolRisk,
+)
 from accelerator.infrastructure.approvals import (
     ApprovalBase,
     SQLAlchemyApprovalRepository,
@@ -55,7 +63,7 @@ class Result(BaseModel):
     completed: bool
 
 
-class Tool(EnterpriseTool[Arguments, Result]):
+class Tool(IdempotentWriteTool[Arguments, Result]):
     name: ClassVar[str] = "write_record"
     description: ClassVar[str] = "Write a record after approval."
     risk: ClassVar[ToolRisk] = ToolRisk.LOW_IMPACT_WRITE
@@ -63,9 +71,13 @@ class Tool(EnterpriseTool[Arguments, Result]):
 
     def __init__(self) -> None:
         self.calls = 0
+        self.execution_ids: list[UUID] = []
 
-    async def execute(self, args: Arguments, ctx: ExecutionContextProtocol) -> Result:
+    async def execute_approved(
+        self, args: Arguments, ctx: ExecutionContextProtocol, *, execution_id: UUID
+    ) -> Result:
         self.calls += 1
+        self.execution_ids.append(execution_id)
         return Result(completed=True)
 
 
@@ -308,9 +320,65 @@ async def test_expiry_at_decision_time_fails_before_any_approval_or_rejection(
     assert repository.approvals[approval.id].status == "expired"
 
 
-@pytest.mark.parametrize("failure", ["update", "audit", "commit"])
-async def test_post_invocation_persistence_failure_can_repeat_external_write(
-    clock: Clock, tool: Tool, args: Arguments, context: Context, failure: str
+class DurableTool(Tool):
+    """Test downstream boundary: effect and result share one durable transaction."""
+
+    def __init__(self, database: Path) -> None:
+        super().__init__()
+        self.database = database
+
+    async def execute_approved(
+        self, args: Arguments, ctx: ExecutionContextProtocol, *, execution_id: UUID
+    ) -> Result:
+        self.calls += 1
+        self.execution_ids.append(execution_id)
+        assert len(ctx.scope_ids) == 1
+        scope = next(iter(ctx.scope_ids))
+        engine = create_async_engine(f"sqlite+aiosqlite:///{self.database.as_posix()}")
+        try:
+            async with engine.begin() as connection:
+                await connection.execute(text("BEGIN IMMEDIATE"))
+                await connection.execute(
+                    text(
+                        "CREATE TABLE IF NOT EXISTS writes ("
+                        "execution_id TEXT NOT NULL, scope TEXT NOT NULL, "
+                        "args_hash TEXT NOT NULL, amount INTEGER NOT NULL, result TEXT NOT NULL, "
+                        "PRIMARY KEY (execution_id, scope))"
+                    )
+                )
+                stored = (
+                    await connection.execute(
+                        text(
+                            "SELECT args_hash, result FROM writes "
+                            "WHERE execution_id = :id AND scope = :scope"
+                        ),
+                        {"id": str(execution_id), "scope": scope},
+                    )
+                ).one_or_none()
+                if stored is not None:
+                    assert stored.args_hash == canonical_args_hash(args)
+                    return Result.model_validate_json(stored.result)
+                result = Result(completed=True)
+                await connection.execute(
+                    text(
+                        "INSERT INTO writes VALUES (:id, :scope, :hash, :amount, :result)"
+                    ),
+                    {
+                        "id": str(execution_id),
+                        "scope": scope,
+                        "hash": canonical_args_hash(args),
+                        "amount": args.amount,
+                        "result": result.model_dump_json(),
+                    },
+                )
+                return result
+        finally:
+            await engine.dispose()
+
+
+@pytest.mark.parametrize("failure", ["update", "audit", "commit", "response"])
+async def test_recovery_reuses_durable_execution_key_without_repeating_external_write(
+    clock: Clock, args: Arguments, context: Context, failure: str, tmp_path: Path
 ) -> None:
     class FailingRepository(InMemoryApprovalRepository):
         fail = False
@@ -332,6 +400,17 @@ async def test_post_invocation_persistence_failure_can_repeat_external_write(
                 raise RuntimeError("injected audit failure")
             await super().add_audit_event(event)
 
+    class LostResponseTool(DurableTool):
+        async def execute_approved(
+            self, args: Arguments, ctx: ExecutionContextProtocol, *, execution_id: UUID
+        ) -> Result:
+            result = await super().execute_approved(args, ctx, execution_id=execution_id)
+            if failure == "response":
+                raise RuntimeError("injected response failure")
+            return result
+
+    database = tmp_path / "downstream.db"
+    tool = LostResponseTool(database)
     repository = FailingRepository()
     service = ApprovalService[Arguments, Result](repository, clock=clock)
     approval = await _approved(service, tool=tool, args=args, context=context)
@@ -344,8 +423,41 @@ async def test_post_invocation_persistence_failure_can_repeat_external_write(
     assert repository.approvals[approval.id].status == "approved"
     assert [event.transition for event in repository.audit_events] == ["pending", "approved"]
     repository.fail = False
-    await service.execute(approval_id=approval.id, tool=tool, args=args, ctx=context)
-    assert tool.calls == 2
+    recovered_service = ApprovalService[Arguments, Result](repository, clock=clock)
+    recovered_tool = DurableTool(database)
+    with pytest.raises(ApprovalMismatchError):
+        await recovered_service.execute(
+            approval_id=approval.id,
+            tool=recovered_tool,
+            args=Arguments(amount=args.amount + 1, note=args.note),
+            ctx=context,
+        )
+    with pytest.raises(ApprovalScopeError):
+        await recovered_service.execute(
+            approval_id=approval.id,
+            tool=recovered_tool,
+            args=args,
+            ctx=Context(scope_ids=frozenset({"scope-2"})),
+        )
+    assert recovered_tool.calls == 0
+    result = await recovered_service.execute(
+        approval_id=approval.id, tool=recovered_tool, args=args, ctx=context
+    )
+    assert result == Result(completed=True)
+    assert tool.execution_ids == recovered_tool.execution_ids == [approval.id]
+    assert repository.approvals[approval.id].status == "executed"
+    engine = create_async_engine(f"sqlite+aiosqlite:///{database.as_posix()}")
+    try:
+        async with engine.connect() as connection:
+            row = (await connection.execute(text("SELECT COUNT(*), SUM(amount) FROM writes"))).one()
+            assert tuple(row) == (1, args.amount)
+    finally:
+        await engine.dispose()
+    with pytest.raises(ApprovalReplayError):
+        await recovered_service.execute(
+            approval_id=approval.id, tool=recovered_tool, args=args, ctx=context
+        )
+    assert recovered_tool.calls == 1
     assert repository.approvals[approval.id].status == "executed"
 
 
@@ -435,6 +547,34 @@ async def test_approval_scope_cannot_be_widened_or_supplied_by_args(
         )
     assert tool.calls == 0
 
+    with pytest.raises(ApprovalScopeError):
+        await service.execute(
+            approval_id=approval.id,
+            tool=tool,
+            args=args,
+            ctx=Context(scope_ids=frozenset({"scope-1", "scope-2"})),
+        )
+    assert tool.calls == 0
+
+
+async def test_plain_write_tool_cannot_bypass_idempotent_boundary(
+    service: ApprovalService[Arguments, Result], args: Arguments, context: Context, tool: Tool
+) -> None:
+    class UnsafeTool(EnterpriseTool[Arguments, Result]):
+        name = tool.name
+        description = tool.description
+        risk = tool.risk
+        args_model = Arguments
+
+        async def execute(self, args: Arguments, ctx: ExecutionContextProtocol) -> Result:
+            pytest.fail("non-idempotent tool must not execute")
+
+    approval = await _approved(service, tool=tool, args=args, context=context)
+    with pytest.raises(ApprovalStateError, match="IdempotentWriteTool"):
+        await service.execute(
+            approval_id=approval.id, tool=UnsafeTool(), args=args, ctx=context
+        )
+
 
 async def test_canonical_hash_is_stable_and_exposed() -> None:
     assert canonical_args_hash(Arguments(amount=1, note="a")) == canonical_args_hash(
@@ -495,8 +635,8 @@ async def test_get_for_update_uses_postgresql_row_lock() -> None:
 # happens inside one ``repository.transaction()``), using an in-memory
 # repository whose ``asyncio.Lock`` only serializes callers *within this one
 # process*. That is not evidence that the real adapter is safe across two
-# independent database connections/sessions. This proves serialization, not
-# crash-safe exactly-once external effects. The test below exercises the concrete
+# independent database connections/sessions. Downstream idempotency is tested
+# separately above. The test below exercises the concrete
 # ``SQLAlchemyApprovalRepository`` against a real PostgreSQL server using two
 # separate engines/sessions (i.e. two separate backend connections), and
 # measures that the loser's ``SELECT ... FOR UPDATE`` genuinely blocks at the
@@ -561,9 +701,11 @@ class SlowTool(Tool):
     by asyncio task scheduling.
     """
 
-    async def execute(self, args: Arguments, ctx: ExecutionContextProtocol) -> Result:
+    async def execute_approved(
+        self, args: Arguments, ctx: ExecutionContextProtocol, *, execution_id: UUID
+    ) -> Result:
         await asyncio.sleep(LOCK_HOLD_SECONDS)
-        return await super().execute(args, ctx)
+        return await super().execute_approved(args, ctx, execution_id=execution_id)
 
 
 @requires_postgres

@@ -7,7 +7,7 @@ from uuid import UUID, uuid4
 
 from pydantic import BaseModel
 
-from ..tools import EnterpriseTool, ExecutionContextProtocol
+from ..tools import EnterpriseTool, ExecutionContextProtocol, IdempotentWriteTool
 
 from .models import Approval, ApprovalAuditEvent
 
@@ -59,13 +59,13 @@ class ApprovalRepository(Protocol):
 
 
 class ApprovalService(Generic[TArgs, TResult]):
-    """Protect committed executions against replay, not external writes against crashes.
+    """Serialize approvals and supply stable keys for crash-safe write recovery.
 
-    The row lock serializes callers and the executed state/audit commit together.
-    A tool's external side effect is not part of that transaction: persistence
-    failure after invocation leaves an approved record that can invoke it again.
-    Callers must not automatically retry an uncertain write unless its boundary
-    supplies durable idempotency or shares the approval's database transaction.
+    The persisted approval UUID is reused after any invocation/commit failure.
+    Exactly-once effects require the IdempotentWriteTool implementation to
+    durably deduplicate that key and trusted scope atomically with its effect
+    and result. A row lock alone cannot guarantee external-effect atomicity.
+    Recovery revalidates binding, policy and expiry; it never bypasses approval.
     """
 
     def __init__(
@@ -156,7 +156,9 @@ class ApprovalService(Generic[TArgs, TResult]):
                 self._require_approved(approval)
                 if validate_approval is not None:
                     validate_approval(approval)
-                result = await tool.execute(args, ctx)
+                if not isinstance(tool, IdempotentWriteTool):
+                    raise ApprovalStateError("approved writes require an IdempotentWriteTool")
+                result = await tool.execute_approved(args, ctx, execution_id=approval.id)
                 executed = approval.model_copy(
                     update={"status": "executed", "decided_by": approval.decided_by}
                 )
@@ -207,6 +209,7 @@ class ApprovalService(Generic[TArgs, TResult]):
         self, approval: Approval, tool_name: str, args: TArgs, ctx: ApprovalContext
     ) -> None:
         self._scope_matches(approval, ctx)
+        self._single_scope(ctx)
         if approval.tool_name != tool_name or approval.args_hash != canonical_args_hash(args):
             raise ApprovalMismatchError("tool or arguments do not match the approval")
 
