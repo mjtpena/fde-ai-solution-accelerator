@@ -25,5 +25,7 @@ made safe by this policy.
 Run the focused tests with:
 
 ```powershell
-uv run --all-packages pytest packages\retrieval_core\sufficiency\tests
+uv run --all-packages pytest tests\test_retrieval_sufficiency.py
 ```
+
+These tests are also collected by the standard `make check` gate.

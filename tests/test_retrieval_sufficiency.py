@@ -2,7 +2,7 @@ from dataclasses import dataclass
 
 import pytest
 
-from ..policy import (
+from accelerator.retrieval_core.sufficiency import (
     AbstentionResponse,
     SufficiencyPolicy,
     build_abstention_response,
