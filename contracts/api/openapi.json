@@ -75,6 +75,64 @@
         ]
       }
     },
+    "/diagnostics/retrieval/{correlation_id}": {
+      "get": {
+        "tags": [
+          "retrieval diagnostics"
+        ],
+        "summary": "Get Retrieval Diagnostics",
+        "operationId": "get_retrieval_diagnostics_diagnostics_retrieval__correlation_id__get",
+        "security": [
+          {
+            "HTTPBearer": []
+          }
+        ],
+        "parameters": [
+          {
+            "name": "correlation_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 128,
+              "title": "Correlation Id"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/RetrievalDiagnosticsResponse"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Missing or invalid bearer token."
+          },
+          "403": {
+            "description": "Insufficient app role."
+          },
+          "503": {
+            "description": "Identity, scope, or audit persistence is unavailable."
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
     "/audit-events": {
       "get": {
         "tags": [
@@ -160,6 +218,181 @@
             }
           }
         }
+      }
+    },
+    "/chat/stream": {
+      "post": {
+        "tags": [
+          "chat"
+        ],
+        "summary": "Stream Chat",
+        "operationId": "stream_chat_chat_stream_post",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/ChatRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "Server-sent events. Each frame has an event name and JSON data. Answered turns emit token frames followed by citations and done; insufficient evidence emits abstention and done; policy handoffs emit approval and done.",
+            "content": {
+              "text/event-stream": {
+                "schema": {
+                  "type": "string"
+                },
+                "x-sse-events": {
+                  "token": {
+                    "properties": {
+                      "text": {
+                        "title": "Text",
+                        "type": "string"
+                      }
+                    },
+                    "required": [
+                      "text"
+                    ],
+                    "title": "TokenEvent",
+                    "type": "object"
+                  },
+                  "citations": {
+                    "$defs": {
+                      "CitationItem": {
+                        "properties": {
+                          "chunk_id": {
+                            "title": "Chunk Id",
+                            "type": "string"
+                          },
+                          "document_title": {
+                            "title": "Document Title",
+                            "type": "string"
+                          },
+                          "source_uri": {
+                            "title": "Source Uri",
+                            "type": "string"
+                          }
+                        },
+                        "required": [
+                          "chunk_id",
+                          "document_title",
+                          "source_uri"
+                        ],
+                        "title": "CitationItem",
+                        "type": "object"
+                      }
+                    },
+                    "properties": {
+                      "citations": {
+                        "items": {
+                          "$ref": "#/$defs/CitationItem"
+                        },
+                        "title": "Citations",
+                        "type": "array"
+                      }
+                    },
+                    "required": [
+                      "citations"
+                    ],
+                    "title": "CitationsEvent",
+                    "type": "object"
+                  },
+                  "approval": {
+                    "$defs": {
+                      "ApprovalCard": {
+                        "properties": {
+                          "approval_id": {
+                            "title": "Approval Id",
+                            "type": "string"
+                          },
+                          "tool_name": {
+                            "title": "Tool Name",
+                            "type": "string"
+                          },
+                          "status": {
+                            "const": "pending",
+                            "default": "pending",
+                            "title": "Status",
+                            "type": "string"
+                          }
+                        },
+                        "required": [
+                          "approval_id",
+                          "tool_name"
+                        ],
+                        "title": "ApprovalCard",
+                        "type": "object"
+                      }
+                    },
+                    "properties": {
+                      "approval": {
+                        "$ref": "#/$defs/ApprovalCard"
+                      }
+                    },
+                    "required": [
+                      "approval"
+                    ],
+                    "title": "ApprovalEvent",
+                    "type": "object"
+                  },
+                  "abstention": {
+                    "properties": {
+                      "reason": {
+                        "title": "Reason",
+                        "type": "string"
+                      },
+                      "evidence_ids": {
+                        "items": {
+                          "type": "string"
+                        },
+                        "title": "Evidence Ids",
+                        "type": "array"
+                      }
+                    },
+                    "required": [
+                      "reason",
+                      "evidence_ids"
+                    ],
+                    "title": "AbstentionEvent",
+                    "type": "object"
+                  },
+                  "done": {
+                    "properties": {},
+                    "title": "DoneEvent",
+                    "type": "object"
+                  }
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Missing or invalid bearer token."
+          },
+          "403": {
+            "description": "Insufficient app role."
+          },
+          "503": {
+            "description": "The chat workflow is not configured."
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "HTTPBearer": []
+          }
+        ]
       }
     }
   },
@@ -258,6 +491,21 @@
         ],
         "title": "AuditPage"
       },
+      "ChatRequest": {
+        "properties": {
+          "message": {
+            "type": "string",
+            "minLength": 1,
+            "title": "Message"
+          }
+        },
+        "additionalProperties": false,
+        "type": "object",
+        "required": [
+          "message"
+        ],
+        "title": "ChatRequest"
+      },
       "EventOutcome": {
         "type": "string",
         "enum": [
@@ -306,6 +554,88 @@
           "status"
         ],
         "title": "HealthResponse"
+      },
+      "RetrievalDiagnosticResult": {
+        "properties": {
+          "chunk_id": {
+            "type": "string",
+            "title": "Chunk Id"
+          },
+          "document_id": {
+            "type": "string",
+            "title": "Document Id"
+          },
+          "document_title": {
+            "type": "string",
+            "title": "Document Title"
+          },
+          "score": {
+            "type": "number",
+            "title": "Score"
+          },
+          "reranker_score": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Reranker Score"
+          },
+          "text": {
+            "type": "string",
+            "title": "Text"
+          },
+          "source_uri": {
+            "type": "string",
+            "title": "Source Uri"
+          }
+        },
+        "type": "object",
+        "required": [
+          "chunk_id",
+          "document_id",
+          "document_title",
+          "score",
+          "reranker_score",
+          "text",
+          "source_uri"
+        ],
+        "title": "RetrievalDiagnosticResult"
+      },
+      "RetrievalDiagnosticsResponse": {
+        "properties": {
+          "correlation_id": {
+            "type": "string",
+            "title": "Correlation Id"
+          },
+          "query": {
+            "type": "string",
+            "title": "Query"
+          },
+          "filters": {
+            "additionalProperties": true,
+            "type": "object",
+            "title": "Filters"
+          },
+          "results": {
+            "items": {
+              "$ref": "#/components/schemas/RetrievalDiagnosticResult"
+            },
+            "type": "array",
+            "title": "Results"
+          }
+        },
+        "type": "object",
+        "required": [
+          "correlation_id",
+          "query",
+          "filters",
+          "results"
+        ],
+        "title": "RetrievalDiagnosticsResponse"
       },
       "ValidationError": {
         "properties": {

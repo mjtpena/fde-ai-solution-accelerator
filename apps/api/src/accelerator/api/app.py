@@ -6,6 +6,7 @@ from fastapi import Depends, FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
 from accelerator.api.audit import AuthFailureAuditMiddleware, router as audit_router
+from accelerator.api.chat import ChatTurnPort, router as chat_router
 from accelerator.api.cost_guard import (
     ContextDependency,
     create_cost_guard_dependency,
@@ -21,7 +22,11 @@ from accelerator.configuration.settings import Settings
 from accelerator.domain.audit import AuditRepository
 from accelerator.identity.authentication import AppRole, require_any_role
 from accelerator.identity.jwt_validator import EntraTokenValidator
-from accelerator.identity.scope_resolver import install_scope_boundary
+from accelerator.identity.scope_resolver import (
+    configure_scope_resolver,
+    install_scope_boundary,
+)
+from accelerator.security_core.authorisation.memberships import ScopeMembershipRepository
 from accelerator.security_core.cost_guard import RateLimiter, TokenBudgetExceeded
 
 
@@ -39,6 +44,8 @@ def create_app(
     audit_repository: AuditRepository | None = None,
     get_execution_context: ContextDependency | None = None,
     rate_limiter: RateLimiter | None = None,
+    chat_turn: ChatTurnPort | None = None,
+    scope_repository: ScopeMembershipRepository | None = None,
 ) -> FastAPI:
     app = FastAPI(
         title="FDE AI Solution Accelerator API",
@@ -79,5 +86,10 @@ def create_app(
     app.include_router(health_router)
     app.include_router(retrieval_diagnostics_router)
     app.include_router(audit_router)
+    if chat_turn is not None:
+        app.state.chat_turn = chat_turn
+    if scope_repository is not None:
+        configure_scope_resolver(app, scope_repository)
+    app.include_router(chat_router)
     install_scope_boundary(app)
     return app
