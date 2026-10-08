@@ -23,6 +23,11 @@ jobs:
       - name: Install Bicep
         run: az bicep install
 
+      - name: Set up Python
+        uses: actions/setup-python@v7
+        with:
+          python-version: "3.12"
+
       - name: Lint and build all Bicep files
         shell: bash
         run: |
@@ -38,3 +43,6 @@ jobs:
             echo "Building ${file}"
             az bicep build --file "${file}" --stdout > /dev/null
           done
+
+      - name: Test identity and RBAC contracts
+        run: python infrastructure/tests/test_identity_rbac.py
