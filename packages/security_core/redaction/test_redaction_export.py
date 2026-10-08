@@ -2,18 +2,13 @@ from importlib import import_module
 from unittest.mock import MagicMock
 from uuid import uuid4
 
-import pytest
-
 from accelerator.security_core.redaction import redact_attributes, redact_sensitive_data
 
 REDACTED = "[" + "REDACTED" + "]"
 
 
 def test_redaction_hook_removes_sensitive_fixtures_from_exported_spans() -> None:
-    try:
-        telemetry = import_module("accelerator.observability_core").Telemetry
-    except AttributeError:
-        pytest.skip("The exported-span sanitizer hook requires issue #26's observability package")
+    telemetry = import_module("accelerator.observability_core").Telemetry
 
     from opentelemetry.sdk.trace.export.in_memory_span_exporter import InMemorySpanExporter
     from opentelemetry.sdk.trace.sampling import ALWAYS_ON
