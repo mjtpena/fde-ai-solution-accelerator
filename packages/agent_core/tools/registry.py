@@ -5,7 +5,7 @@ from typing import Any
 
 from pydantic import AliasChoices, AliasPath, BaseModel
 
-from .base import EnterpriseTool, ToolRisk
+from .base import EnterpriseTool, IdempotentWriteTool, ToolRisk
 
 _RESERVED_ARGUMENT_FIELDS = frozenset(
     {"scope_id", "scope_ids", "project_id", "project_ids"}
@@ -52,6 +52,10 @@ class ToolRegistry:
             raise ValueError("Tools must declare a ToolRisk")
         if tool.risk is ToolRisk.PROHIBITED:
             raise ValueError("PROHIBITED tools cannot be registered")
+        if tool.risk in {
+            ToolRisk.LOW_IMPACT_WRITE, ToolRisk.HIGH_IMPACT_WRITE, ToolRisk.PRIVILEGED
+        } and not isinstance(tool, IdempotentWriteTool):
+            raise ValueError("Write and privileged tools must implement IdempotentWriteTool")
         if not isinstance(getattr(tool, "name", None), str) or not tool.name.strip():
             raise ValueError("Tools must declare a non-empty name")
         if (

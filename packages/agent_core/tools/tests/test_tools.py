@@ -1,10 +1,13 @@
 from datetime import UTC, datetime
 from typing import ClassVar
+from uuid import UUID, uuid4
 
 import pytest
 from pydantic import AliasChoices, AliasPath, BaseModel, ConfigDict, Field, ValidationError
 
-from .. import EnterpriseTool, ExecutionContextProtocol, ToolRegistry, ToolRisk
+from .. import (
+    EnterpriseTool, ExecutionContextProtocol, IdempotentWriteTool, ToolRegistry, ToolRisk
+)
 
 
 class Args(BaseModel):
@@ -58,6 +61,22 @@ class OtherTool(EnterpriseTool[OtherArgs, OtherResult]):
         return OtherResult(count=args.count)
 
 
+class WriteTool(IdempotentWriteTool[Args, Result]):
+    name = "write"
+    description = "A test fixture demonstrating the approved execution seam."
+    risk = ToolRisk.LOW_IMPACT_WRITE
+    args_model = Args
+
+    def __init__(self) -> None:
+        self.execution_ids: list[UUID] = []
+
+    async def execute_approved(
+        self, args: Args, ctx: ExecutionContextProtocol, *, execution_id: UUID
+    ) -> Result:
+        self.execution_ids.append(execution_id)
+        return Result(query=args.query, scope_ids=ctx.scope_ids)
+
+
 def test_enterprise_tool_requires_an_execute_implementation() -> None:
     class AbstractTool(EnterpriseTool[Args, Result]):
         pass
@@ -100,16 +119,68 @@ def test_registry_discovers_heterogeneous_tools_without_executing_them() -> None
 
 @pytest.mark.parametrize("risk", [risk for risk in ToolRisk if risk is not ToolRisk.PROHIBITED])
 def test_registration_preserves_risk_without_granting_execution(risk: ToolRisk) -> None:
-    class ClassifiedTool(SearchTool):
-        pass
-
-    ClassifiedTool.risk = risk
     registry = ToolRegistry()
-    tool = ClassifiedTool()
+    tool: EnterpriseTool[Args, Result]
+    if risk is ToolRisk.READ_ONLY:
+        tool = SearchTool()
+    else:
+        class ClassifiedWriteTool(WriteTool):
+            pass
+
+        ClassifiedWriteTool.risk = risk
+        tool = ClassifiedWriteTool()
     registry.register(tool)
     assert registry.get(tool.name).risk is risk
-    assert tool.calls == 0
+    if isinstance(tool, WriteTool):
+        assert tool.execution_ids == []
     assert not hasattr(registry, "execute")
+
+
+@pytest.mark.parametrize(
+    "risk", [ToolRisk.LOW_IMPACT_WRITE, ToolRisk.HIGH_IMPACT_WRITE, ToolRisk.PRIVILEGED]
+)
+def test_writes_without_idempotent_capability_cannot_register(risk: ToolRisk) -> None:
+    class UnsafeWriteTool(SearchTool):
+        pass
+
+    UnsafeWriteTool.risk = risk
+    registry = ToolRegistry()
+    with pytest.raises(ValueError, match="IdempotentWriteTool"):
+        registry.register(UnsafeWriteTool())
+    assert registry.list_tools() == ()
+
+
+async def test_write_cannot_use_the_unapproved_execution_path() -> None:
+    tool = WriteTool()
+    with pytest.raises(PermissionError, match="approved execution"):
+        await tool.execute(Args(query="change"), ServerContext())
+    assert tool.execution_ids == []
+
+
+async def test_write_receives_the_same_approval_execution_id_on_retry() -> None:
+    tool = WriteTool()
+    execution_id = uuid4()
+    args = Args(query="change")
+    ctx = ServerContext()
+    await tool.execute_approved(args, ctx, execution_id=execution_id)
+    await tool.execute_approved(args, ctx, execution_id=execution_id)
+    assert tool.execution_ids == [execution_id, execution_id]
+
+
+def test_write_capability_requires_an_approved_execution_implementation() -> None:
+    class IncompleteWriteTool(IdempotentWriteTool[Args, Result]):
+        pass
+
+    with pytest.raises(TypeError, match="abstract"):
+        IncompleteWriteTool()  # type: ignore[abstract]
+
+
+def test_prohibited_idempotent_write_still_cannot_register() -> None:
+    class ProhibitedWriteTool(WriteTool):
+        risk = ToolRisk.PROHIBITED
+
+    with pytest.raises(ValueError, match="PROHIBITED"):
+        ToolRegistry().register(ProhibitedWriteTool())
 
 
 def test_policy_rejects_prohibited_tool_without_changing_registry() -> None:

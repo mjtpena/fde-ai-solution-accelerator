@@ -3,7 +3,8 @@
 from abc import ABC, abstractmethod
 from datetime import datetime
 from enum import StrEnum
-from typing import ClassVar, Generic, Protocol, TypeVar
+from typing import ClassVar, Generic, Protocol, TypeVar, final
+from uuid import UUID
 
 from pydantic import BaseModel
 
@@ -62,4 +63,31 @@ class EnterpriseTool(ABC, Generic[TArgs, TResult]):
     @abstractmethod
     async def execute(self, args: TArgs, ctx: ExecutionContextProtocol) -> TResult:
         """Execute only after the policy layer authorizes this invocation."""
+        ...
+
+
+class IdempotentWriteTool(EnterpriseTool[TArgs, TResult]):
+    """Capability required for write/privileged tools.
+
+    Only the approval executor may call execute_approved after validating an
+    args-bound approval. execution_id is the approval's stable UUID, not model
+    input or a new UUID per retry. Possession of a UUID does not grant approval.
+
+    Implementations must durably deduplicate that key together with trusted
+    scope at the side-effect boundary: atomically commit the effect and its
+    stored result, then return that result on retries. For remote effects, use
+    the downstream service's durable idempotency facility. If neither is
+    available, the write cannot satisfy this contract and must not register.
+    Row locking an approval alone does not make an external write exactly-once.
+    """
+
+    @final
+    async def execute(self, args: TArgs, ctx: ExecutionContextProtocol) -> TResult:
+        raise PermissionError("Write tools require approved execution with a stable execution_id")
+
+    @abstractmethod
+    async def execute_approved(
+        self, args: TArgs, ctx: ExecutionContextProtocol, *, execution_id: UUID
+    ) -> TResult:
+        """Execute with durable effect/result deduplication of the approval UUID."""
         ...
