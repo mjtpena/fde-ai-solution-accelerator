@@ -4,6 +4,7 @@ from .foundry import (
     FoundryEvaluationMetrics,
     FoundryEvaluatorAdapters,
     FoundryEvaluatorFactories,
+    MetricName,
 )
 from .settings import FoundryEvaluatorSettings
 
@@ -12,4 +13,5 @@ __all__ = [
     "FoundryEvaluatorAdapters",
     "FoundryEvaluatorFactories",
     "FoundryEvaluatorSettings",
+    "MetricName",
 ]

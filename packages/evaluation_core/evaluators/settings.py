@@ -10,6 +10,7 @@ class FoundryEvaluatorSettings(BaseSettings):
     model_config = SettingsConfigDict(
         env_prefix="EVALUATION_JUDGE_",
         extra="ignore",
+        str_strip_whitespace=True,
     )
 
     azure_endpoint: HttpUrl

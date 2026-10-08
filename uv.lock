@@ -569,6 +569,8 @@ source = { editable = "packages/evaluation_core" }
 dependencies = [
     { name = "azure-ai-evaluation" },
     { name = "azure-identity" },
+    { name = "fde-agent-core" },
+    { name = "fde-security-core" },
     { name = "pydantic" },
     { name = "pydantic-settings" },
 ]
@@ -577,6 +579,8 @@ dependencies = [
 requires-dist = [
     { name = "azure-ai-evaluation", specifier = ">=1,<2" },
     { name = "azure-identity", specifier = ">=1,<2" },
+    { name = "fde-agent-core", editable = "packages/agent_core" },
+    { name = "fde-security-core", editable = "packages/security_core" },
     { name = "pydantic", specifier = ">=2.7,<3" },
     { name = "pydantic-settings", specifier = ">=2.7,<3" },
 ]
@@ -596,14 +600,14 @@ name = "fde-retrieval-core"
 version = "0.1.0"
 source = { editable = "packages/retrieval_core" }
 dependencies = [
-    { name = "pypdf" },
     { name = "pydantic" },
+    { name = "pypdf" },
 ]
 
 [package.metadata]
 requires-dist = [
-    { name = "pypdf", specifier = ">=5.0,<7" },
     { name = "pydantic", specifier = ">=2.7,<3" },
+    { name = "pypdf", specifier = ">=5.0,<7" },
 ]
 
 [[package]]

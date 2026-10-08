@@ -5,7 +5,7 @@ from __future__ import annotations
 import math
 from collections.abc import Callable, Mapping
 from dataclasses import dataclass, field
-from typing import Protocol, TypedDict, cast
+from typing import Literal, Protocol, TypedDict, cast
 
 from azure.core.credentials import TokenCredential
 
@@ -30,6 +30,8 @@ class _CloseableCredential(TokenCredential, Protocol):
 
 
 EvaluatorFactory = Callable[..., _SdkEvaluator]
+
+MetricName = Literal["groundedness", "relevance", "retrieval", "completeness"]
 
 
 class FoundryEvaluatorFactories(TypedDict):
@@ -134,7 +136,26 @@ class FoundryEvaluatorAdapters:
         The caller should invoke this method only for rows with an expected
         answer, because completeness is not defined without one.
         """
+        scores = self.evaluate_available(
+            query=query, response=response, context=context, expected_answer=expected_answer
+        )
         return {
+            "groundedness": scores["groundedness"],
+            "relevance": scores["relevance"],
+            "retrieval": scores["retrieval"],
+            "completeness": scores["completeness"],
+        }
+
+    def evaluate_available(
+        self,
+        *,
+        query: str,
+        response: str,
+        context: str,
+        expected_answer: str | None,
+    ) -> dict[MetricName, float]:
+        """Omit completeness when the dataset supplies no reference answer."""
+        scores: dict[MetricName, float] = {
             "groundedness": _score(
                 self._groundedness(
                     query=query,
@@ -157,14 +178,16 @@ class FoundryEvaluatorAdapters:
                 ),
                 ("retrieval",),
             ),
-            "completeness": _score(
+        }
+        if expected_answer is not None:
+            scores["completeness"] = _score(
                 self._completeness(
                     response=response,
                     ground_truth=expected_answer,
                 ),
                 ("response_completeness", "completeness"),
-            ),
-        }
+            )
+        return scores
 
     def close(self) -> None:
         """Close the credential only when this adapter created it."""

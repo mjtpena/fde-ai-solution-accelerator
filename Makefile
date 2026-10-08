@@ -1,4 +1,4 @@
-.PHONY: setup up check eval-smoke
+.PHONY: setup up check eval-smoke eval-full
 
 setup:
 	uv sync --all-packages --frozen
@@ -16,6 +16,9 @@ check:
 
 eval-smoke:
 	@echo "eval-smoke: not implemented until M5 (issue 30)"
+
+eval-full:
+	uv run --all-packages python -m accelerator.evaluation_core.evaluators
 
 # BEGIN PROJECT GENERATOR
 # Usage: make new-project NAME=my-solution DISPLAY="My Solution" [DEST=absolute-path]

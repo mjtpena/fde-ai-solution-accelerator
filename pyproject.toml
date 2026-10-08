@@ -57,6 +57,7 @@ testpaths = [
     "tests",
     "apps/api/tests",
     "packages/evaluation_core/datasets/tests",
+    "packages/evaluation_core/evaluators/tests",
     "packages/evaluation_core/reporting/tests",
     "packages/retrieval_core/search/tests",
     "apps/api/src/accelerator/infrastructure/search/tests",

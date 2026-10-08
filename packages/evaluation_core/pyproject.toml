@@ -9,9 +9,15 @@ requires-python = "==3.12.*"
 dependencies = [
     "azure-ai-evaluation>=1,<2",
     "azure-identity>=1,<2",
+    "fde-agent-core>=0.1,<1",
+    "fde-security-core>=0.1,<1",
     "pydantic>=2.7,<3",
     "pydantic-settings>=2.7,<3",
 ]
+
+[tool.uv.sources]
+fde-agent-core = { workspace = true }
+fde-security-core = { workspace = true }
 
 [tool.setuptools]
 packages = [
