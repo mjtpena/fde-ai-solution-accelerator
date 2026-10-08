@@ -9,9 +9,12 @@ from accelerator.agent_core.hosting.contracts import (
 )
 
 
+OFFLINE_AUTHORIZATION = 'Bearer offline-container-test'
+
+
 class OfflineApplication:
     async def invoke(self, query: str, authorization: str | None) -> InvocationResult:
-        if authorization != "Bearer offline-container-test":
+        if authorization != OFFLINE_AUTHORIZATION:
             raise InvocationUnauthorized()
         return InvocationResult(
             status="abstained",
@@ -28,7 +31,7 @@ class OfflineContext:
 
 class OfflineResolver:
     async def resolve(self, authorization: str | None) -> OfflineContext:
-        if authorization != "Bearer offline-container-test":
+        if authorization != OFFLINE_AUTHORIZATION:
             raise InvocationUnauthorized()
         return OfflineContext()
 

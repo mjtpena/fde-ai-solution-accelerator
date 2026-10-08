@@ -25,6 +25,7 @@ from infrastructure.hosted_agent.configuration import DeploymentSettings, Runtim
 from infrastructure.hosted_agent import production
 from infrastructure.hosted_agent.server import MAX_REQUEST_BYTES, create_host, load_application
 from infrastructure.hosted_agent.service import HostedVersion, deploy, smoke
+from infrastructure.hosted_agent.tests.container_fixture import OFFLINE_AUTHORIZATION
 
 
 def configuration() -> DeploymentSettings:
@@ -208,6 +209,43 @@ def test_example_runtime_factory_is_included_in_installed_host_package(
     assert isinstance(application, WorkflowHostedApplication)
 
 
+@pytest.mark.asyncio
+async def test_packaged_offline_fixture_completes_invocation_http_flow(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setenv(
+        "HOSTED_CONTEXT_RESOLVER_FACTORY",
+        "infrastructure.hosted_agent.tests.container_fixture:create_resolver",
+    )
+    monkeypatch.setenv(
+        "HOSTED_GROUNDED_WORKFLOW_FACTORY",
+        "infrastructure.hosted_agent.tests.container_fixture:create_workflow",
+    )
+    runtime = RuntimeSettings()
+    application = load_application(runtime)
+
+    async with httpx.AsyncClient(
+        transport=httpx.ASGITransport(app=create_host(application)), base_url="http://test"
+    ) as http:
+        readiness = await http.get("/readiness")
+        response = await http.post(
+            "/invocations",
+            json={"query": "Offline smoke question"},
+            headers={"Authorization": OFFLINE_AUTHORIZATION},
+        )
+
+    assert readiness.status_code == 200
+    assert response.status_code == 200
+    assert InvocationResult.model_validate_json(response.content) == InvocationResult(
+        status="abstained",
+        answer=None,
+        citations=(),
+        abstention=HostedAbstention(
+            reason="Offline fixture has no evidence", evidence_ids=()
+        ),
+    )
+
+
 @pytest.mark.parametrize(
     ("resolver", "workflow", "error"),
     [
@@ -235,6 +273,17 @@ def test_missing_provider_fails_startup(monkeypatch: pytest.MonkeyPatch) -> None
     monkeypatch.delenv("HOSTED_GROUNDED_WORKFLOW_FACTORY", raising=False)
     with pytest.raises(ValidationError):
         RuntimeSettings()
+
+
+def test_deployment_defaults_to_managed_identity_without_secret_environment() -> None:
+    settings = configuration()
+    assert settings.credential_mode == "managed-identity"
+    assert settings.runtime_environment() == {
+        "HOSTED_APPLICATION_FACTORY": settings.application_factory,
+        "HOSTED_CONTEXT_RESOLVER_FACTORY": settings.context_resolver_factory,
+        "HOSTED_GROUNDED_WORKFLOW_FACTORY": settings.grounded_workflow_factory,
+        "AZURE_AI_MODEL_DEPLOYMENT_NAME": settings.model_deployment,
+    }
 
 
 def test_agent_core_declares_its_direct_pydantic_dependency() -> None:

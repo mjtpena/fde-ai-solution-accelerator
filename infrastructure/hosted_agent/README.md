@@ -16,12 +16,19 @@ the image and return the documented interface. Missing configuration, import
 errors and invalid factories fail startup; there is no echo or raw-model fallback.
 
 Use `WorkflowHostedApplication(resolver, workflow)` from
-`accelerator.agent_core.hosting.application`. Supply a transport-independent trusted
-identity resolver and #23's `GroundedAnswerWorkflow`. The resolver verifies the
-authorization credential, resolves `ExecutionContext` from server membership, and
-raises `InvocationUnauthorized` for missing/invalid/unauthorized callers. The
-workflow's generation port may use #19's `AgentFactory`; never bypass evidence
-sufficiency/citation validation by hosting the raw factory agent.
+`accelerator.agent_core.hosting.application`. The resolver verifies the
+authorization credential, resolves `ExecutionContext` from server-side
+authorization, and raises `InvocationUnauthorized` for missing, invalid, or
+unauthorized callers. Its interface is independent of any concrete retrieval
+implementation.
+
+The configured workflow provider implements `run(query, ctx)` and can use the
+M4 factory contract without adding a second agent loop:
+`accelerator.agent_core.agents.factory.AgentFactory(runtime, resolve_tool,
+instructions_directory).create(AgentConfig(...))` creates the Microsoft Agent
+Framework agent. The provider adapts that agent's generation call to the grounded
+workflow's answer-generator port; it must not expose the raw agent endpoint or
+bypass evidence sufficiency/citation validation.
 
 The handler forwards only the authorization header to this resolver, never scope,
 principal, project or identity fields from JSON or prompts. The only payload is
@@ -50,16 +57,13 @@ credentials, `.env` files or development dependencies. When composition introduc
 additional packages, add them to this runtime manifest and regenerate its lock;
 don't assume dependencies from another virtual environment exist in the image.
 
-The trusted resolver/workflow provider implementations remain deployment
-prerequisites. #63's grounded-workflow primitives are now in `main`, but this PR
-still lacks the concrete membership-backed resolver and packaged provider
-factories integrating retrieval and generation; those production providers remain
-dependencies of #62 and #72. Replace both example factory references with real
-providers packaged in the image before deployment. The production composition
-entrypoint is present and fail-closed, but it does not authenticate an identity or
-query evidence by itself. For local runs, supply both trusted factories and
-model/project values, and arrange explicit authenticated identity. Never mount
-developer credentials into the production image.
+The container is production-shaped but provider-agnostic. Replace both example
+factory references with trusted providers packaged in the image before deployment.
+The production composition entrypoint is present and fail-closed; it does not
+authenticate an identity or retrieve evidence by itself. The offline integration
+test exercises the packaged composition and Invocations HTTP contract with one
+shared fixture credential. For local runs, supply trusted factories and
+model/project values. Never mount developer credentials into the production image.
 
 ## Deploy and invoke
 
@@ -108,7 +112,12 @@ make eval-smoke
 
 The targeted suite tests the real SDK HTTP adapter with an injected fake
 application, fail-closed identity/scope behavior, deployment polling and response
-validation without Azure access. It is not evidence of a cloud deployment.
+validation without Azure access. A packaged offline-fixture test also composes the
+configured resolver/workflow factories and invokes `/invocations` through the
+official host protocol in-process. To smoke a built image locally, use the
+fixture's exported `OFFLINE_AUTHORIZATION` value as the request Authorization
+header; the live Foundry smoke command above separately verifies the deployed
+endpoint. Neither offline check claims an Azure deployment.
 On this baseline `make eval-smoke` is still the M5 placeholder, not a model eval.
 
 ## Verified Microsoft Learn references
