@@ -1,11 +1,13 @@
 import asyncio
 from datetime import UTC, datetime
 import unittest
+from typing import Any, Protocol, runtime_checkable
 from uuid import UUID
 
 from fastapi import HTTPException
 from fastapi.testclient import TestClient
-from httpx import Response
+import httpx
+import httpx2
 
 from accelerator.api.app import create_app
 from accelerator.api.retrieval_diagnostics import (
@@ -20,6 +22,13 @@ from accelerator.configuration.settings import Settings
 from accelerator.identity.authentication import AppRole, Principal, get_current_principal
 from accelerator.identity.scope_resolver import get_execution_context
 from accelerator.security_core.data_boundaries.context import ExecutionContext
+
+
+@runtime_checkable
+class HttpResponse(Protocol):
+    status_code: int
+
+    def json(self) -> Any: ...
 
 
 class RetrievalDiagnosticsTests(unittest.TestCase):
@@ -59,7 +68,7 @@ class RetrievalDiagnosticsTests(unittest.TestCase):
             diagnostics_include_content=diagnostics_include_content,
         )
 
-    def get_response(self, context: ExecutionContext) -> Response:
+    def get_response(self, context: ExecutionContext) -> HttpResponse:
         app = create_app(self.settings(), self.store)
         app.dependency_overrides[get_execution_context] = lambda: context
         principal = Principal(
@@ -71,9 +80,13 @@ class RetrievalDiagnosticsTests(unittest.TestCase):
 
         with TestClient(app) as client:
             response = client.get("/diagnostics/retrieval/trace-1")
-        if not isinstance(response, Response):
+        if not isinstance(response, HttpResponse):
             raise AssertionError("Expected an HTTP response")
         return response
+
+    def test_http_response_contract_supports_httpx_and_httpx2(self) -> None:
+        self.assertIsInstance(httpx.Response(200), HttpResponse)
+        self.assertIsInstance(httpx2.Response(200), HttpResponse)
 
     def test_requires_contributor_role(self) -> None:
         reader = self.contributor.model_copy(update={"roles": frozenset({"Reader"})})
