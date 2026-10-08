@@ -64,3 +64,19 @@ pre-commit without disabling or excluding any type errors.
 
 The security-sensitive search test directories are included in root pytest
 `testpaths`, so standard `make check` and pre-commit collect them automatically.
+
+## Ranking evaluation gate
+
+Before/after recall@k is required for ranking changes and remains unmeasured.
+`make eval-smoke` currently exits successfully with an M5 placeholder message; it
+does not run retrieval evaluation. `contracts/evaluation/valid-example.jsonl`
+contains synthetic schema-validation rows, not a retrieval corpus: there is no
+source chunk or embedding for `synthetic-chunk-1`. The evaluation runner,
+evaluators, and baseline packages are empty.
+
+Valid evidence requires a shared indexed corpus with ground-truth chunk IDs,
+fixed queries/scopes and k, a baseline/candidate retrieval runner, and operational
+semantic-enabled Azure AI Search with matching embeddings and managed-identity
+access. The controlled-transport tests prescribe responses and cannot measure
+ranking quality. Until these prerequisites are supplied, the ranking acceptance
+gate is blocked; passing unit tests or the placeholder does not satisfy it.
