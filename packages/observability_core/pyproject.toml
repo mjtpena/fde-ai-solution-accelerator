@@ -6,8 +6,19 @@ build-backend = "setuptools.build_meta"
 name = "fde-observability-core"
 version = "0.1.0"
 requires-python = "==3.12.*"
-dependencies = []
+dependencies = [
+    "asgiref==3.12.1",
+    "azure-identity==1.26.0",
+    "azure-monitor-opentelemetry-exporter==1.0.0b57",
+    "opentelemetry-api==1.44.0",
+    "opentelemetry-sdk==1.44.0",
+    "pydantic-settings==2.15.0",
+]
 
 [tool.setuptools]
-packages = ["accelerator.observability_core"]
+packages = ["accelerator.observability_core", "accelerator.observability_core.infrastructure"]
 package-dir = {"accelerator.observability_core" = "src/observability_core"}
+
+[tool.pytest.ini_options]
+asyncio_mode = "auto"
+testpaths = ["tests"]

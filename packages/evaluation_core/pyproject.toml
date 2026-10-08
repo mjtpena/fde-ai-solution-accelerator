@@ -29,3 +29,6 @@ packages = [
     "accelerator.evaluation_core.reporting",
 ]
 package-dir = {"accelerator.evaluation_core" = "."}
+
+[tool.setuptools.package-data]
+"accelerator.evaluation_core" = ["py.typed"]
