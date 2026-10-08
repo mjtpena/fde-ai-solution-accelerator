@@ -28,7 +28,7 @@ from ..tool_policy import (
     ToolExecutionTimeout,
     ToolPolicyMiddleware,
 )
-from ...tools import EnterpriseTool, ExecutionContextProtocol, ToolRisk
+from ...tools import EnterpriseTool, ExecutionContextProtocol, IdempotentWriteTool, ToolRisk
 from accelerator.security_core.data_boundaries.context import ExecutionContext
 from accelerator.security_core.tool_policy.models import (
     ApprovalRequired,
@@ -81,14 +81,50 @@ class TestTool(EnterpriseTool[ToolArgs, ToolResult]):
         return ToolResult(value=f"{ctx.user_id}:{args.value}")
 
 
+class WriteTestTool(IdempotentWriteTool[ToolArgs, ToolResult]):
+    name = "sample_tool"
+    description = "Test write tool."
+    risk = Risk.LOW_IMPACT_WRITE
+    args_model: ClassVar[type[BaseModel]] = ToolArgs
+
+    def __init__(
+        self,
+        *,
+        delay_seconds: float = 0.0,
+    ) -> None:
+        self.delay_seconds = delay_seconds
+        self.calls = 0
+        self.execution_ids: list[UUID] = []
+
+    async def execute_approved(
+        self,
+        args: ToolArgs,
+        ctx: ExecutionContextProtocol,
+        *,
+        execution_id: UUID,
+    ) -> ToolResult:
+        self.calls += 1
+        self.execution_ids.append(execution_id)
+        if self.delay_seconds:
+            await asyncio.sleep(self.delay_seconds)
+        return ToolResult(value=f"{ctx.user_id}:{args.value}")
+
+
 def FakeTool(
     risk: ToolRisk = Risk.READ_ONLY,
     *,
     timeout_seconds: float = 1.0,
     delay_seconds: float = 0.0,
-) -> TestTool:
+) -> TestTool | WriteTestTool:
     selected_risk = risk
     selected_timeout = timeout_seconds
+
+    if risk in (Risk.LOW_IMPACT_WRITE, Risk.HIGH_IMPACT_WRITE, Risk.PRIVILEGED):
+        class ConfiguredWriteTool(WriteTestTool):
+            risk = selected_risk
+            timeout_seconds = selected_timeout
+
+        return ConfiguredWriteTool(delay_seconds=delay_seconds)
 
     class ConfiguredTool(TestTool):
         risk = selected_risk
@@ -146,6 +182,22 @@ async def test_write_tool_returns_approval_card_and_does_not_execute() -> None:
 
 
 @pytest.mark.asyncio
+async def test_write_risk_rejects_tool_without_idempotent_execution_capability() -> None:
+    class UnsafeWriteTool(TestTool):
+        risk = Risk.LOW_IMPACT_WRITE
+
+    tool = UnsafeWriteTool()
+    service = FakeApprovalService()
+    middleware = ToolPolicyMiddleware(approval_service=service)
+
+    with pytest.raises(ToolPolicyViolation, match="write_tool_requires_idempotent_execution"):
+        await middleware.invoke(tool, ToolArgs(value="write"), Context(), turn_id="turn-1")
+
+    assert service.created == []
+    assert tool.calls == 0
+
+
+@pytest.mark.asyncio
 async def test_approved_write_is_executed_by_the_approval_service() -> None:
     tool = FakeTool(Risk.HIGH_IMPACT_WRITE)
     service = FakeApprovalService()
@@ -169,6 +221,8 @@ async def test_approved_write_is_executed_by_the_approval_service() -> None:
     assert service.executed == [approval.id]
     assert service.created[0].status == "executed"
     assert tool.calls == 1
+    assert isinstance(tool, IdempotentWriteTool)
+    assert tool.execution_ids == [approval.id]
 
 
 @pytest.mark.asyncio
@@ -386,7 +440,7 @@ class InMemoryApprovalRepository:
         self.audit_events.append(event)
 
 
-class WriteTool(EnterpriseTool[ToolArgs, ToolResult]):
+class WriteTool(IdempotentWriteTool[ToolArgs, ToolResult]):
     name = "write_tool"
     description = "Write only after an args-bound approval."
     risk = ToolRisk.LOW_IMPACT_WRITE
@@ -394,9 +448,17 @@ class WriteTool(EnterpriseTool[ToolArgs, ToolResult]):
 
     def __init__(self) -> None:
         self.calls = 0
+        self.execution_ids: list[UUID] = []
 
-    async def execute(self, args: ToolArgs, ctx: ExecutionContextProtocol) -> ToolResult:
+    async def execute_approved(
+        self,
+        args: ToolArgs,
+        ctx: ExecutionContextProtocol,
+        *,
+        execution_id: UUID,
+    ) -> ToolResult:
         self.calls += 1
+        self.execution_ids.append(execution_id)
         return ToolResult(value=f"{ctx.user_id}:{args.value}")
 
 
@@ -430,6 +492,7 @@ async def test_public_contract_creates_card_and_executes_real_approval_once() ->
     result = await middleware.invoke(tool, args, context, turn_id="turn-2", approval=approval)
 
     assert result == ToolResult(value="requester:approved")
+    assert tool.execution_ids == [approval.id]
     assert repository.approvals[approval.id].status == "executed"
     assert [event.transition for event in repository.audit_events] == [
         "pending",

@@ -16,6 +16,8 @@ if TYPE_CHECKING:
     from ..approvals import Approval, ApprovalService
     from ..tools import EnterpriseTool, ExecutionContextProtocol
 
+from ..tools import IdempotentWriteTool
+
 
 ArgsT = TypeVar("ArgsT", bound=BaseModel)
 ResultT = TypeVar("ResultT", bound=BaseModel)
@@ -123,6 +125,8 @@ class ToolPolicyMiddleware(Generic[ArgsT, ResultT]):
 
         action = self._policy.evaluate(tool.risk.value)
         timeout_seconds = self._effective_timeout(tool.timeout_seconds, context.deadline_utc)
+        if action == "approval" and not isinstance(tool, IdempotentWriteTool):
+            raise ToolPolicyViolation("write_tool_requires_idempotent_execution")
         if action == "approval" and approval is None:
             return await self._run_with_timeout(
                 self._create_approval(tool, arguments, context), timeout_seconds, tool.name
