@@ -1,0 +1,12 @@
+{
+  "project_endpoint": "https://example.services.ai.azure.com/api/projects/example",
+  "agent_name": "fde-agent",
+  "image": "example.azurecr.io/fde-agent:replace-with-git-sha",
+  "application_factory": "infrastructure.hosted_agent.production:runtime_factory",
+  "context_resolver_factory": "replace_with_packaged_identity_provider:create_context_resolver",
+  "grounded_workflow_factory": "replace_with_packaged_grounded_workflow:create_workflow",
+  "model_deployment": "replace-with-model-deployment",
+  "cpu": "1",
+  "memory": "2Gi",
+  "credential_mode": "managed-identity"
+}

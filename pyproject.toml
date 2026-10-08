@@ -9,7 +9,7 @@ dependencies = []
 dev = [
     "mypy>=1.18,<2",
     "pre-commit>=4.3,<5",
-    "pytest>=8.4,<9",
+    "pytest>=8.4,<10",
     "pytest-asyncio>=1.2,<2",
     "ruff>=0.13,<1",
 ]
@@ -38,6 +38,8 @@ select = ["E4", "E7", "E9", "F"]
 [tool.mypy]
 python_version = "3.12"
 strict = true
+mypy_path = ["packages/security_core/src", "apps/api/src"]
+explicit_package_bases = true
 files = [
     "packages/agent_core",
     "packages/evaluation_core",
@@ -45,8 +47,18 @@ files = [
     "packages/retrieval_core",
     "packages/security_core",
     "workers/ingestion/src",
+    "apps/api/src/accelerator/identity",
+    "apps/api/tests/test_scope_resolver.py",
 ]
 
 [tool.pytest.ini_options]
 asyncio_mode = "auto"
-testpaths = ["tests", "apps/api/tests", "packages/evaluation_core"]
+testpaths = [
+    "tests",
+    "apps/api/tests",
+    "packages/evaluation_core",
+    "packages/retrieval_core/search/tests",
+    "apps/api/src/accelerator/infrastructure/search/tests",
+    "packages/agent_core",
+    "packages/security_core/tests",
+]

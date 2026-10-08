@@ -7,9 +7,31 @@ name = "fde-accelerator-api"
 version = "0.1.0"
 requires-python = "==3.12.*"
 dependencies = [
+    "agent-framework-foundry>=1.14,<2",
+    "azure-identity>=1.26,<2",
+    "fde-agent-core",
+    "fde-security-core",
     "fastapi>=0.115,<1",
+    "httpx>=0.28,<1",
     "pydantic-settings>=2.7,<3",
+    "pyjwt[crypto]>=2.10,<3",
+    "sqlalchemy[asyncio]>=2.0,<3",
 ]
+
+[tool.uv.sources]
+fde-agent-core = { workspace = true }
+fde-security-core = { workspace = true }
+
+[dependency-groups]
+dev = [
+    "asyncpg>=0.30,<1",
+    "httpx2>=2.13,<3",
+]
+
+[tool.mypy]
+plugins = ["pydantic.mypy"]
+mypy_path = ["packages/security_core/src", "apps/api/src"]
+explicit_package_bases = true
 
 [tool.setuptools]
 package-dir = {"" = "src"}
@@ -17,3 +39,6 @@ package-dir = {"" = "src"}
 [tool.setuptools.packages.find]
 where = ["src"]
 include = ["accelerator*"]
+
+[tool.setuptools.package-data]
+accelerator = ["py.typed"]

@@ -6,17 +6,30 @@ build-backend = "setuptools.build_meta"
 name = "fde-agent-core"
 version = "0.1.0"
 requires-python = "==3.12.*"
-dependencies = []
+dependencies = [
+    "agent-framework-core>=1.20,<2",
+    "fde-security-core>=0.1,<1",
+    "pydantic>=2.7,<3",
+]
+
+[tool.uv.sources]
+fde-security-core = { workspace = true }
 
 [tool.setuptools]
 packages = [
     "accelerator.agent_core",
     "accelerator.agent_core.agents",
     "accelerator.agent_core.workflows",
+    "accelerator.agent_core.workflows.instructions",
     "accelerator.agent_core.tools",
     "accelerator.agent_core.middleware",
     "accelerator.agent_core.approvals",
     "accelerator.agent_core.sessions",
     "accelerator.agent_core.policies",
+    "accelerator.agent_core.hosting",
 ]
 package-dir = {"accelerator.agent_core" = "."}
+
+[tool.setuptools.package-data]
+"accelerator.agent_core.workflows" = ["instructions/*.md"]
+"accelerator.agent_core" = ["py.typed"]
