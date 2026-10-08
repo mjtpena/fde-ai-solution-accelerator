@@ -34,6 +34,8 @@ def test_workflow_separates_pr_execution_from_privileged_commenting() -> None:
     assert "pr.head.sha !== run.head_sha" in scripts
     assert "p.head.repo?.full_name === run.head_repository.full_name" in scripts
     assert "p.head.ref === run.head_branch" in scripts
+    assert "(run.pull_requests || []).map(pull => pull.number)" in scripts
+    assert "matches = matches.filter(p => runPrNumbers.has(p.number))" in scripts
     assert "matches.length > 1" in scripts
     assert "core.setFailed" in scripts
     assert "github.rest.issues.updateComment" in scripts
