@@ -62,9 +62,9 @@ jobs:
     permissions:
       actions: read
       pull-requests: write
-    # One publish run per evaluated branch at a time, in FIFO order, so an
-    # older run can never overwrite a newer run's comment; never cancel a
-    # run that is already updating the PR comment.
+    # Serialize publishers per evaluated branch without canceling an
+    # in-progress comment update. SHA checks prevent stale reports replacing
+    # reports for newer commits.
     concurrency:
       group: evaluation-publish-${{ github.event.workflow_run.head_repository.full_name }}-${{ github.event.workflow_run.head_branch }}
       cancel-in-progress: false
@@ -80,12 +80,18 @@ jobs:
               github.rest.repos.listPullRequestsAssociatedWithCommit,
               {owner, repo, commit_sha: run.head_sha}
             );
-            const matches = candidates.filter(p =>
+            let matches = candidates.filter(p =>
               p.state === 'open' &&
               p.head.sha === run.head_sha &&
               p.head.ref === run.head_branch &&
               p.head.repo?.full_name === run.head_repository.full_name
             );
+            const runPrNumbers = new Set(
+              (run.pull_requests || []).map(pull => pull.number)
+            );
+            if (runPrNumbers.size > 0) {
+              matches = matches.filter(p => runPrNumbers.has(p.number));
+            }
             if (matches.length === 0) {
               core.notice('No open PR still matches the evaluated commit.');
               return;
