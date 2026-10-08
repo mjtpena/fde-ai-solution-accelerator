@@ -38,6 +38,23 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/diagnostics/retrieval/{correlation_id}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Get Retrieval Diagnostics */
+        get: operations["get_retrieval_diagnostics_diagnostics_retrieval__correlation_id__get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/audit-events": {
         parameters: {
             query?: never;
@@ -49,6 +66,23 @@ export interface paths {
         get: operations["query_audit_events_audit_events_get"];
         put?: never;
         post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/chat/stream": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Stream Chat */
+        post: operations["stream_chat_chat_stream_post"];
         delete?: never;
         options?: never;
         head?: never;
@@ -87,6 +121,11 @@ export interface components {
             /** Items */
             items: components["schemas"]["AuditEvent"][];
         };
+        /** ChatRequest */
+        ChatRequest: {
+            /** Message */
+            message: string;
+        };
         /**
          * EventOutcome
          * @enum {string}
@@ -109,6 +148,36 @@ export interface components {
              * @enum {string}
              */
             status: "ok" | "ready";
+        };
+        /** RetrievalDiagnosticResult */
+        RetrievalDiagnosticResult: {
+            /** Chunk Id */
+            chunk_id: string;
+            /** Document Id */
+            document_id: string;
+            /** Document Title */
+            document_title: string;
+            /** Score */
+            score: number;
+            /** Reranker Score */
+            reranker_score: number | null;
+            /** Text */
+            text: string;
+            /** Source Uri */
+            source_uri: string;
+        };
+        /** RetrievalDiagnosticsResponse */
+        RetrievalDiagnosticsResponse: {
+            /** Correlation Id */
+            correlation_id: string;
+            /** Query */
+            query: string;
+            /** Filters */
+            filters: {
+                [key: string]: unknown;
+            };
+            /** Results */
+            results: components["schemas"]["RetrievalDiagnosticResult"][];
         };
         /** ValidationError */
         ValidationError: {
@@ -214,6 +283,58 @@ export interface operations {
             };
         };
     };
+    get_retrieval_diagnostics_diagnostics_retrieval__correlation_id__get: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                correlation_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["RetrievalDiagnosticsResponse"];
+                };
+            };
+            /** @description Missing or invalid bearer token. */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description Insufficient app role. */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+            /** @description Identity, scope, or audit persistence is unavailable. */
+            503: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+        };
+    };
     query_audit_events_audit_events_get: {
         parameters: {
             query?: {
@@ -260,6 +381,60 @@ export interface operations {
                 };
             };
             /** @description Identity, scope, or audit persistence is unavailable. */
+            503: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+        };
+    };
+    stream_chat_chat_stream_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["ChatRequest"];
+            };
+        };
+        responses: {
+            /** @description Server-sent events. Each frame has an event name and JSON data. Answered turns emit token frames followed by citations and done; insufficient evidence emits abstention and done; policy handoffs emit approval and done. */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "text/event-stream": string;
+                };
+            };
+            /** @description Missing or invalid bearer token. */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description Insufficient app role. */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+            /** @description The chat workflow is not configured. */
             503: {
                 headers: {
                     [name: string]: unknown;

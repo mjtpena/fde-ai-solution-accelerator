@@ -10,13 +10,21 @@ import { useCallback, useEffect, useState } from "react";
 import { getHealth } from "../api/client";
 import { getApiScope, getMsalInstance } from "./msal";
 
-export function EntraSignIn() {
+type EntraSignInProps = {
+  onAccessTokenChange?: (accessToken: string | null) => void;
+};
+
+export function EntraSignIn({ onAccessTokenChange }: EntraSignInProps) {
   const [account, setAccount] = useState<AccountInfo | null>(null);
   const [accessToken, setAccessToken] = useState<string | null>(null);
   const [healthStatus, setHealthStatus] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [ready, setReady] = useState(false);
   const scope = getApiScope();
+
+  useEffect(() => {
+    onAccessTokenChange?.(accessToken);
+  }, [accessToken, onAccessTokenChange]);
 
   useEffect(() => {
     let active = true;
@@ -39,13 +47,12 @@ export function EntraSignIn() {
           null;
         if (signedInAccount) {
           msal.setActiveAccount(signedInAccount);
-          const tokenResult =
-            redirectResult?.accessToken
-              ? redirectResult
-              : await msal.acquireTokenSilent({
-                  account: signedInAccount,
-                  scopes: [scope],
-                });
+          const tokenResult = redirectResult?.accessToken
+            ? redirectResult
+            : await msal.acquireTokenSilent({
+                account: signedInAccount,
+                scopes: [scope],
+              });
           if (active) {
             setAccount(signedInAccount);
             setAccessToken(tokenResult.accessToken);
@@ -141,7 +148,9 @@ export function EntraSignIn() {
             Sign out
           </button>
           <p aria-live="polite">
-            {healthStatus ? `API status: ${healthStatus}` : "Checking API access…"}
+            {healthStatus
+              ? `API status: ${healthStatus}`
+              : "Checking API access…"}
           </p>
         </div>
       ) : (
