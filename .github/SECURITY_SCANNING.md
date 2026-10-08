@@ -113,29 +113,31 @@ The current integrated status recorded for issue #35 on 2026-10-08 is:
 
 | Area | Latest evidence and remaining work |
 | --- | --- |
-| Ingestion Dockerfile filesystem finding | **Passed** on integrated PR #54 head `8559642831a35743d0f3826405df0eeabfdc2549`; merged PR #61's non-root Alpine remediation clears DS-0002. |
+| Ingestion Dockerfile filesystem finding | **Passed** on integrated PR #54 head `837ef1372956240001da7722bbc3489a3687de25`; merged PR #61's non-root Alpine remediation clears DS-0002. |
 | npm development dependencies | **Failed:** one HIGH, `braces` 3.0.3 / CVE-2026-93687, status affected and no fixed version reported. The dependency is in root `package-lock.json` via `apps/web/package.json` dev dependency `eslint-config-next` → `fast-glob` → `micromatch`. It is outside #35's `.github/**` scope. npm removal from the runtime image cannot remediate the development lockfile. No scanner configuration-only fix can correctly remove this finding while keeping development dependencies in scope and the gate fail-closed. |
-| Ingestion runtime image | **Passed** the unchanged hosted image gate on head `8559642831a35743d0f3826405df0eeabfdc2549`; the prior 44 HIGH Debian findings are historical after merged Alpine remediation. |
-| Web runtime image | **Failed** on head `8559642831a35743d0f3826405df0eeabfdc2549`: 11 HIGH Node-package findings. The #79 owner-head local scan passed after final-stage npm removal, but that change is not in the current #54 head. The hosted report lists 10 distinct CVE identifiers for 11 findings; no additional CVE is inferred. Fixing the image requires changing its Dockerfile/build inputs outside #35 scope; excluding the image, its packages, or findings from Trivy would weaken the requested gate. |
+| Ingestion runtime image | **Passed** the unchanged hosted image gate on head `837ef1372956240001da7722bbc3489a3687de25`; the prior 44 HIGH Debian findings are historical after merged Alpine remediation. |
+| Web runtime image | **Passed** on head `837ef1372956240001da7722bbc3489a3687de25` after reconciling with `main` commit `4495986` (PR #84, which includes the owning web runtime npm-removal change). No image/Dockerfile edit was made in #35. The earlier 11 HIGH findings and 10 listed CVE identifiers are historical for the pre-remediation image; no additional CVE is inferred. |
 
 The current-head hosted security run is
-[37606421614](https://github.com/mjtpena/fde-ai-solution-accelerator/actions/runs/37606421614)
-on commit `8559642831a35743d0f3826405df0eeabfdc2549`. Security configuration,
-all three CodeQL language jobs, Dependency Review, and Trivy ingestion image
-passed. Trivy repository failed on the single `braces` finding; Trivy web image
-failed on 11 HIGH findings (10 listed CVE identifiers).
-[Quality run 37606421489](https://github.com/mjtpena/fde-ai-solution-accelerator/actions/runs/37606421489)
+[37717036053](https://github.com/mjtpena/fde-ai-solution-accelerator/actions/runs/37717036053)
+on commit `837ef1372956240001da7722bbc3489a3687de25`, reconciled with `main`
+commit `4495986` (PR #84). Security configuration, all three CodeQL language
+jobs, Dependency Review, and both Trivy image jobs passed. Trivy repository
+failed on the single `braces` finding.
+[Quality run 37717036057](https://github.com/mjtpena/fde-ai-solution-accelerator/actions/runs/37717036057)
 passed. Local configuration tests (7), actionlint, and `make check` (70 Python
 and 9 web tests) passed after reconciliation. `make eval-smoke` exits
 successfully with the existing placeholder, not a model-quality evaluation.
 
-**No root-cause fix exists within issue #35's authorized `.github/**` paths.**
-The repository finding requires an authorized web/tooling manifest and lockfile
-change (or an upstream fixed `braces` release); the registry check found no
-patched release. The image finding requires an authorized web Dockerfile/build
-change. Do not hide either result through scanner exclusions, severity changes,
-or suppressions. Keep the failures visible until the owning areas provide
-remediation and an unchanged exact-head Trivy scan passes.
+**The remaining repository finding has no root-cause fix within issue #35's
+authorized `.github/**` paths.** It requires an authorized web/tooling manifest
+and root lockfile change (or an upstream fixed `braces` release); the registry
+check found no patched release. The web image root cause was fixed by the
+owning web change now merged in `main` and verified by the unchanged image gate
+on the current head. Do not hide the repository finding through scanner
+exclusions, severity changes, or suppressions. Keep it visible until an
+authorized owning-area remediation and unchanged exact-head repository scan
+passes.
 
 These dependency and image findings require remediation in their owning
 changes, outside issue #35's `.github/**` scope. Keep the thresholds and
