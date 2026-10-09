@@ -1,6 +1,11 @@
+import json
 import re
+import subprocess
+import sys
 from pathlib import Path
+from typing import Any
 
+import pytest
 import yaml
 
 
@@ -45,6 +50,51 @@ def test_workflow_separates_pr_execution_from_privileged_commenting() -> None:
     assert "github.rest.issues.createComment" in scripts
     assert "github-actions[bot]" in scripts
     assert "Buffer.byteLength" in scripts
+
+
+def _verdict_step() -> tuple[str, list[dict[str, Any]], int]:
+    root = Path(__file__).resolve().parents[4]
+    workflow = yaml.safe_load(
+        (root / ".github" / "workflows" / "evaluation.yml").read_text(encoding="utf-8")
+    )
+    steps: list[dict[str, Any]] = workflow["jobs"]["smoke"]["steps"]
+    index = next(i for i, step in enumerate(steps) if step.get("name") == "Verify gate verdict")
+    match = re.search(r"<<'PY'\n(.*?)\nPY\b", steps[index]["run"], re.DOTALL)
+    assert match, steps[index]["run"]
+    return match.group(1), steps, index
+
+
+def test_verdict_step_runs_after_the_gate_and_cannot_be_skipped() -> None:
+    _, steps, index = _verdict_step()
+    gate = next(i for i, step in enumerate(steps) if step.get("run") == "make eval-smoke")
+
+    assert gate < index
+    assert "if" not in steps[index]
+    assert "continue-on-error" not in steps[index]
+
+
+@pytest.mark.parametrize(
+    ("report", "passes"),
+    [
+        ({"passed": True, "hard_failures": []}, True),
+        ({"passed": False, "hard_failures": []}, False),
+        ({"passed": True, "hard_failures": ["scope_isolation"]}, False),
+        ({"hard_failures": []}, False),
+    ],
+)
+def test_verdict_step_rejects_any_report_that_did_not_pass(
+    tmp_path: Path, report: dict[str, Any], passes: bool
+) -> None:
+    script, _, _ = _verdict_step()
+    reports = tmp_path / "evaluations" / "reports"
+    reports.mkdir(parents=True)
+    (reports / "smoke.json").write_text(json.dumps(report), encoding="utf-8")
+
+    completed = subprocess.run(
+        [sys.executable, "-I", "-c", script], cwd=tmp_path, capture_output=True, check=False
+    )
+
+    assert (completed.returncode == 0) is passes, completed.stderr
 
 
 def test_every_action_is_pinned_to_a_commit_sha() -> None:
