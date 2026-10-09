@@ -6,6 +6,8 @@ from contextvars import ContextVar
 from dataclasses import dataclass
 from typing import Any, Protocol
 
+from ..tools.agent_bridge import tools_for_current_turn
+
 CITATION_MARKER = re.compile(r"\[cite:([^\[\]\s]{1,256})\]")
 
 
@@ -62,7 +64,9 @@ class AgentRunResult(Protocol):
 class ChatAgent(Protocol):
     """The subset of ``agent_framework.Agent`` the generator uses."""
 
-    async def run(self, messages: str, *, options: Mapping[str, Any]) -> AgentRunResult: ...
+    async def run(
+        self, messages: str, *, options: Mapping[str, Any], tools: Sequence[Any] | None = None
+    ) -> AgentRunResult: ...
 
 
 @dataclass(frozen=True, slots=True)
@@ -120,13 +124,15 @@ class AgentAnswerGenerator:
         self, query: str, evidence: Sequence[EvidenceForGeneration]
     ) -> GeneratedGroundedAnswer:
         prompt = build_prompt(query, evidence)
+        # Registered tools reach the model only through the policy bridge for this turn.
+        tools = tools_for_current_turn()
         budget = current_token_budget.get()
         # Reserve the worst case (prompt plus every allowed output token) before the call,
         # so an over-budget request is refused instead of billed.
         estimate = estimate_tokens(prompt) + int(self._options["max_tokens"])
         reservation = budget.reserve(estimate) if budget is not None else None
         try:
-            response = await self._agent.run(prompt, options=self._options)
+            response = await self._agent.run(prompt, options=self._options, tools=tools or None)
         except BaseException:
             if reservation is not None:
                 reservation.cancel()

@@ -25,9 +25,12 @@ class RecordingAgent:
         self.prompts: list[str] = []
         self.options: list[Mapping[str, Any]] = []
 
-    async def run(self, messages: str, *, options: Mapping[str, Any]) -> Result:
+    async def run(
+        self, messages: str, *, options: Mapping[str, Any], tools: Any = None
+    ) -> Result:
         self.prompts.append(messages)
         self.options.append(options)
+        self.tools = tools
         return Result(self.reply)
 
 

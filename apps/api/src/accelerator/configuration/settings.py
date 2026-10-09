@@ -33,6 +33,8 @@ class Settings(BaseSettings):
     request_token_budget: int = Field(default=8192, gt=0)
     request_rate_limit: int = Field(default=60, gt=0)
     request_rate_window_seconds: float = Field(default=60.0, gt=0, allow_inf_nan=False)
+    max_tool_calls_per_turn: int = Field(default=10, ge=1, le=100)
+    max_tool_calls_per_session: int = Field(default=100, ge=1, le=10_000)
     diagnostics_include_content: bool = False
     # Unauthenticated requests write an audit row per 401. These caps bound that
     # write amplification; failures beyond them are counted in logs instead.

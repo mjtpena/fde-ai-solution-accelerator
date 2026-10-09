@@ -11,9 +11,12 @@ from azure.core.credentials_async import AsyncTokenCredential
 from azure.identity.aio import DefaultAzureCredential
 from fastapi import FastAPI
 
+from accelerator.agent_core.middleware import ToolCallLimits
+from accelerator.agent_core.tools import ToolRegistry
 from accelerator.api.app import create_app
 from accelerator.api.approvals import get_approval_service
 from accelerator.api.chat import ChatTurnPort
+from accelerator.api.tool_turns import PolicyEnforcedChatTurn
 from accelerator.configuration.settings import Settings
 from accelerator.identity.scope_resolver import get_execution_context
 from accelerator.infrastructure.audit import PostgresAuditRepository
@@ -60,6 +63,7 @@ def build_application(
     *,
     credential: AsyncTokenCredential | None = None,
     chat_turn_factory: ChatTurnFactory = default_chat_turn,
+    tool_registry: ToolRegistry | None = None,
 ) -> FastAPI:
     """Build the API with real persistence, scope resolution, audit and cost guards.
 
@@ -96,6 +100,20 @@ def build_application(
             extra={"environment": settings.environment},
         )
 
+    workflow = chat_turn_factory(settings, credential, shutdown)
+    chat_turn = (
+        PolicyEnforcedChatTurn(
+            workflow,
+            tool_registry if tool_registry is not None else ToolRegistry(),
+            session_factory=session_factory,
+            limits=ToolCallLimits(
+                max_calls_per_turn=settings.max_tool_calls_per_turn,
+                max_calls_per_session=settings.max_tool_calls_per_session,
+            ),
+        )
+        if workflow is not None
+        else None
+    )
     app = create_app(
         settings,
         audit_repository=(
@@ -108,7 +126,7 @@ def build_application(
         ),
         get_execution_context=get_execution_context,
         rate_limiter=rate_limiter,
-        chat_turn=chat_turn_factory(settings, credential, shutdown),
+        chat_turn=chat_turn,
         session_factory=session_factory,
         on_shutdown=shutdown,
     )

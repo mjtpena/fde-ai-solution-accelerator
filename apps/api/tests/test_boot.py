@@ -173,7 +173,7 @@ class FakeEmbeddingClient:
 
 
 class FakeAgent:
-    async def run(self, messages: str, *, options: Any) -> Any:
+    async def run(self, messages: str, *, options: Any, tools: Any = None) -> Any:
         assert 'chunk_id="chunk-a"' in messages
         return type("Response", (), {"text": "Backups run nightly. [cite:chunk-a]"})()
 
