@@ -12,6 +12,10 @@
     ".git", ".venv", "node_modules", "__pycache__", ".pytest_cache", ".mypy_cache",
     ".ruff_cache", ".next", ".env", "build", "dist"
   ],
+  "workflows": [
+    "pull-request.yml", "evaluation.yml", "evaluation-report.yml", "security.yml",
+    "copilot-setup-steps.yml"
+  ],
   "remove": [
     "engagement/examples",
     "scripts/new_project.py", "scripts/.gitkeep"

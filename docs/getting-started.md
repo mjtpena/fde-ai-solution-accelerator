@@ -229,14 +229,14 @@ From an accelerator checkout (the generator is not present in generated
 projects):
 
 ```sh
-make new-project NAME=my-solution DISPLAY="My Solution"
-make new-project NAME=my-solution DISPLAY="My Solution" DEST=/absolute/path/my-solution
+make new-project NAME=my-solution TITLE="My Solution"
+make new-project NAME=my-solution TITLE="My Solution" DEST=/absolute/path/my-solution
 ```
 
 | Variable | Rules |
 | --- | --- |
 | `NAME` | Required. Lowercase kebab-case, at most 64 characters, not a Python keyword, standard-library module or `accelerator`. Becomes the package prefix (`<name>-api`, `<name>-agent-core`, ...) and, with hyphens turned into underscores, the Python namespace that replaces `accelerator` |
-| `DISPLAY` | Display name that replaces "FDE AI Solution Accelerator". Defaults to `NAME` when empty. Pass it explicitly: the script reads the `DISPLAY` environment variable, so on a desktop session an unset value can pick up the X11 display (e.g. `:0`) |
+| `TITLE` | Display name that replaces "FDE AI Solution Accelerator". Required (it is not `DISPLAY`, the X11 display variable that desktop shells set) |
 | `DEST` | Optional. Defaults to a sibling directory of the checkout named `NAME`. Must not exist, must not overlap the checkout, and its parent must exist |
 
 The generator (`scripts/new_project.py`, driven by `accelerator.manifest.yml`):
@@ -255,11 +255,12 @@ The generator (`scripts/new_project.py`, driven by `accelerator.manifest.yml`):
   `make check` in the new project. A failure leaves the output in place for
   diagnosis and exits nonzero; only a passing `make check` counts as generated.
 
-On this branch the manifest's `copy` list does not include `infrastructure/`, so
-a generated project has no Bicep, deployment script or hosted-agent package even
-though its Makefile keeps the `deploy-dev` target and `.github/workflows/`
-keeps `deploy-dev.yml`. Copy or recreate `infrastructure/` before deploying a
-generated project.
+A generated project does not receive `infrastructure/` (Bicep, the deployment
+script, the hosted-agent package). It keeps only the CI workflows the manifest
+lists (quality, evaluation, security, Copilot setup), and everything between
+`# BEGIN ACCELERATOR ONLY` / `# END ACCELERATOR ONLY` markers is stripped, including
+`make deploy-dev`. Copy or recreate `infrastructure/` and `deploy-dev.yml` when the
+project is ready to deploy.
 
 After generating, `git init` the new directory, fill in `engagement/project/`,
 and replace the starter dataset with project-owned evaluation cases.

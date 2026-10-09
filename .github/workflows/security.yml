@@ -105,8 +105,10 @@ jobs:
             dockerfile: apps/web/Dockerfile
           - image: ingestion
             dockerfile: workers/ingestion/Dockerfile
+          # BEGIN ACCELERATOR ONLY
           - image: hosted-agent
             dockerfile: infrastructure/hosted_agent/Dockerfile
+          # END ACCELERATOR ONLY
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
         with:

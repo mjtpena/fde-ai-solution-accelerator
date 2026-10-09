@@ -1,4 +1,4 @@
-.PHONY: setup up check migrate openapi openapi-check eval-smoke eval-full deploy-dev
+.PHONY: setup up check migrate openapi openapi-check eval-smoke eval-full
 
 setup:
 	uv sync --all-packages --frozen
@@ -50,20 +50,23 @@ export EVALUATION_WORKFLOW_FACTORY EVALUATION_DATASET
 eval-full:
 	uv run --all-packages python -m accelerator.evaluation_core.evaluators
 
+# BEGIN ACCELERATOR ONLY
 # Deploy the dev environment with the signed-in Azure CLI identity: infrastructure,
 # images (ACR Tasks), applications, migrations, search index, smoke test. One stage:
 # make deploy-dev STAGE=smoke. See infrastructure/README.md for the variables and the
 # one-time database bootstrap, which needs private network access.
 STAGE ?= all
+.PHONY: deploy-dev
 
 deploy-dev:
 	infrastructure/scripts/deploy-dev.sh $(STAGE)
+# END ACCELERATOR ONLY
 
 # BEGIN PROJECT GENERATOR
-# Usage: make new-project NAME=my-solution DISPLAY="My Solution" [DEST=absolute-path]
+# Usage: make new-project NAME=my-solution TITLE="My Solution" [DEST=absolute-path]
 # Fixtures and typing run in CI via make check; generated projects omit this block.
 .PHONY: new-project check-generator
-export NAME DISPLAY DEST
+export NAME TITLE DEST
 
 # CI runs the generated-project check as its own job (SKIP_GENERATOR=1 elsewhere).
 ifeq ($(SKIP_GENERATOR),)
