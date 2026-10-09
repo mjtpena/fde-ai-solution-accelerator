@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 from collections import deque
-from collections.abc import Callable
+from collections.abc import Awaitable, Callable
 import math
 from threading import Lock
 from time import monotonic
@@ -29,7 +29,13 @@ class RateLimitExceeded(Exception):
 
 
 class RateLimiter(Protocol):
-    def check(self, context: CostGuardContext) -> None: ...
+    """Raise ``RateLimitExceeded`` when the caller is over its limit.
+
+    May be synchronous (in-process) or return an awaitable (shared stores such as
+    PostgreSQL, required when more than one API replica runs).
+    """
+
+    def check(self, context: CostGuardContext) -> None | Awaitable[None]: ...
 
 
 class SlidingWindowRateLimiter:

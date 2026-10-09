@@ -1,4 +1,6 @@
 from .tool_policy import (
+    InMemoryToolCallCounter,
+    ToolCallCounter,
     ToolCallLimitExceeded,
     ToolCallLimits,
     ToolExecutionTimeout,
@@ -6,6 +8,8 @@ from .tool_policy import (
 )
 
 __all__ = [
+    "InMemoryToolCallCounter",
+    "ToolCallCounter",
     "ToolCallLimitExceeded",
     "ToolCallLimits",
     "ToolExecutionTimeout",

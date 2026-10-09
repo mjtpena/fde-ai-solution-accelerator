@@ -17,6 +17,7 @@ from accelerator.api.chat import ChatTurnPort
 from accelerator.configuration.settings import Settings
 from accelerator.identity.scope_resolver import get_execution_context
 from accelerator.infrastructure.audit import PostgresAuditRepository
+from accelerator.infrastructure.cost_controls import PostgresRateLimiter
 from accelerator.infrastructure.database import create_database_engine
 from accelerator.infrastructure.grounded_answer import build_azure_grounded_answer
 from accelerator.security_core.infrastructure.database import (
@@ -78,10 +79,17 @@ def build_application(
         shutdown.append(owned_credential.close)
 
     session_factory: SessionFactory | None = None
+    rate_limiter: PostgresRateLimiter | None = None
     if settings.database_url is not None:
         engine = create_database_engine(settings, credential=credential)
         session_factory = create_session_factory(engine)
         shutdown.append(engine.dispose)
+        # Shared across replicas; without a database the in-process limiter applies.
+        rate_limiter = PostgresRateLimiter(
+            session_factory,
+            settings.request_rate_limit,
+            settings.request_rate_window_seconds,
+        )
     else:
         logger.warning(
             "database_unconfigured",
@@ -99,6 +107,7 @@ def build_application(
             else None
         ),
         get_execution_context=get_execution_context,
+        rate_limiter=rate_limiter,
         chat_turn=chat_turn_factory(settings, credential, shutdown),
         session_factory=session_factory,
         on_shutdown=shutdown,

@@ -15,6 +15,7 @@ from sqlalchemy.exc import DBAPIError
 from sqlalchemy.ext.asyncio import create_async_engine
 
 from accelerator.infrastructure import audit as _audit  # noqa: F401  registers audit_event
+from accelerator.infrastructure import cost_controls as _cost_controls  # noqa: F401
 from accelerator.infrastructure.approvals import ApprovalBase
 from accelerator.migrations import alembic_config
 from accelerator.security_core.infrastructure.database import Base
@@ -28,6 +29,7 @@ def test_migration_history_is_linear() -> None:
 
     assert len(script.get_heads()) == 1
     assert [revision.revision for revision in script.walk_revisions()] == [
+        "0004_cost_controls",
         "0003_approvals",
         "0002_scope_memberships",
         "0001_audit_event",

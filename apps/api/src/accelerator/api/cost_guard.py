@@ -1,5 +1,6 @@
 from collections.abc import Awaitable, Callable
 from dataclasses import dataclass
+import inspect
 import math
 from typing import Annotated
 
@@ -50,7 +51,9 @@ def create_cost_guard_dependency(
         if isinstance(existing_guard, RequestCostGuard):
             return existing_guard
         try:
-            limiter.check(context)
+            pending = limiter.check(context)
+            if inspect.isawaitable(pending):
+                await pending
         except RateLimitExceeded as error:
             retry_after = max(1, math.ceil(error.retry_after_seconds))
             raise HTTPException(
