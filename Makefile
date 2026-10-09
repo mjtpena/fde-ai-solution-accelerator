@@ -1,4 +1,4 @@
-.PHONY: setup up check migrate eval-smoke eval-full
+.PHONY: setup up check migrate openapi openapi-check eval-smoke eval-full
 
 setup:
 	uv sync --all-packages --frozen
@@ -15,12 +15,24 @@ migrate:
 # Test modules outside the workspace packages (the default run checks the packages).
 MYPY_TEST_FILES = workers/ingestion/tests apps/api/tests/test_scope_resolver.py
 
+# Extra pytest arguments, e.g. PYTEST_ARGS="--cov" to enforce [tool.coverage] in CI.
+PYTEST_ARGS ?=
+
 check:
 	uv run --all-packages ruff check
 	uv run --all-packages mypy --strict
 	uv run --all-packages mypy --strict $(MYPY_TEST_FILES)
-	uv run --all-packages pytest
+	uv run --all-packages pytest $(PYTEST_ARGS)
 	npm run check --workspaces --if-present
+
+# Regenerate the API contract and the web client types from the FastAPI app.
+openapi:
+	uv run --all-packages python apps/api/scripts/generate_openapi.py
+	npm run generate:api --workspace apps/web
+
+# Fails when the committed contract or client types differ from the code.
+openapi-check: openapi
+	git diff --exit-code -- contracts/api/openapi.json apps/web/lib/api/schema.d.ts
 
 # A project-owned evaluations/thresholds.yml takes precedence over the shipped example.
 EVAL_THRESHOLDS ?= $(firstword $(wildcard evaluations/thresholds.yml) evaluations/thresholds.example.yml)
@@ -44,7 +56,10 @@ eval-full:
 .PHONY: new-project check-generator
 export NAME DISPLAY DEST
 
+# CI runs the generated-project check as its own job (SKIP_GENERATOR=1 elsewhere).
+ifeq ($(SKIP_GENERATOR),)
 check: check-generator
+endif
 
 check-generator:
 	uv run --all-packages mypy --strict scripts/new_project.py

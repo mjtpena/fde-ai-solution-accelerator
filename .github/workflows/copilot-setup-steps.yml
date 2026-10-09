@@ -1,12 +1,17 @@
 name: Copilot Setup Steps
 
-# Prepares the environment the GitHub Copilot coding agent works in.
+# Prepares the environment the GitHub Copilot coding agent works in. It mirrors the
+# "Quality checks" job in pull-request.yml (same tool versions, the same TLS
+# PostgreSQL and Azurite, the same `make check`), so the agent sees what CI sees.
 on:
   workflow_dispatch:
   push:
     paths: [.github/workflows/copilot-setup-steps.yml]
   pull_request:
     paths: [.github/workflows/copilot-setup-steps.yml]
+
+permissions:
+  contents: read
 
 jobs:
   # The job MUST be named copilot-setup-steps
@@ -15,43 +20,79 @@ jobs:
     timeout-minutes: 30
     permissions:
       contents: read
-    services:
-      postgres:
-        image: postgres:16
-        env:
-          POSTGRES_USER: app
-          POSTGRES_PASSWORD: app
-          POSTGRES_DB: app
-        ports: ["5432:5432"]
-        options: >-
-          --health-cmd "pg_isready -U app" --health-interval 5s --health-timeout 5s --health-retries 10
-      azurite:
-        image: mcr.microsoft.com/azure-storage/azurite
-        ports: ["10000:10000"]
+    env:
+      NEXT_TELEMETRY_DISABLED: "1"
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          persist-credentials: false
 
-      - uses: astral-sh/setup-uv@v5
+      - uses: astral-sh/setup-uv@c18668ad3cf93ea998bef934396af7bb5c839dc7 # v10.2.0
         with:
           enable-cache: true
+          cache-dependency-glob: |
+            uv.lock
+            **/pyproject.toml
 
-      - uses: actions/setup-python@v5
+      - uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7
         with:
           python-version: "3.12"
 
-      - uses: actions/setup-node@v4
-        if: hashFiles('package-lock.json') != ''
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7
         with:
           node-version: "22"
           cache: npm
           cache-dependency-path: package-lock.json
 
-      - name: Install Python deps
-        run: uv sync --all-packages --frozen
+      - name: Start PostgreSQL for database-backed tests
+        run: |
+          tls_dir="$RUNNER_TEMP/postgres-tls"
+          mkdir -p "$tls_dir"
+          openssl req -new -x509 -days 1 -nodes -subj "/CN=localhost" \
+            -addext "subjectAltName=DNS:localhost,IP:127.0.0.1" \
+            -keyout "$tls_dir/server.key" -out "$tls_dir/server.crt"
+          cp "$tls_dir/server.crt" "$RUNNER_TEMP/postgres-ca.crt"
+          sudo chown 70:70 "$tls_dir/server.key" "$tls_dir/server.crt"
+          sudo chmod 600 "$tls_dir/server.key"
+          docker run --detach --name postgres --publish 5432:5432 \
+            --env POSTGRES_PASSWORD=ci-only-password \
+            --volume "$tls_dir:/tls:ro" \
+            postgres:16-alpine \
+            -c ssl=on -c ssl_cert_file=/tls/server.crt -c ssl_key_file=/tls/server.key
+          for attempt in $(seq 1 30); do
+            if docker exec postgres psql -U postgres -h 127.0.0.1 -c 'select 1' >/dev/null 2>&1; then
+              exit 0
+            fi
+            sleep 2
+          done
+          docker logs postgres
+          exit 1
 
-      - name: Install web deps
-        if: hashFiles('package-lock.json') != ''
-        run: npm ci
+      - name: Start Azurite for queue and blob tests
+        run: |
+          docker run --detach --name azurite --publish 10000:10000 --publish 10001:10001 \
+            mcr.microsoft.com/azure-storage/azurite:3.33.0 \
+            azurite --blobHost 0.0.0.0 --queueHost 0.0.0.0 --skipApiVersionCheck --loose
+          for attempt in $(seq 1 30); do
+            if curl --silent --output /dev/null http://127.0.0.1:10001/; then exit 0; fi
+            sleep 1
+          done
+          docker logs azurite
+          exit 1
+
+      # Later agent steps inherit these, so database and Azurite tests run, not skip.
+      - name: Export test service settings
+        run: |
+          {
+            echo "TEST_POSTGRES_DSN=postgresql://postgres:ci-only-password@127.0.0.1:5432/postgres"
+            echo "TEST_POSTGRES_CA_FILE=$RUNNER_TEMP/postgres-ca.crt"
+            echo "TEST_AZURITE_CONNECTION_STRING=UseDevelopmentStorage=true"
+          } >> "$GITHUB_ENV"
+
+      - name: Install dependencies
+        run: |
+          uv sync --all-packages --frozen
+          npm ci
 
       - name: Install Bicep
         run: az bicep install
@@ -59,9 +100,5 @@ jobs:
       - name: Verify toolchain
         run: |
           uv lock --check
-          make check
+          make check SKIP_GENERATOR=1
           make eval-smoke
-
-      - name: Verify web toolchain
-        if: hashFiles('apps/web/package.json') != ''
-        run: npm --prefix apps/web run --silent typecheck --if-present

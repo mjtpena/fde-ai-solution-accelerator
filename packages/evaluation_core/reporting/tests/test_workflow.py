@@ -1,3 +1,4 @@
+import re
 from pathlib import Path
 
 import yaml
@@ -14,7 +15,8 @@ def test_workflow_separates_pr_execution_from_privileged_commenting() -> None:
     assert smoke["permissions"] == {"contents": "read"}
     assert any(step.get("run") == "make eval-smoke" for step in smoke["steps"])
     assert any(
-        step.get("uses") == "actions/upload-artifact@v4" and step.get("if") == "always()"
+        step.get("uses", "").startswith("actions/upload-artifact@")
+        and step.get("if") == "always()"
         for step in smoke["steps"]
     )
     assert set(workflow[True]) == {"pull_request"}
@@ -49,3 +51,14 @@ def test_workflow_separates_pr_execution_from_privileged_commenting() -> None:
     assert "github.rest.issues.createComment" in scripts
     assert "github-actions[bot]" in scripts
     assert "Buffer.byteLength" in scripts
+
+
+def test_every_action_is_pinned_to_a_commit_sha() -> None:
+    root = Path(__file__).resolve().parents[4]
+    for path in sorted((root / ".github" / "workflows").glob("*.yml")):
+        workflow = yaml.safe_load(path.read_text(encoding="utf-8"))
+        for job in workflow["jobs"].values():
+            for step in job.get("steps", ()):
+                if "uses" in step:
+                    reference = step["uses"].split("@", 1)[1]
+                    assert re.fullmatch(r"[0-9a-f]{40}", reference), (path.name, step["uses"])

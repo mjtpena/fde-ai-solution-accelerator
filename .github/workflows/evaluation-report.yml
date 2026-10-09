@@ -31,7 +31,7 @@ jobs:
     steps:
       - name: Identify the evaluated PR and artifact
         id: report
-        uses: actions/github-script@v8
+        uses: actions/github-script@ed597411d8f924073f98dfc5c65a23a2325f34cd # v8
         with:
           script: |
             const run = context.payload.workflow_run;
@@ -73,7 +73,7 @@ jobs:
             core.setOutput('has_artifact', artifacts.some(a =>
               a.name === 'evaluation-report' && !a.expired
             ));
-      - uses: actions/download-artifact@v4
+      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
         if: steps.report.outputs.has_artifact == 'true'
         with:
           name: evaluation-report
@@ -82,7 +82,7 @@ jobs:
           run-id: ${{ github.event.workflow_run.id }}
       - name: Publish Markdown without executing artifact contents
         if: steps.report.outputs.pr != ''
-        uses: actions/github-script@v8
+        uses: actions/github-script@ed597411d8f924073f98dfc5c65a23a2325f34cd # v8
         env:
           PR_NUMBER: ${{ steps.report.outputs.pr }}
           HAS_ARTIFACT: ${{ steps.report.outputs.has_artifact }}
