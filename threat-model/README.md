@@ -78,7 +78,7 @@ Run `uv run pytest -q tests/test_threat_model.py` before you push.
   It relies on the platform default.
 * C-023: security scans are not required status checks until a repository ruleset is
   configured (`.github/SECURITY_SCANNING.md`).
-* C-024: the web and hosted-agent Dockerfiles pin base images by tag, not by digest.
+* C-024: the web Dockerfile pins its base image by tag, not by digest.
 * C-025: parsers run in the separate worker container without a dedicated sandbox or
   per-document resource limits.
 * C-026: there is no network egress restriction for tool code.
