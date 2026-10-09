@@ -8,8 +8,12 @@ version = "0.1.0"
 requires-python = "==3.12.*"
 dependencies = [
     "pypdf>=5.0,<7",
-    "pydantic>=2.7,<3",
+    "pydantic>=2.10,<3",
+    "fde-security-core",
 ]
+
+[tool.uv.sources]
+fde-security-core = { workspace = true }
 
 [tool.setuptools]
 packages = [

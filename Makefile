@@ -15,6 +15,7 @@ migrate:
 check:
 	uv run --all-packages ruff check
 	uv run --all-packages mypy --strict
+	uv run --all-packages mypy --strict --package accelerator.retrieval_core
 	uv run --all-packages pytest
 	npm run check --workspaces --if-present
 

@@ -17,6 +17,7 @@ dev = [
 
 [tool.uv]
 package = false
+config-settings-package = { fde-retrieval-core = { editable_mode = "strict" } }
 
 [tool.uv.workspace]
 members = [
@@ -45,8 +46,9 @@ files = [
     "packages/agent_core",
     "packages/evaluation_core",
     "packages/observability_core/src",
-    "packages/retrieval_core",
+    "packages/retrieval_core/search/tests",
     "packages/security_core",
+    "apps/api/src/accelerator/infrastructure/search",
     "workers/ingestion/src",
     "apps/api/src/accelerator/identity",
     "apps/api/tests/test_scope_resolver.py",
