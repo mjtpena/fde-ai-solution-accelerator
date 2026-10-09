@@ -1,0 +1,240 @@
+# Threat register. Schema and upkeep rules: threat-model/README.md.
+# Sources: docs/spec.md section 7 (security baseline) and the non-negotiable rules
+# in .github/copilot-instructions.md. Controls are defined in controls.yml.
+schema_version: 1
+threats:
+  - id: T-001
+    title: Cross-scope data access through retrieval
+    description: >-
+      A user receives evidence, answers or citations from a scope they are not a
+      member of. Causes include a missing or wrong search filter, a filter injection,
+      or a misconfigured index.
+    stride: information_disclosure
+    assets: [indexed documents, answers and citations, scope memberships]
+    likelihood: medium
+    impact: high
+    controls: [C-001, C-002, C-027]
+
+  - id: T-002
+    title: Scope IDs supplied by the client or the model
+    description: >-
+      A request body, query string, token claim, tool argument or model output names
+      a scope ID, which the server then uses to widen data access or to target a
+      write.
+    stride: elevation_of_privilege
+    assets: [scope boundaries, tool side effects]
+    likelihood: high
+    impact: high
+    controls: [C-001, C-003, C-027]
+
+  - id: T-003
+    title: Direct prompt injection
+    description: >-
+      A user writes instructions that try to override the system prompt, disclose
+      instructions, or make the model call tools outside policy.
+    stride: tampering
+    assets: [system instructions, tool side effects, answers]
+    likelihood: high
+    impact: medium
+    controls: [C-004, C-008, C-027]
+
+  - id: T-004
+    title: Indirect prompt injection through retrieved documents
+    description: >-
+      A poisoned document in the index contains instructions. When it is retrieved as
+      evidence, the model follows them, for example to request a write, change an
+      answer or leak other evidence.
+    stride: tampering
+    assets: [answers, tool side effects, indexed documents]
+    likelihood: medium
+    impact: high
+    controls: [C-004, C-005, C-008, C-027]
+
+  - id: T-005
+    title: Fabricated or hallucinated citations
+    description: >-
+      The model cites chunk IDs that were not retrieved this turn, or answers without
+      sufficient evidence, giving users false confidence in ungrounded claims.
+    stride: tampering
+    assets: [answer integrity, user trust]
+    likelihood: high
+    impact: medium
+    controls: [C-006, C-007, C-027]
+
+  - id: T-006
+    title: Write-tool execution without approval (excessive agency)
+    description: >-
+      The model or a caller triggers a write or destructive tool without a human
+      approving it, or a prohibited tool runs.
+    stride: elevation_of_privilege
+    assets: [downstream systems changed by tools]
+    likelihood: medium
+    impact: high
+    controls: [C-008, C-009, C-026, C-027]
+
+  - id: T-007
+    title: Approval replay
+    description: >-
+      An approved write is executed more than once, by resubmitting the same approval,
+      by concurrent requests, or by using it after expiry.
+    stride: tampering
+    assets: [downstream systems changed by tools, approval records]
+    likelihood: medium
+    impact: high
+    controls: [C-009, C-019]
+
+  - id: T-008
+    title: Approval argument tampering
+    description: >-
+      The tool name or arguments are changed after approval, or the caller supplies
+      forged approval fields, so the executed action differs from the one approved.
+    stride: tampering
+    assets: [downstream systems changed by tools, approval records]
+    likelihood: medium
+    impact: high
+    controls: [C-009, C-003]
+
+  - id: T-009
+    title: Self-approval or approval from outside the scope
+    description: >-
+      The requester approves their own write, a user without the Approver role
+      decides an approval, or an approver from another scope decides it.
+    stride: elevation_of_privilege
+    assets: [approval workflow, downstream systems changed by tools]
+    likelihood: medium
+    impact: high
+    controls: [C-010, C-001, C-019]
+
+  - id: T-010
+    title: Forged tokens and JWT validation flaws
+    description: >-
+      An attacker gets requests accepted by forging tokens: alg=none, HS256 key
+      confusion, wrong issuer or audience, expired tokens, unknown key IDs, or
+      forcing repeated JWKS refreshes.
+    stride: spoofing
+    assets: [API identity boundary, app roles]
+    likelihood: medium
+    impact: high
+    controls: [C-011, C-028]
+
+  - id: T-011
+    title: Access-token theft and replay from the browser
+    description: >-
+      XSS, a malicious script origin or persistent storage leaks a user's bearer token,
+      which is then replayed against the API.
+    stride: spoofing
+    assets: [user access tokens, user data]
+    likelihood: medium
+    impact: high
+    controls: [C-012, C-013, C-011]
+
+  - id: T-012
+    title: Secrets in code or configuration
+    description: >-
+      Keys, passwords or connection strings are committed, baked into images or set
+      as configuration, and later leak.
+    stride: information_disclosure
+    assets: [Azure resource credentials, database]
+    likelihood: medium
+    impact: high
+    controls: [C-014, C-015]
+
+  - id: T-013
+    title: Sensitive data in logs and telemetry
+    description: >-
+      Prompts, answers, retrieved text, tokens, emails or exception messages are
+      written to logs or traces. They then reach a wider audience than the source
+      data and are kept for longer.
+    stride: information_disclosure
+    assets: [user prompts, document content, credentials, telemetry store]
+    likelihood: medium
+    impact: high
+    controls: [C-016]
+
+  - id: T-014
+    title: Cost exhaustion (denial of wallet)
+    description: >-
+      High request rates, long generations, unbounded tool loops or stalled calls
+      consume model tokens and compute, raising cost or reducing availability.
+    stride: denial_of_service
+    assets: [model quota, budget, availability]
+    likelihood: high
+    impact: medium
+    controls: [C-017, C-018]
+
+  - id: T-015
+    title: Audit tampering and repudiation
+    description: >-
+      Audit records of approvals, tool executions or authentication failures are
+      changed or deleted, or cannot be tied to a request, so actions cannot be traced.
+    stride: repudiation
+    assets: [audit log]
+    likelihood: low
+    impact: high
+    controls: [C-019, C-020, C-028]
+
+  - id: T-016
+    title: Vulnerable or malicious dependencies
+    description: >-
+      A Python or npm dependency contains a known vulnerability or malicious code.
+    stride: tampering
+    assets: [build and runtime integrity]
+    likelihood: medium
+    impact: high
+    controls: [C-023]
+
+  - id: T-017
+    title: Compromised container images or CI actions
+    description: >-
+      A mutable image tag or GitHub Action reference is swapped for malicious content,
+      or the deployment pipeline's credentials are stolen.
+    stride: tampering
+    assets: [build pipeline, deployed images, Azure subscription]
+    likelihood: low
+    impact: high
+    controls: [C-023, C-024]
+
+  - id: T-018
+    title: Data exfiltration through tools
+    description: >-
+      Through injection or misuse, the model passes retrieved data into tool arguments
+      that send it to an attacker-controlled destination or to another scope.
+    stride: information_disclosure
+    assets: [indexed documents, user data]
+    likelihood: medium
+    impact: high
+    controls: [C-003, C-008, C-026]
+
+  - id: T-019
+    title: Insecure database transport
+    description: >-
+      Database traffic, including the Entra access token used as the password, is
+      sent without verified TLS, allowing interception or impersonation of the
+      server.
+    stride: information_disclosure
+    assets: [database credentials, application data]
+    likelihood: low
+    impact: high
+    controls: [C-021]
+
+  - id: T-020
+    title: Over-privileged identities
+    description: >-
+      A managed identity or database role has more permissions than its workload
+      needs, so one compromised component has a larger blast radius.
+    stride: elevation_of_privilege
+    assets: [Azure resources, database]
+    likelihood: medium
+    impact: high
+    controls: [C-022, C-020, C-014]
+
+  - id: T-021
+    title: Malicious or oversized uploads
+    description: >-
+      Uploaded documents of an unexpected type, oversized documents or crafted PDFs
+      exhaust worker resources or exploit parser bugs.
+    stride: denial_of_service
+    assets: [ingestion worker, index integrity]
+    likelihood: medium
+    impact: medium
+    controls: [C-025]

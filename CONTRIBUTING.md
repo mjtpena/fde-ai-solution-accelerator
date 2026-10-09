@@ -36,9 +36,10 @@ workspace's API-client generation, linting, formatting check, type-checking and
 tests. The build commands produce Python distributions and the standalone
 Next.js application.
 
-`make eval-smoke` currently reports that evaluations are not implemented until
-M5 (issue #30). A successful placeholder invocation is not evidence that model
-quality has been evaluated.
+`make eval-smoke` runs the deterministic smoke evaluation of the product's control
+plane and gates every pull request (see `packages/evaluation_core/runners/README.md`).
+It does not measure model quality; `make eval-full` does, against a deployed
+environment.
 
 ## Required pull-request status check
 

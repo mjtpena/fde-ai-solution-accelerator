@@ -42,8 +42,8 @@ document contents.
       solution-specific smoke and full evaluation suites.
 - [ ] The solution-specific evaluation suite, project-owned thresholds, and
       accepted baseline exist; the candidate revision passed the required
-      evaluation gates. The `make eval-smoke` placeholder and `make check`
-      result alone are not evaluation evidence.
+      evaluation gates. The offline `make eval-smoke` gate and `make check`
+      alone are not model-quality evidence.
 - [ ] The current deployed revision, last known-good immutable artifact, and
       matching configuration are recorded.
 - [ ] Compatibility/recovery considerations for database, index, and contract
