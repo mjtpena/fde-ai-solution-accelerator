@@ -1,10 +1,9 @@
 import importlib
 import importlib.metadata
 import json
-from pathlib import Path
 import tomllib
 import unittest
-
+from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
 MEMBERS = {
@@ -57,6 +56,33 @@ class ScaffoldTests(unittest.TestCase):
         makefile = (ROOT / "Makefile").read_text(encoding="utf-8")
         self.assertIn("python -m accelerator.evaluation_core.reporting.smoke", makefile)
 
+    def test_coverage_gate_measures_every_runtime_package_present(self) -> None:
+        coverage = tomllib.loads((ROOT / "pyproject.toml").read_text(encoding="utf-8"))["tool"][
+            "coverage"
+        ]
+        self.assertGreaterEqual(coverage["report"]["fail_under"], 85)
+        sources = set(coverage["run"]["source"])
+        self.assertIn("accelerator", sources)
+        # Imported as infrastructure.hosted_agent, so the accelerator source misses it.
+        # Generated projects do not copy infrastructure/ and drop the entry.
+        hosted_agent = (ROOT / "infrastructure" / "hosted_agent").is_dir()
+        self.assertEqual("infrastructure.hosted_agent" in sources, hosted_agent)
+
 
 if __name__ == "__main__":
     unittest.main()
+
+    def test_every_azurite_the_tests_use_skips_the_api_version_check(self) -> None:
+        # The storage SDKs pinned in uv.lock send a newer x-ms-version than
+        # Azurite 3.33 accepts; without the flag the emulator rejects every call.
+        compose = (ROOT / "docker-compose.yml").read_text(encoding="utf-8")
+        workflow = (ROOT / ".github/workflows/pull-request.yml").read_text(encoding="utf-8")
+        azurite_commands = [
+            line
+            for line in (compose + workflow).splitlines()
+            if line.strip().startswith(("command: azurite", "azurite --"))
+        ]
+        self.assertGreaterEqual(len(azurite_commands), 3)
+        for command in azurite_commands:
+            with self.subTest(command=command.strip()):
+                self.assertIn("--skipApiVersionCheck", command)

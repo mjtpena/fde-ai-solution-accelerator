@@ -1,14 +1,14 @@
 import hashlib
 import json
 from collections.abc import Callable
+from contextlib import AbstractAsyncContextManager
 from datetime import UTC, datetime, timedelta
-from typing import AsyncContextManager, Generic, Literal, Protocol, TypeVar
+from typing import Generic, Literal, Protocol, TypeVar
 from uuid import UUID, uuid4
 
 from pydantic import BaseModel
 
 from ..tools import EnterpriseTool, ExecutionContextProtocol, IdempotentWriteTool
-
 from .models import Approval, ApprovalAuditEvent
 
 TArgs = TypeVar("TArgs", bound=BaseModel)
@@ -46,8 +46,15 @@ class ApprovalReplayError(ApprovalStateError):
     pass
 
 
+class ApprovalAuthorizationError(ApprovalError):
+    """The caller may not decide this approval (role or separation of duties)."""
+
+
+APPROVER_ROLE = "Approver"
+
+
 class ApprovalRepository(Protocol):
-    def transaction(self) -> AsyncContextManager[None]: ...
+    def transaction(self) -> AbstractAsyncContextManager[None]: ...
 
     async def get_for_update(self, approval_id: UUID) -> Approval | None: ...
 
@@ -182,6 +189,7 @@ class ApprovalService(Generic[TArgs, TResult]):
         async with self._repository.transaction():
             approval = await self._locked_approval(approval_id)
             self._scope_matches(approval, ctx)
+            self._authorize_decision(approval, ctx)
             if approval.status == "pending" and approval.expires_at <= self._now():
                 expired_approval = approval.model_copy(update={"status": "expired"})
                 await self._repository.update(expired_approval)
@@ -190,7 +198,9 @@ class ApprovalService(Generic[TArgs, TResult]):
             else:
                 if approval.status != "pending":
                     self._require_pending(approval)
-                decided = approval.model_copy(update={"status": decision, "decided_by": ctx.user_id})
+                decided = approval.model_copy(
+                    update={"status": decision, "decided_by": ctx.user_id}
+                )
                 await self._repository.update(decided)
                 await self._audit(decided, decision, ctx.user_id)
         if expired:
@@ -212,6 +222,14 @@ class ApprovalService(Generic[TArgs, TResult]):
         self._single_scope(ctx)
         if approval.tool_name != tool_name or approval.args_hash != canonical_args_hash(args):
             raise ApprovalMismatchError("tool or arguments do not match the approval")
+
+    @staticmethod
+    def _authorize_decision(approval: Approval, ctx: ApprovalContext) -> None:
+        """Every write decision needs the Approver role and a second person."""
+        if APPROVER_ROLE not in ctx.roles:
+            raise ApprovalAuthorizationError("deciding an approval requires the Approver role")
+        if ctx.user_id == approval.requested_by:
+            raise ApprovalAuthorizationError("the requester cannot decide their own approval")
 
     @staticmethod
     def _scope_matches(approval: Approval, ctx: ApprovalContext) -> None:

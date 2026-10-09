@@ -2,8 +2,8 @@
   "schema_version": 1,
   "version_file": "pyproject.toml",
   "copy": [
-    ".github", ".vscode", ".env.example", ".gitignore", ".pre-commit-config.yaml",
-    "AGENTS.md", "CONTRIBUTING.md", "LICENSE", "Makefile", "apps", "contracts",
+    ".github", ".vscode", ".dockerignore", ".env.example", ".gitignore", ".pre-commit-config.yaml",
+    "AGENTS.md", "CONTRIBUTING.md", "LICENSE", "Makefile", "SECURITY.md", "apps", "conftest.py", "contracts",
     "docs", "engagement", "evaluations", "packages", "scripts", "tests",
     "threat-model", "workers", "docker-compose.yml", "package.json",
     "package-lock.json", "pyproject.toml", "uv.lock"
@@ -12,8 +12,12 @@
     ".git", ".venv", "node_modules", "__pycache__", ".pytest_cache", ".mypy_cache",
     ".ruff_cache", ".next", ".env", "build", "dist"
   ],
+  "workflows": [
+    "pull-request.yml", "evaluation.yml", "evaluation-report.yml", "security.yml",
+    "copilot-setup-steps.yml"
+  ],
   "remove": [
-    "engagement/examples", "evaluations/example-datasets",
+    "engagement/examples",
     "scripts/new_project.py", "scripts/.gitkeep"
   ],
   "renames": {

@@ -115,7 +115,7 @@ class RedactionTests(unittest.TestCase):
 
     def test_redacts_utf8_bytes_and_fails_closed_on_non_utf8_bytes(self) -> None:
         bearer_value = "Bear" + "er " + "bytes-fixture"
-        raw = f"Authorization: {bearer_value}".encode("utf-8")
+        raw = f"Authorization: {bearer_value}".encode()
         invalid_utf8 = b"\xffapi_key=unreadable-fixture"
         attributes: dict[str, RedactionValue] = {
             "binary": b"api_key=bytes-credential-fixture",

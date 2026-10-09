@@ -33,7 +33,9 @@ def test_document_and_chunk_contracts_support_optional_metadata() -> None:
         source_uri="https://example.test/reference",
         content_hash="sha256:abc",
     )
-    chunk = Chunk(chunk_id="chunk-1", document_id=document.document_id, text="Untrusted source text")
+    chunk = Chunk(
+        chunk_id="chunk-1", document_id=document.document_id, text="Untrusted source text"
+    )
 
     assert document.effective_date is None
     assert chunk.version is None

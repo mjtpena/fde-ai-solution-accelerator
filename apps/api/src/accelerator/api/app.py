@@ -1,12 +1,21 @@
+from collections.abc import AsyncIterator, Awaitable, Callable, Sequence
 from contextlib import asynccontextmanager
-from typing import AsyncIterator
+from typing import Any
 
 import httpx
 from fastapi import Depends, FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
-from accelerator.api.audit import AuthFailureAuditMiddleware, router as audit_router
-from accelerator.api.chat import ChatTurnPort, router as chat_router
+from accelerator.api.approvals import router as approvals_router
+from accelerator.api.audit import (
+    AuthFailureAuditMiddleware,
+    AuthFailureAuditThrottle,
+)
+from accelerator.api.audit import (
+    router as audit_router,
+)
+from accelerator.api.chat import ChatTurnPort
+from accelerator.api.chat import router as chat_router
 from accelerator.api.cost_guard import (
     ContextDependency,
     create_cost_guard_dependency,
@@ -16,8 +25,11 @@ from accelerator.api.health import router as health_router
 from accelerator.api.retrieval_diagnostics import (
     InMemoryRetrievalDiagnosticsStore,
     RetrievalDiagnosticsStore,
+)
+from accelerator.api.retrieval_diagnostics import (
     router as retrieval_diagnostics_router,
 )
+from accelerator.api.security_headers import SecurityHeadersMiddleware
 from accelerator.configuration.settings import Settings
 from accelerator.domain.audit import AuditRepository
 from accelerator.identity.authentication import AppRole, require_any_role
@@ -26,15 +38,43 @@ from accelerator.identity.scope_resolver import (
     configure_scope_resolver,
     install_scope_boundary,
 )
+from accelerator.identity.scope_resolver import (
+    get_execution_context as resolve_execution_context,
+)
+from accelerator.observability_core import Telemetry, TracingMiddleware
 from accelerator.security_core.authorisation.memberships import ScopeMembershipRepository
 from accelerator.security_core.cost_guard import RateLimiter, TokenBudgetExceeded
+from accelerator.security_core.infrastructure.database import SessionFactory
+
+require_app_role = require_any_role(*AppRole)
+
+# Every router except the health probes requires a validated token with an app role.
+AUTHENTICATED: dict[str, Any] = {
+    "dependencies": [Depends(require_app_role)],
+    "responses": {
+        401: {"description": "Missing or invalid bearer token."},
+        403: {"description": "Insufficient app role."},
+        503: {"description": "Identity, scope, or audit persistence is unavailable."},
+    },
+}
 
 
 @asynccontextmanager
 async def lifespan(app: FastAPI) -> AsyncIterator[None]:
-    async with httpx.AsyncClient(timeout=5) as client:
-        app.state.http_client = client
-        yield
+    try:
+        async with httpx.AsyncClient(timeout=5) as client:
+            app.state.http_client = client
+            yield
+    finally:
+        # Release every resource even if one release fails, then report all failures.
+        failures: list[Exception] = []
+        for callback in reversed(app.state.shutdown_callbacks):
+            try:
+                await callback()
+            except Exception as error:  # collected and re-raised below
+                failures.append(error)
+        if failures:
+            raise ExceptionGroup("API shutdown callbacks failed", failures)
 
 
 def create_app(
@@ -46,6 +86,9 @@ def create_app(
     rate_limiter: RateLimiter | None = None,
     chat_turn: ChatTurnPort | None = None,
     scope_repository: ScopeMembershipRepository | None = None,
+    session_factory: SessionFactory | None = None,
+    on_shutdown: Sequence[Callable[[], Awaitable[None]]] = (),
+    telemetry: Telemetry | None = None,
 ) -> FastAPI:
     app = FastAPI(
         title="FDE AI Solution Accelerator API",
@@ -54,42 +97,60 @@ def create_app(
         redoc_url=None,
         openapi_url=None,
         lifespan=lifespan,
-        dependencies=[Depends(require_any_role(*AppRole))],
-        responses={
-            401: {"description": "Missing or invalid bearer token."},
-            403: {"description": "Insufficient app role."},
-            503: {"description": "Identity, scope, or audit persistence is unavailable."},
-        },
     )
     app.state.settings = settings
+    app.state.session_factory = session_factory
+    app.state.shutdown_callbacks = tuple(on_shutdown)
     app.state.retrieval_diagnostics_store = (
         diagnostics_store
         if diagnostics_store is not None
         else InMemoryRetrievalDiagnosticsStore()
     )
     app.add_exception_handler(TokenBudgetExceeded, handle_token_budget_exceeded)
-    if get_execution_context is not None:
-        app.state.request_cost_guard = create_cost_guard_dependency(
-            settings,
-            get_execution_context,
-            rate_limiter=rate_limiter,
-        )
+    request_cost_guard = create_cost_guard_dependency(
+        settings,
+        get_execution_context if get_execution_context is not None else resolve_execution_context,
+        rate_limiter=rate_limiter,
+    )
+    app.state.request_cost_guard = request_cost_guard
+    # Model-backed routes are rate limited per user and scope set and get a token budget.
+    cost_guarded: dict[str, Any] = {
+        "dependencies": [*AUTHENTICATED["dependencies"], Depends(request_cost_guard)],
+        "responses": {
+            **AUTHENTICATED["responses"],
+            429: {"description": "Rate limit or token budget exceeded."},
+        },
+    }
     app.state.token_validator = EntraTokenValidator(settings)
     app.state.audit_repository = audit_repository
+    app.state.auth_failure_audit_throttle = AuthFailureAuditThrottle(
+        per_client_limit=settings.auth_failure_audit_per_client_limit,
+        global_limit=settings.auth_failure_audit_global_limit,
+        window_seconds=settings.auth_failure_audit_window_seconds,
+    )
     app.add_middleware(AuthFailureAuditMiddleware)
     app.add_middleware(
         CORSMiddleware,
         allow_origins=[settings.web_origin],
-        allow_methods=["*"],
-        allow_headers=["*"],
+        allow_methods=["GET", "POST", "OPTIONS"],
+        allow_headers=["Authorization", "Content-Type", "Accept", "X-Correlation-ID"],
+        expose_headers=["X-Correlation-ID", "Retry-After"],
+        max_age=600,
     )
+    app.add_middleware(SecurityHeadersMiddleware)
     app.include_router(health_router)
-    app.include_router(retrieval_diagnostics_router)
-    app.include_router(audit_router)
+    app.include_router(retrieval_diagnostics_router, **cost_guarded)
+    app.include_router(audit_router, **AUTHENTICATED)
+    app.include_router(approvals_router, **AUTHENTICATED)
     if chat_turn is not None:
         app.state.chat_turn = chat_turn
     if scope_repository is not None:
         configure_scope_resolver(app, scope_repository)
-    app.include_router(chat_router)
+    app.include_router(chat_router, **cost_guarded)
+    if telemetry is not None:
+        app.state.telemetry = telemetry
+        # Inside the correlation boundary, which owns X-Correlation-ID: every request
+        # span carries the same validated ID the client sees.
+        app.add_middleware(TracingMiddleware, telemetry=telemetry)
     install_scope_boundary(app)
     return app

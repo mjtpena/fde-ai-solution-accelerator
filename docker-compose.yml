@@ -18,7 +18,10 @@ services:
 
   azurite:
     image: mcr.microsoft.com/azure-storage/azurite:3.33.0
-    command: azurite --location /data --blobHost 0.0.0.0 --queueHost 0.0.0.0 --tableHost 0.0.0.0
+    # --skipApiVersionCheck: the storage SDKs in uv.lock request a newer service API
+    # version than this emulator accepts, and it would refuse every call (CI and
+    # tests/e2e_local run it the same way).
+    command: azurite --location /data --blobHost 0.0.0.0 --queueHost 0.0.0.0 --tableHost 0.0.0.0 --skipApiVersionCheck --loose
     ports:
       - "${AZURITE_BLOB_PORT:-10000}:10000"
       - "${AZURITE_QUEUE_PORT:-10001}:10001"
@@ -36,30 +39,48 @@ services:
       retries: 10
       start_period: 5s
 
+  migrate:
+    build:
+      context: .
+      dockerfile: apps/api/Dockerfile
+    image: fde-accelerator-api:local
+    command: ["python", "-m", "accelerator.migrations", "upgrade", "head"]
+    environment:
+      API_DATABASE_URL: postgresql+asyncpg://${POSTGRES_USER:-accelerator}:${POSTGRES_PASSWORD:-local-development-only}@postgres:5432/${POSTGRES_DB:-accelerator}
+    depends_on:
+      postgres:
+        condition: service_healthy
+    restart: "no"
+
   api:
-    image: python:3.12-slim
-    working_dir: /workspace
-    volumes:
-      - .:/workspace:ro
-    command:
-      - /bin/sh
-      - -c
-      - >-
-        cp -a /workspace/apps/api /tmp/accelerator-api
-        && cp -a /workspace/packages/agent_core /tmp/accelerator-agent-core
-        && cp -a /workspace/packages/security_core /tmp/accelerator-security-core
-        && python -m pip install --no-cache-dir /tmp/accelerator-agent-core /tmp/accelerator-security-core /tmp/accelerator-api 'uvicorn[standard]>=0.30,<1'
-        && python -m uvicorn accelerator.api.main:app --host 0.0.0.0 --port 8000
+    build:
+      context: .
+      dockerfile: apps/api/Dockerfile
+    image: fde-accelerator-api:local
     environment:
       API_ENVIRONMENT: ${API_ENVIRONMENT:-development}
       API_ENTRA_TENANT_ID: ${ENTRA_TENANT_ID:?Set ENTRA_TENANT_ID in .env}
       API_ENTRA_AUDIENCE: ${ENTRA_API_AUDIENCE:?Set ENTRA_API_AUDIENCE in .env}
       API_WEB_ORIGIN: ${WEB_ORIGIN:-http://localhost:3000}
+      # Optional Azure services; blank values are treated as unset.
+      API_FOUNDRY_PROJECT_ENDPOINT: ${API_FOUNDRY_PROJECT_ENDPOINT:-}
+      API_FOUNDRY_MODEL_DEPLOYMENT: ${API_FOUNDRY_MODEL_DEPLOYMENT:-}
+      API_FOUNDRY_EMBEDDING_DEPLOYMENT: ${API_FOUNDRY_EMBEDDING_DEPLOYMENT:-}
+      API_SEARCH_VECTOR_DIMENSIONS: ${API_SEARCH_VECTOR_DIMENSIONS:-}
+      AZURE_CLIENT_ID: ${AZURE_CLIENT_ID:-}
+      API_SEARCH_ENDPOINT: ${API_SEARCH_ENDPOINT:-}
+      API_SEARCH_INDEX_NAME: ${API_SEARCH_INDEX_NAME:-}
+      # Without it, development runs unscreened (logged); production requires it.
+      API_CONTENT_SAFETY_ENDPOINT: ${API_CONTENT_SAFETY_ENDPOINT:-}
+      # screened (default; required in production) or incremental (development only).
+      API_STREAM_RELEASE_MODE: ${API_STREAM_RELEASE_MODE:-screened}
+      APPLICATIONINSIGHTS_CONNECTION_STRING: ${APPLICATIONINSIGHTS_CONNECTION_STRING:-}
+      API_DATABASE_URL: postgresql+asyncpg://${POSTGRES_USER:-accelerator}:${POSTGRES_PASSWORD:-local-development-only}@postgres:5432/${POSTGRES_DB:-accelerator}
     ports:
       - "${API_PORT:-8000}:8000"
     depends_on:
-      postgres:
-        condition: service_healthy
+      migrate:
+        condition: service_completed_successfully
       azurite:
         condition: service_healthy
     healthcheck:
@@ -67,7 +88,7 @@ services:
         - CMD
         - python
         - -c
-        - "import socket; socket.create_connection(('127.0.0.1', 8000), timeout=2).close()"
+        - "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8000/healthz', timeout=2).close()"
       interval: 10s
       timeout: 3s
       retries: 5
@@ -78,12 +99,13 @@ services:
       context: .
       dockerfile: apps/web/Dockerfile
       args:
-        NEXT_PUBLIC_API_URL: ${NEXT_PUBLIC_API_URL:-http://localhost:8000}
         NEXT_PUBLIC_ENTRA_TENANT_ID: ${ENTRA_TENANT_ID:?Set ENTRA_TENANT_ID in .env}
         NEXT_PUBLIC_ENTRA_CLIENT_ID: ${ENTRA_WEB_CLIENT_ID:?Set ENTRA_WEB_CLIENT_ID in .env}
         NEXT_PUBLIC_ENTRA_API_SCOPE: ${ENTRA_API_SCOPE:?Set ENTRA_API_SCOPE in .env}
     environment:
-      NEXT_PUBLIC_API_URL: ${NEXT_PUBLIC_API_URL:-http://localhost:8000}
+      # Server-side route handlers call the API over the compose network; the
+      # browser only ever talks to this web origin.
+      API_BASE_URL: http://api:8000
     ports:
       - "${WEB_PORT:-3000}:3000"
     depends_on:
@@ -105,18 +127,28 @@ services:
       context: .
       dockerfile: workers/ingestion/Dockerfile
     environment:
+      INGESTION_ENVIRONMENT: development
       INGESTION_LOG_LEVEL: ${INGESTION_LOG_LEVEL:-INFO}
+      INGESTION_DATABASE_URL: postgresql+asyncpg://${POSTGRES_USER:-accelerator}:${POSTGRES_PASSWORD:-local-development-only}@postgres:5432/${POSTGRES_DB:-accelerator}
+      # Indexing stays disabled (the worker idles, healthy) until Azurite and the
+      # Azure AI Search / Foundry embedding settings below are all provided.
+      INGESTION_STORAGE_CONNECTION_STRING: ${AZURITE_CONNECTION_STRING:-}
+      INGESTION_SEARCH_ENDPOINT: ${API_SEARCH_ENDPOINT:-}
+      INGESTION_SEARCH_INDEX_NAME: ${API_SEARCH_INDEX_NAME:-}
+      INGESTION_VECTOR_DIMENSIONS: ${API_SEARCH_VECTOR_DIMENSIONS:-}
+      INGESTION_FOUNDRY_PROJECT_ENDPOINT: ${API_FOUNDRY_PROJECT_ENDPOINT:-}
+      INGESTION_FOUNDRY_EMBEDDING_DEPLOYMENT: ${API_FOUNDRY_EMBEDDING_DEPLOYMENT:-}
     depends_on:
-      postgres:
-        condition: service_healthy
+      migrate:
+        condition: service_completed_successfully
       azurite:
         condition: service_healthy
     healthcheck:
-      test: ["CMD", "python", "-c", "import os; os.kill(1, 0)"]
-      interval: 10s
+      test: ["CMD", "python", "-m", "accelerator.ingestion.healthcheck"]
+      interval: 15s
       timeout: 3s
       retries: 3
-      start_period: 5s
+      start_period: 10s
 
 volumes:
   postgres-data:

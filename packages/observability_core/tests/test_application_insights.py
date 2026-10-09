@@ -1,9 +1,11 @@
 from unittest.mock import MagicMock
+from uuid import uuid4
 
+import pytest
 from opentelemetry.sdk.trace.export.in_memory_span_exporter import InMemorySpanExporter
 from pydantic import ValidationError
-import pytest
 
+from accelerator.observability_core import Telemetry
 from accelerator.observability_core.infrastructure import application_insights as insights
 from accelerator.observability_core.infrastructure.application_insights import (
     ApplicationInsightsAdapter,
@@ -11,8 +13,6 @@ from accelerator.observability_core.infrastructure.application_insights import (
     start_application_insights,
     stop_application_insights,
 )
-from accelerator.observability_core import Telemetry
-from uuid import uuid4
 
 
 def test_missing_service_name_fails_fast(monkeypatch: pytest.MonkeyPatch) -> None:
@@ -52,13 +52,37 @@ def test_managed_identity_export_and_batch_flush(monkeypatch: pytest.MonkeyPatch
     credential.close.assert_called_once()
 
 
+def test_explicit_connection_string_is_the_exporter_destination(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    credential = MagicMock()
+    exporter_factory = MagicMock(return_value=InMemorySpanExporter())
+    monkeypatch.setattr(insights, "ManagedIdentityCredential", MagicMock(return_value=credential))
+    monkeypatch.setattr(insights, "AzureMonitorTraceExporter", exporter_factory)
+    adapter = ApplicationInsightsAdapter(
+        ApplicationInsightsSettings(service_name="api"),
+        connection_string="InstrumentationKey=00000000-0000-0000-0000-000000000000",
+    )
+
+    adapter.create_exporter()
+
+    exporter_factory.assert_called_once_with(
+        credential=credential,
+        disable_offline_storage=True,
+        connection_string="InstrumentationKey=00000000-0000-0000-0000-000000000000",
+    )
+    adapter.close()
+
+
 def test_initialization_errors_are_not_swallowed_and_credentials_are_closed(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     credential = MagicMock()
     monkeypatch.setattr(insights, "ManagedIdentityCredential", MagicMock(return_value=credential))
     monkeypatch.setattr(
-        insights, "AzureMonitorTraceExporter", MagicMock(side_effect=ValueError("missing destination"))
+        insights,
+        "AzureMonitorTraceExporter",
+        MagicMock(side_effect=ValueError("missing destination")),
     )
     adapter = ApplicationInsightsAdapter(ApplicationInsightsSettings(service_name="api"))
     with pytest.raises(ValueError, match="missing destination"):

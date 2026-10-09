@@ -15,7 +15,46 @@ deployment configuration (never request input). Each provider must be packaged i
 the image and return the documented interface. Missing configuration, import
 errors and invalid factories fail startup; there is no echo or raw-model fallback.
 
-Use `WorkflowHostedApplication(resolver, workflow)` from
+### Content safety (ADR-0007)
+
+The production composition screens every invocation with Azure AI Content Safety,
+like the API. Before any provider loads it builds the Content Safety checker from
+`HOSTED_CONTENT_SAFETY_*` settings, which have the same names, defaults and
+semantics as the API's `API_CONTENT_SAFETY_*`:
+
+| Setting | Meaning |
+| --- | --- |
+| `HOSTED_CONTENT_SAFETY_ENDPOINT` | **Required**, HTTPS. Main deployment output `contentSafetyEndpoint`. Startup fails without it. |
+| `HOSTED_CONTENT_SAFETY_ENABLED` | Defaults to `true`; `false` is rejected. |
+| `HOSTED_CONTENT_SAFETY_TIMEOUT_SECONDS` | Per-call bound, default 5 (also bounded by the context's deadline). |
+| `HOSTED_CONTENT_SAFETY_BLOCK_SEVERITY_{HATE,SELF_HARM,SEXUAL,VIOLENCE}` | Block thresholds, 1-6, default 4. |
+| `HOSTED_MANAGED_IDENTITY_CLIENT_ID` (or `AZURE_CLIENT_ID`) | Optional user-assigned identity; unset uses the platform identity. |
+
+Authentication is `ManagedIdentityCredential` only (the account disables keys). The
+agent's Entra identity needs **Cognitive Services User** on the account: set
+`hostedAgentPrincipalId` (`AZURE_HOSTED_AGENT_PRINCIPAL_ID`) to its object ID and
+deploy `infrastructure/main.bicep` again. Foundry creates that identity with the
+first agent version, so the first deployment refuses every turn
+(`content_safety_unavailable`) until the grant exists. That is the fail-closed
+behaviour, not a fault.
+
+The workflow factory is called as
+`factory(content_safety_checker=..., content_safety_policy=...)` and must pass both
+to `GroundedAnswerWorkflow`, which shields the prompt, shields and drops attacked
+chunks, and analyses the answer. The application does not trust the factory to do
+so: it records every verdict that checker gives during the turn and releases a
+result only when the verdicts cover it (a clean Prompt Shields verdict on the
+query; for answers, every citation a shielded and unflagged chunk and a
+non-blocking analysis of exactly the answer text). Anything else, such as a
+factory that ignored the checker, becomes a `content_safety_unavailable` refusal
+and logs `hosted_content_safety_unscreened`. Any service error, timeout or
+malformed reply also refuses with that code.
+
+Abstentions carry a stable `code`, the same as the API's SSE codes:
+`insufficient_evidence`, `content_safety_prompt_attack`,
+`content_safety_output_blocked` or `content_safety_unavailable`.
+
+Use `WorkflowHostedApplication(resolver, workflow, screening=...)` from
 `accelerator.agent_core.hosting.application`. The resolver verifies the
 authorization credential, resolves `ExecutionContext` from server-side
 authorization, and raises `InvocationUnauthorized` for missing, invalid, or
@@ -39,7 +78,7 @@ identity headers. Verify this end-to-end in your deployment's trusted API/gatewa
 composition before enabling traffic.
 
 Answered outcomes contain nonempty text and retrieved chunk citations. Abstained
-outcomes contain only a reason/evidence IDs. The hosting wire schema validates this
+outcomes contain only a reason, evidence IDs and a refusal `code`. The hosting wire schema validates this
 shape; **same-turn citation membership remains #23's responsibility**.
 
 ## Image
@@ -118,7 +157,8 @@ official host protocol in-process. To smoke a built image locally, use the
 fixture's exported `OFFLINE_AUTHORIZATION` value as the request Authorization
 header; the live Foundry smoke command above separately verifies the deployed
 endpoint. Neither offline check claims an Azure deployment.
-On this baseline `make eval-smoke` is still the M5 placeholder, not a model eval.
+`make eval-smoke` runs the product's control plane offline (see
+`packages/evaluation_core/runners/README.md`); it is not a model evaluation.
 
 ## Verified Microsoft Learn references
 

@@ -96,8 +96,13 @@ def test_report_shape_and_markdown_are_stable() -> None:
     assert report.model_dump(mode="json") == {
         "metrics": [
             {
-                "name": "score", "baseline": 0.9, "current": 0.8, "delta": -0.1,
-                "direction": "higher", "tolerance": 0.05, "passed": False,
+                "name": "score",
+                "baseline": 0.9,
+                "current": 0.8,
+                "delta": -0.1,
+                "direction": "higher",
+                "tolerance": 0.05,
+                "passed": False,
             }
         ],
         "hard_failures": [],

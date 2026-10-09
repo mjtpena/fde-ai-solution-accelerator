@@ -6,8 +6,26 @@ build-backend = "setuptools.build_meta"
 name = "fde-ingestion-worker"
 version = "0.1.0"
 requires-python = "==3.12.*"
-dependencies = []
+dependencies = [
+    "agent-framework-foundry>=1.14,<2",
+    "aiohttp>=3.12,<4",
+    "asyncpg>=0.30,<1",
+    "azure-identity>=1.26,<2",
+    "azure-search-documents>=11.6,<12",
+    "azure-storage-blob>=12.24,<13",
+    "azure-storage-queue>=12.12,<13",
+    "fde-retrieval-core",
+    "pydantic>=2.10,<3",
+    "pydantic-settings>=2.7,<3",
+    "sqlalchemy[asyncio]>=2.0,<3",
+]
+
+[tool.uv.sources]
+fde-retrieval-core = { workspace = true }
 
 [tool.setuptools]
-packages = ["accelerator.ingestion"]
+packages = ["accelerator.ingestion", "accelerator.ingestion.infrastructure"]
 package-dir = {"accelerator.ingestion" = "src/ingestion_worker"}
+
+[tool.setuptools.package-data]
+"accelerator.ingestion" = ["py.typed"]

@@ -1,17 +1,17 @@
 from dataclasses import dataclass
 from importlib.metadata import requires
-from packaging.requirements import Requirement
-from packaging.specifiers import SpecifierSet
 from pathlib import Path
 from unittest.mock import AsyncMock, MagicMock
 
+import httpx
+import pytest
 from azure.ai.projects.aio import AIProjectClient
 from azure.ai.projects.models import AgentEndpointProtocol, AgentVersionDetails
 from azure.core.credentials import AccessToken
 from azure.core.credentials_async import AsyncTokenCredential
-import httpx
+from packaging.requirements import Requirement
+from packaging.specifiers import SpecifierSet
 from pydantic import ValidationError
-import pytest
 
 from accelerator.agent_core.hosting.application import WorkflowHostedApplication, WorkflowResult
 from accelerator.agent_core.hosting.contracts import (
@@ -19,13 +19,15 @@ from accelerator.agent_core.hosting.contracts import (
     InvocationResult,
     InvocationUnauthorized,
 )
-
+from infrastructure.hosted_agent import production
 from infrastructure.hosted_agent.azure_adapter import AzureHostedAgentGateway
 from infrastructure.hosted_agent.configuration import DeploymentSettings, RuntimeSettings
-from infrastructure.hosted_agent import production
 from infrastructure.hosted_agent.server import MAX_REQUEST_BYTES, create_host, load_application
 from infrastructure.hosted_agent.service import HostedVersion, deploy, smoke
 from infrastructure.hosted_agent.tests.container_fixture import OFFLINE_AUTHORIZATION
+from infrastructure.hosted_agent.tests.content_safety_fakes import FakeChecker, fake_screening
+
+CONTENT_SAFETY_ENDPOINT = "https://safety.cognitiveservices.azure.com/"
 
 
 def configuration() -> DeploymentSettings:
@@ -37,6 +39,7 @@ def configuration() -> DeploymentSettings:
         context_resolver_factory="infrastructure.hosted_agent.tests.test_hosted_agent:fake_resolver",
         grounded_workflow_factory="infrastructure.hosted_agent.tests.test_hosted_agent:fake_workflow",
         model_deployment="test-model",
+        content_safety_endpoint=CONTENT_SAFETY_ENDPOINT,
         poll_seconds=0.001,
     )
 
@@ -46,7 +49,9 @@ def abstention() -> InvocationResult:
         status="abstained",
         answer=None,
         citations=(),
-        abstention=HostedAbstention(reason="Insufficient evidence", evidence_ids=()),
+        abstention=HostedAbstention(
+            reason="Insufficient evidence", evidence_ids=(), code="insufficient_evidence"
+        ),
     )
 
 
@@ -183,7 +188,7 @@ def fake_resolver() -> FakeResolver:
     return FakeResolver(TrustedContext("server-only"))
 
 
-def fake_workflow() -> FakeWorkflow:
+def fake_workflow(**content_safety: object) -> FakeWorkflow:
     return FakeWorkflow()
 
 
@@ -193,7 +198,7 @@ def test_packaged_production_factory_composes_configured_resolver_and_workflow(
     settings = configuration()
     monkeypatch.setenv("HOSTED_CONTEXT_RESOLVER_FACTORY", settings.context_resolver_factory)
     monkeypatch.setenv("HOSTED_GROUNDED_WORKFLOW_FACTORY", settings.grounded_workflow_factory)
-    application = production.create_application()
+    application = production.create_application(screening=fake_screening())
     assert isinstance(application, WorkflowHostedApplication)
 
 
@@ -203,6 +208,7 @@ def test_example_runtime_factory_is_included_in_installed_host_package(
     settings = configuration()
     monkeypatch.setenv("HOSTED_CONTEXT_RESOLVER_FACTORY", settings.context_resolver_factory)
     monkeypatch.setenv("HOSTED_GROUNDED_WORKFLOW_FACTORY", settings.grounded_workflow_factory)
+    monkeypatch.setenv("HOSTED_CONTENT_SAFETY_ENDPOINT", CONTENT_SAFETY_ENDPOINT)
     runtime = RuntimeSettings()
     assert runtime.application_factory == "infrastructure.hosted_agent.production:runtime_factory"
     application = load_application(runtime)
@@ -221,6 +227,9 @@ async def test_packaged_offline_fixture_completes_invocation_http_flow(
         "HOSTED_GROUNDED_WORKFLOW_FACTORY",
         "infrastructure.hosted_agent.tests.container_fixture:create_workflow",
     )
+    checker = FakeChecker()
+    monkeypatch.setattr(production, "build_content_safety", lambda _: fake_screening(checker))
+    monkeypatch.setenv("HOSTED_CONTENT_SAFETY_ENDPOINT", CONTENT_SAFETY_ENDPOINT)
     runtime = RuntimeSettings()
     application = load_application(runtime)
 
@@ -241,9 +250,13 @@ async def test_packaged_offline_fixture_completes_invocation_http_flow(
         answer=None,
         citations=(),
         abstention=HostedAbstention(
-            reason="Offline fixture has no evidence", evidence_ids=()
+            reason="Offline fixture has no evidence",
+            evidence_ids=(),
+            code="insufficient_evidence",
         ),
     )
+    # The packaged composition handed the workflow the screening checker.
+    assert checker.calls == ["shield_prompt"]
 
 
 @pytest.mark.parametrize(
@@ -264,7 +277,7 @@ def test_packaged_production_factory_fails_closed_for_invalid_components(
     monkeypatch.setenv("HOSTED_CONTEXT_RESOLVER_FACTORY", resolver)
     monkeypatch.setenv("HOSTED_GROUNDED_WORKFLOW_FACTORY", workflow)
     with pytest.raises(error):
-        production.create_application()
+        production.create_application(screening=fake_screening())
 
 
 def test_missing_provider_fails_startup(monkeypatch: pytest.MonkeyPatch) -> None:
@@ -283,6 +296,7 @@ def test_deployment_defaults_to_managed_identity_without_secret_environment() ->
         "HOSTED_CONTEXT_RESOLVER_FACTORY": settings.context_resolver_factory,
         "HOSTED_GROUNDED_WORKFLOW_FACTORY": settings.grounded_workflow_factory,
         "AZURE_AI_MODEL_DEPLOYMENT_NAME": settings.model_deployment,
+        "HOSTED_CONTENT_SAFETY_ENDPOINT": CONTENT_SAFETY_ENDPOINT,
     }
 
 

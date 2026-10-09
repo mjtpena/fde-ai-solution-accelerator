@@ -7,7 +7,7 @@ from accelerator.agent_core.hosting.contracts import (
     InvocationResult,
     InvocationUnauthorized,
 )
-
+from accelerator.security_core.content_safety import ContentSafetyChecker, ContentSafetyPolicy
 
 OFFLINE_AUTHORIZATION = 'Bearer offline-container-test'
 
@@ -20,7 +20,11 @@ class OfflineApplication:
             status="abstained",
             answer=None,
             citations=(),
-            abstention=HostedAbstention(reason="Offline fixture has no evidence", evidence_ids=()),
+            abstention=HostedAbstention(
+                reason="Offline fixture has no evidence",
+                evidence_ids=(),
+                code="insufficient_evidence",
+            ),
         )
 
 
@@ -37,12 +41,23 @@ class OfflineResolver:
 
 
 class OfflineWorkflow:
+    """Screens the prompt like the grounded workflow, then abstains."""
+
+    def __init__(self, checker: ContentSafetyChecker | None = None) -> None:
+        self.checker = checker
+
     async def run(self, query: str, ctx: OfflineContext) -> InvocationResult:
+        if self.checker is not None:
+            await self.checker.shield_prompt(query, ())
         return InvocationResult(
             status="abstained",
             answer=None,
             citations=(),
-            abstention=HostedAbstention(reason="Offline fixture has no evidence", evidence_ids=()),
+            abstention=HostedAbstention(
+                reason="Offline fixture has no evidence",
+                evidence_ids=(),
+                code="insufficient_evidence",
+            ),
         )
 
 
@@ -54,5 +69,9 @@ def create_resolver() -> OfflineResolver:
     return OfflineResolver()
 
 
-def create_workflow() -> OfflineWorkflow:
-    return OfflineWorkflow()
+def create_workflow(
+    *,
+    content_safety_checker: ContentSafetyChecker | None = None,
+    content_safety_policy: ContentSafetyPolicy | None = None,
+) -> OfflineWorkflow:
+    return OfflineWorkflow(content_safety_checker)

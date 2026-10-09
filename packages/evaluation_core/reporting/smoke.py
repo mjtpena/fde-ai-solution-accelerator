@@ -1,14 +1,15 @@
-"""Run deterministic evaluators and publish baseline movement."""
+"""Run the offline smoke evaluation of the product and publish baseline movement."""
 
 import argparse
 import json
 import logging
 from pathlib import Path
 
-from pydantic import ValidationError
 import yaml
+from pydantic import ValidationError
 
 from ..runners import run_smoke
+from ..runners.smoke import DEFAULT_CORPUS, DEFAULT_DATASET
 from .comparison import EvaluationResult, compare
 from .files import load_comparison_config, write_report
 
@@ -17,30 +18,33 @@ logger = logging.getLogger(__name__)
 
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("--baseline", type=Path, default=Path("evaluations/baselines/accepted.json"))
+    parser.add_argument(
+        "--baseline", type=Path, default=Path("evaluations/baselines/accepted.json")
+    )
     parser.add_argument("--thresholds", type=Path, default=Path("evaluations/thresholds.yml"))
     parser.add_argument("--output-dir", type=Path, default=Path("evaluations/reports"))
-    parser.add_argument("--allow-fixture", action="store_true")
+    parser.add_argument("--dataset", type=Path, default=DEFAULT_DATASET)
+    parser.add_argument("--corpus", type=Path, default=DEFAULT_CORPUS)
     args = parser.parse_args(argv)
     logging.basicConfig(level=logging.INFO, format="%(levelname)s %(message)s")
+    # Workflow supersteps are not evaluation results; keep the report log readable.
+    logging.getLogger("agent_framework").setLevel(logging.WARNING)
     context = {"correlation_id": "evaluation-smoke"}
     try:
         args.output_dir.mkdir(parents=True, exist_ok=True)
         (args.output_dir / "smoke.json").unlink(missing_ok=True)
         (args.output_dir / "smoke.md").unlink(missing_ok=True)
-        measured = run_smoke()
+        measured = run_smoke(args.dataset, args.corpus)
         current = EvaluationResult(metrics=measured.metrics, hard_failures=measured.hard_failures)
-        baseline, thresholds, fixture = load_comparison_config(
-            args.baseline, args.thresholds, allow_fixture=args.allow_fixture
+        baseline, thresholds = load_comparison_config(args.baseline, args.thresholds)
+        logger.info(
+            "correlation_id=evaluation-smoke baseline=%s thresholds=%s",
+            args.baseline,
+            args.thresholds,
+            extra=context,
         )
-        if fixture:
-            logger.warning(
-                "correlation_id=evaluation-smoke missing baseline=%s thresholds=%s; "
-                "using explicit deterministic fixtures, not a project baseline",
-                args.baseline, args.thresholds, extra=context,
-            )
         report = compare(current, baseline, thresholds)
-        write_report(report, args.output_dir, fixture=fixture)
+        write_report(report, args.output_dir)
     except (OSError, ValueError, ValidationError, yaml.YAMLError) as error:
         logger.exception("correlation_id=evaluation-smoke evaluation failed", extra=context)
         try:
@@ -64,8 +68,11 @@ def main(argv: list[str] | None = None) -> int:
             )
         return 2
     logger.info(
-        "correlation_id=evaluation-smoke passed=%s fixture=%s metrics=%d hard_failures=%d",
-        report.passed, fixture, len(report.metrics), len(report.hard_failures), extra=context,
+        "correlation_id=evaluation-smoke passed=%s metrics=%d hard_failures=%d",
+        report.passed,
+        len(report.metrics),
+        len(report.hard_failures),
+        extra=context,
     )
     return 0 if report.passed else 1
 

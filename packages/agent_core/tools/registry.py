@@ -1,12 +1,14 @@
 """Discovery only: registering a tool never executes it or grants approval."""
 
 import math
+import re
 from typing import Any
 
 from pydantic import AliasChoices, AliasPath, BaseModel
 
 from .base import EnterpriseTool, IdempotentWriteTool, ToolRisk
 
+_TOOL_NAME = re.compile(r"[A-Za-z0-9_.-]{1,128}")
 _RESERVED_ARGUMENT_FIELDS = frozenset(
     {"scope_id", "scope_ids", "project_id", "project_ids"}
 )
@@ -56,8 +58,12 @@ class ToolRegistry:
             ToolRisk.LOW_IMPACT_WRITE, ToolRisk.HIGH_IMPACT_WRITE, ToolRisk.PRIVILEGED
         } and not isinstance(tool, IdempotentWriteTool):
             raise ValueError("Write and privileged tools must implement IdempotentWriteTool")
-        if not isinstance(getattr(tool, "name", None), str) or not tool.name.strip():
-            raise ValueError("Tools must declare a non-empty name")
+        if not isinstance(getattr(tool, "name", None), str) or not _TOOL_NAME.fullmatch(
+            tool.name
+        ):
+            # The same contract as audit_event.tool_name: a name the audit log would
+            # reject could perform a write whose execution can never be recorded.
+            raise ValueError("Tool names must match ^[A-Za-z0-9_.-]{1,128}$")
         if (
             not isinstance(getattr(tool, "description", None), str)
             or not tool.description.strip()

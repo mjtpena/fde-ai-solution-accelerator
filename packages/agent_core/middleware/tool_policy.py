@@ -4,8 +4,8 @@ import asyncio
 import math
 from collections.abc import Awaitable
 from dataclasses import dataclass
-from datetime import datetime, timezone
-from typing import TYPE_CHECKING, Generic, TypeVar
+from datetime import UTC, datetime
+from typing import TYPE_CHECKING, Generic, Protocol, TypeVar
 
 from pydantic import BaseModel
 
@@ -17,7 +17,6 @@ if TYPE_CHECKING:
     from ..tools import EnterpriseTool, ExecutionContextProtocol
 
 from ..tools import IdempotentWriteTool
-
 
 ArgsT = TypeVar("ArgsT", bound=BaseModel)
 ResultT = TypeVar("ResultT", bound=BaseModel)
@@ -47,7 +46,20 @@ class ToolExecutionTimeout(TimeoutError):
     pass
 
 
-class _InMemoryCallCounter:
+class ToolCallCounter(Protocol):
+    """Atomically consume one call against per-session and per-turn limits.
+
+    Raise ``ToolCallLimitExceeded`` without consuming when either limit is reached.
+    Multi-replica hosts must use a shared implementation (the API uses PostgreSQL);
+    the in-memory default only bounds calls within one process.
+    """
+
+    async def consume(self, session_id: str, turn_id: str, limits: ToolCallLimits) -> None: ...
+
+    async def release_session(self, session_id: str) -> None: ...
+
+
+class InMemoryToolCallCounter:
     def __init__(self) -> None:
         self._session_counts: dict[str, int] = {}
         self._turn_counts: dict[tuple[str, str], int] = {}
@@ -91,12 +103,15 @@ class ToolPolicyMiddleware(Generic[ArgsT, ResultT]):
         policy: ToolPolicy | None = None,
         limits: ToolCallLimits | None = None,
         privileged_approver_roles: frozenset[str] = frozenset(),
+        counter: ToolCallCounter | None = None,
     ) -> None:
         self._approval_service = approval_service
         self._policy = policy or ToolPolicy()
         self._limits = limits or ToolCallLimits()
         self._privileged_approver_roles = privileged_approver_roles
-        self._counter = _InMemoryCallCounter()
+        self._counter: ToolCallCounter = (
+            counter if counter is not None else InMemoryToolCallCounter()
+        )
 
     async def release_session(self, session_id: str) -> None:
         """Release counters only when the trusted session lifecycle ends permanently.
@@ -236,7 +251,7 @@ class ToolPolicyMiddleware(Generic[ArgsT, ResultT]):
             raise ToolPolicyViolation("invalid_tool_timeout")
         if deadline_utc.tzinfo is None or deadline_utc.utcoffset() is None:
             raise ToolPolicyViolation("execution_deadline_timezone_missing")
-        remaining_seconds = (deadline_utc - datetime.now(timezone.utc)).total_seconds()
+        remaining_seconds = (deadline_utc - datetime.now(UTC)).total_seconds()
         if remaining_seconds <= 0:
             raise ToolExecutionTimeout("execution deadline has elapsed")
         return min(tool_timeout, remaining_seconds)

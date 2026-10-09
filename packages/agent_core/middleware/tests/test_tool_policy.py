@@ -4,37 +4,38 @@ import asyncio
 from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
 from dataclasses import dataclass, field
-from datetime import datetime, timedelta, timezone
+from datetime import UTC, datetime, timedelta
 from typing import ClassVar
 from uuid import UUID
 
 import pytest
 from pydantic import BaseModel
 
-from ...approvals import (
-    Approval,
-    ApprovalAuditEvent,
-    ApprovalExpiredError,
-    ApprovalMismatchError,
-    ApprovalReplayError,
-    ApprovalService,
-    ApprovalScopeError,
-    ApprovalStateError,
-    canonical_args_hash,
-)
-from ..tool_policy import (
-    ToolCallLimitExceeded,
-    ToolCallLimits,
-    ToolExecutionTimeout,
-    ToolPolicyMiddleware,
-)
-from ...tools import EnterpriseTool, ExecutionContextProtocol, IdempotentWriteTool, ToolRisk
 from accelerator.security_core.data_boundaries.context import ExecutionContext
 from accelerator.security_core.tool_policy.models import (
     ApprovalRequired,
     ToolPolicyViolation,
 )
 
+from ...approvals import (
+    Approval,
+    ApprovalAuditEvent,
+    ApprovalAuthorizationError,
+    ApprovalExpiredError,
+    ApprovalMismatchError,
+    ApprovalReplayError,
+    ApprovalScopeError,
+    ApprovalService,
+    ApprovalStateError,
+    canonical_args_hash,
+)
+from ...tools import EnterpriseTool, ExecutionContextProtocol, IdempotentWriteTool, ToolRisk
+from ..tool_policy import (
+    ToolCallLimitExceeded,
+    ToolCallLimits,
+    ToolExecutionTimeout,
+    ToolPolicyMiddleware,
+)
 
 Risk = ToolRisk
 
@@ -55,7 +56,7 @@ class Context:
     scope_ids: frozenset[str] = frozenset({"scope-a"})
     session_id: str | None = "session-1"
     deadline_utc: datetime = field(
-        default_factory=lambda: datetime.now(timezone.utc) + timedelta(minutes=1)
+        default_factory=lambda: datetime.now(UTC) + timedelta(minutes=1)
     )
 
 
@@ -138,6 +139,14 @@ class FakeApprovalService(ApprovalService[ToolArgs, ToolResult]):
         self.repository = InMemoryApprovalRepository()
         super().__init__(self.repository)
 
+    def force_decision(self, approval_id: UUID, decided_by: str) -> Approval:
+        """Persist a decision the service itself refuses, e.g. a legacy or tampered row."""
+        approval = self.repository.approvals[approval_id].model_copy(
+            update={"status": "approved", "decided_by": decided_by}
+        )
+        self.repository.approvals[approval_id] = approval
+        return approval
+
     @property
     def created(self) -> list[Approval]:
         return list(self.repository.approvals.values())
@@ -206,7 +215,7 @@ async def test_approved_write_is_executed_by_the_approval_service() -> None:
     approval = await service.create(tool_name=tool.name, args=args, ctx=Context())
     approval = await service.approve(
         approval_id=approval.id,
-        ctx=Context(user_id="approver"),
+        ctx=Context(user_id="approver", roles=frozenset({"Approver"})),
     )
 
     result = await middleware.invoke(
@@ -237,7 +246,7 @@ async def test_approval_service_rejects_changed_arguments_without_execution() ->
     )
     approval = await service.approve(
         approval_id=approval.id,
-        ctx=Context(user_id="approver"),
+        ctx=Context(user_id="approver", roles=frozenset({"Approver"})),
     )
 
     with pytest.raises(ApprovalMismatchError):
@@ -297,7 +306,7 @@ async def test_privileged_write_requires_distinct_approver_with_configured_role(
     )
     args = ToolArgs(value="privileged")
     approval = await service.create(tool_name=tool.name, args=args, ctx=Context())
-    approver = Context(user_id="approver", roles=frozenset({"tool_approver"}))
+    approver = Context(user_id="approver", roles=frozenset({"tool_approver", "Approver"}))
     approval = await service.approve(approval_id=approval.id, ctx=approver)
 
     result = await middleware.invoke(
@@ -324,7 +333,7 @@ async def test_privileged_write_fails_without_approver_role() -> None:
     approval = await service.create(tool_name=tool.name, args=args, ctx=Context())
     approval = await service.approve(
         approval_id=approval.id,
-        ctx=Context(user_id="approver"),
+        ctx=Context(user_id="approver", roles=frozenset({"Approver"})),
     )
 
     with pytest.raises(ToolPolicyViolation, match="privileged_approver_role_required"):
@@ -334,7 +343,7 @@ async def test_privileged_write_fails_without_approver_role() -> None:
             Context(),
             turn_id="turn-1",
             approval=approval,
-            approver_context=Context(user_id="approver"),
+            approver_context=Context(user_id="approver", roles=frozenset({"Approver"})),
         )
 
     assert tool.calls == 0
@@ -462,6 +471,17 @@ class WriteTool(IdempotentWriteTool[ToolArgs, ToolResult]):
         return ToolResult(value=f"{ctx.user_id}:{args.value}")
 
 
+def _server_approver() -> ExecutionContext:
+    return ExecutionContext(
+        correlation_id="correlation-2",
+        user_id="approver",
+        roles=frozenset({"Approver"}),
+        scope_ids=frozenset({"scope-a"}),
+        session_id="session-2",
+        deadline_utc=datetime.now(UTC) + timedelta(minutes=1),
+    )
+
+
 def _server_context() -> ExecutionContext:
     return ExecutionContext(
         correlation_id="correlation-1",
@@ -469,7 +489,7 @@ def _server_context() -> ExecutionContext:
         roles=frozenset(),
         scope_ids=frozenset({"scope-a"}),
         session_id="session-1",
-        deadline_utc=datetime.now(timezone.utc) + timedelta(minutes=1),
+        deadline_utc=datetime.now(UTC) + timedelta(minutes=1),
     )
 
 
@@ -488,7 +508,7 @@ async def test_public_contract_creates_card_and_executes_real_approval_once() ->
     assert repository.approvals[card.approval_id].status == "pending"
     assert card.scope_id == next(iter(context.scope_ids))
     assert tool.calls == 0
-    approval = await service.approve(approval_id=card.approval_id, ctx=context)
+    approval = await service.approve(approval_id=card.approval_id, ctx=_server_approver())
     result = await middleware.invoke(tool, args, context, turn_id="turn-2", approval=approval)
 
     assert result == ToolResult(value="requester:approved")
@@ -508,14 +528,14 @@ async def test_public_contract_creates_card_and_executes_real_approval_once() ->
 @pytest.mark.parametrize("failure", ["changed_args", "expired", "wrong_scope"])
 async def test_real_approval_failures_never_invoke_tool(failure: str) -> None:
     repository = InMemoryApprovalRepository()
-    now = datetime.now(timezone.utc)
+    now = datetime.now(UTC)
     service = ApprovalService[ToolArgs, ToolResult](repository, clock=lambda: now)
     middleware = ToolPolicyMiddleware(approval_service=service)
     tool = WriteTool()
     context = _server_context()
     args = ToolArgs(value="approved")
     approval = await service.create(tool_name=tool.name, args=args, ctx=context)
-    approval = await service.approve(approval_id=approval.id, ctx=context)
+    approval = await service.approve(approval_id=approval.id, ctx=_server_approver())
     expected_error: type[Exception]
     if failure == "changed_args":
         args = ToolArgs(value="changed")
@@ -541,10 +561,13 @@ async def test_privileged_self_approval_never_executes() -> None:
         approval_service=service, privileged_approver_roles=frozenset({"tool_approver"})
     )
     tool = FakeTool(Risk.PRIVILEGED)
-    context = Context(roles=frozenset({"tool_approver"}))
+    context = Context(roles=frozenset({"tool_approver", "Approver"}))
     args = ToolArgs(value="write")
     approval = await service.create(tool_name=tool.name, args=args, ctx=context)
-    approval = await service.approve(approval_id=approval.id, ctx=context)
+    with pytest.raises(ApprovalAuthorizationError, match="requester cannot decide"):
+        await service.approve(approval_id=approval.id, ctx=context)
+    # Defense in depth: even a persisted self-approval never executes.
+    approval = service.force_decision(approval.id, decided_by=context.user_id)
 
     with pytest.raises(ToolPolicyViolation, match="privileged_approver_must_be_distinct"):
         await middleware.invoke(
@@ -609,7 +632,7 @@ async def test_elapsed_deadline_prevents_approval_creation() -> None:
         await middleware.invoke(
             tool,
             ToolArgs(value="write"),
-            Context(deadline_utc=datetime.now(timezone.utc) - timedelta(seconds=1)),
+            Context(deadline_utc=datetime.now(UTC) - timedelta(seconds=1)),
             turn_id="turn",
         )
 
@@ -626,7 +649,7 @@ async def test_stalled_approval_creation_is_cancelled_at_policy_timeout(
     middleware = ToolPolicyMiddleware(approval_service=service)
     tool = FakeTool(Risk.LOW_IMPACT_WRITE, timeout_seconds=1 if use_deadline else 0.01)
     context = Context(
-        deadline_utc=datetime.now(timezone.utc) + timedelta(seconds=0.01 if use_deadline else 60)
+        deadline_utc=datetime.now(UTC) + timedelta(seconds=0.01 if use_deadline else 60)
     )
 
     with pytest.raises(ToolExecutionTimeout, match="policy timeout"):
@@ -687,14 +710,14 @@ async def test_forged_caller_approval_cannot_authorize_persisted_record(
     )
     tool = FakeTool(Risk.PRIVILEGED)
     context = Context()
-    approver = Context(user_id="approver", roles=frozenset({"tool_approver"}))
+    approver = Context(user_id="approver", roles=frozenset({"tool_approver", "Approver"}))
     args = ToolArgs(value="write")
     requester = context if forged_field == "decided_by" else Context(user_id="other")
     persisted = await service.create(tool_name=tool.name, args=args, ctx=requester)
-    persisted = await service.approve(
-        approval_id=persisted.id,
-        ctx=context if forged_field == "decided_by" else approver,
-    )
+    if forged_field == "decided_by":
+        persisted = service.force_decision(persisted.id, decided_by=context.user_id)
+    else:
+        persisted = await service.approve(approval_id=persisted.id, ctx=approver)
     forged = persisted.model_copy(
         update={"decided_by": approver.user_id, "requested_by": context.user_id}
     )
@@ -722,7 +745,9 @@ async def test_caller_approval_fields_are_ignored_when_persisted_record_is_valid
     args = ToolArgs(value="write")
     context = Context()
     persisted = await service.create(tool_name=tool.name, args=args, ctx=context)
-    persisted = await service.approve(approval_id=persisted.id, ctx=context)
+    persisted = await service.approve(
+        approval_id=persisted.id, ctx=Context(user_id="approver", roles=frozenset({"Approver"}))
+    )
     stale = persisted.model_copy(
         update={"status": "pending", "requested_by": "forged", "scope_id": "forged"}
     )

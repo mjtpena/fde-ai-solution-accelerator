@@ -11,6 +11,11 @@ repos:
         entry: uv run --all-packages mypy --strict
         language: system
         pass_filenames: false
+      - id: mypy-tests
+        name: mypy strict test modules outside packages
+        entry: uv run --all-packages mypy --strict workers/ingestion/tests apps/api/tests/test_scope_resolver.py
+        language: system
+        pass_filenames: false
       - id: pytest
         name: pytest
         entry: uv run --all-packages pytest
@@ -33,3 +38,8 @@ repos:
         language: system
         types_or: [javascript, jsx, ts, tsx]
         pass_filenames: false
+  # Secret scanning before a commit exists. Pinned to the v8.28.0 commit.
+  - repo: https://github.com/gitleaks/gitleaks
+    rev: 4fb43823ef3d152d239e92d7d5cb04783b548062 # v8.28.0
+    hooks:
+      - id: gitleaks

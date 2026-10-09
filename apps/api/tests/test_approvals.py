@@ -1,6 +1,4 @@
 import asyncio
-import os
-import socket
 import time
 from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
@@ -8,19 +6,18 @@ from dataclasses import dataclass
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
 from typing import ClassVar, cast
-from uuid import UUID, uuid4
+from uuid import UUID
 
 import pytest
 from pydantic import BaseModel
-from sqlalchemy.dialects import postgresql
 from sqlalchemy import text
-from sqlalchemy.engine import make_url
+from sqlalchemy.dialects import postgresql
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker, create_async_engine
-from sqlalchemy.schema import CreateSchema, DropSchema
 
 from accelerator.agent_core.approvals import (
     Approval,
     ApprovalAuditEvent,
+    ApprovalAuthorizationError,
     ApprovalContext,
     ApprovalExpiredError,
     ApprovalMismatchError,
@@ -38,7 +35,6 @@ from accelerator.agent_core.tools import (
     ToolRisk,
 )
 from accelerator.infrastructure.approvals import (
-    ApprovalBase,
     SQLAlchemyApprovalRepository,
 )
 from accelerator.security_core.data_boundaries.context import ExecutionContext
@@ -52,6 +48,9 @@ class Context:
     roles: frozenset[str] = frozenset()
     session_id: str | None = None
     deadline_utc: datetime = datetime(2030, 1, 1, tzinfo=UTC)
+
+
+APPROVER = Context(user_id="approver-1", roles=frozenset({"Approver"}))
 
 
 class Arguments(BaseModel):
@@ -172,7 +171,7 @@ async def _approved(
         ctx=context,
         expires_at=expires_at,
     )
-    return await service.approve(approval_id=approval.id, ctx=context)
+    return await service.approve(approval_id=approval.id, ctx=APPROVER)
 
 
 async def test_execute_with_matching_approval_succeeds_once(
@@ -306,7 +305,7 @@ async def test_expiry_at_decision_time_fails_before_any_approval_or_rejection(
     clock.now += timedelta(seconds=1)
 
     with pytest.raises(ApprovalExpiredError):
-        await getattr(service, decision)(approval_id=approval.id, ctx=context)
+        await getattr(service, decision)(approval_id=approval.id, ctx=APPROVER)
 
     assert repository.approvals[approval.id].status == "expired"
     assert repository.approvals[approval.id].decided_by is None
@@ -315,7 +314,7 @@ async def test_expiry_at_decision_time_fails_before_any_approval_or_rejection(
     # Rejecting an already-expired, never-decided approval must also fail the
     # same way, rather than silently transitioning to "rejected".
     with pytest.raises(ApprovalExpiredError):
-        await service.reject(approval_id=approval.id, ctx=context)
+        await service.reject(approval_id=approval.id, ctx=APPROVER)
 
     assert repository.approvals[approval.id].status == "expired"
 
@@ -489,7 +488,7 @@ async def test_validate_approval_receives_persisted_record_before_invocation(
     assert seen[0].id == approval.id
     assert seen[0].status == "approved"
     assert seen[0].requested_by == context.user_id
-    assert seen[0].decided_by == context.user_id
+    assert seen[0].decided_by == APPROVER.user_id
     assert seen[0].scope_id == next(iter(context.scope_ids))
 
 
@@ -598,7 +597,7 @@ async def test_concrete_server_context_and_enterprise_tool_are_compatible(
     assert ApprovalContext is ExecutionContextProtocol
     assert ApprovalTool is EnterpriseTool
     approval = await service.create(tool_name=tool.name, args=args, ctx=context)
-    await service.approve(approval_id=approval.id, ctx=context)
+    await service.approve(approval_id=approval.id, ctx=APPROVER)
     result = await service.execute(approval_id=approval.id, tool=tool, args=args, ctx=context)
     assert result == Result(completed=True)
     assert tool.calls == 1
@@ -643,33 +642,10 @@ async def test_get_for_update_uses_postgresql_row_lock() -> None:
 # database for the duration the winner holds the row, rather than merely
 # observing a final state that could also result from in-process ordering.
 #
-# It is opt-in through APPROVALS_TEST_POSTGRES_DSN, so default checks never
-# connect to whichever local PostgreSQL happens to be listening.
+# It runs against a freshly migrated database whenever TEST_POSTGRES_DSN is set
+# (always in CI); otherwise the shared fixture skips it.
 
-POSTGRES_DSN = os.environ.get("APPROVALS_TEST_POSTGRES_DSN")
 LOCK_HOLD_SECONDS = 0.4
-
-
-def _postgres_reachable(dsn: str | None, timeout: float = 1.0) -> bool:
-    if dsn is None:
-        return False
-    url = make_url(dsn)
-    if url.host is None:
-        return False
-    try:
-        with socket.create_connection((url.host, url.port or 5432), timeout=timeout):
-            return True
-    except OSError:
-        return False
-
-
-requires_postgres = pytest.mark.skipif(
-    not _postgres_reachable(POSTGRES_DSN),
-    reason=(
-        "Set APPROVALS_TEST_POSTGRES_DSN to a reachable PostgreSQL DSN to run "
-        "this two-session row-lock concurrency test."
-    ),
-)
 
 
 class TimingRepository(SQLAlchemyApprovalRepository):
@@ -708,22 +684,12 @@ class SlowTool(Tool):
         return await super().execute_approved(args, ctx, execution_id=execution_id)
 
 
-@requires_postgres
-async def test_postgresql_row_lock_serializes_concurrent_execute_across_two_sessions() -> None:
-    assert POSTGRES_DSN is not None
-    schema = f"approval_test_{uuid4().hex}"
-    admin_engine = create_async_engine(POSTGRES_DSN)
-    connect_args = {"server_settings": {"search_path": schema}}
-    engine_a = create_async_engine(POSTGRES_DSN, connect_args=connect_args)
-    engine_b = create_async_engine(POSTGRES_DSN, connect_args=connect_args)
-    created = False
+async def test_postgresql_row_lock_serializes_concurrent_execute_across_two_sessions(
+    migrated_database_url: str,
+) -> None:
+    engine_a = create_async_engine(migrated_database_url)
+    engine_b = create_async_engine(migrated_database_url)
     try:
-        async with admin_engine.begin() as connection:
-            await connection.execute(CreateSchema(schema))
-        created = True
-        async with engine_a.begin() as connection:
-            await connection.run_sync(ApprovalBase.metadata.create_all)
-
         session_factory_a = async_sessionmaker(engine_a, expire_on_commit=False)
         session_factory_b = async_sessionmaker(engine_b, expire_on_commit=False)
         async with session_factory_a() as session_a, session_factory_b() as session_b:
@@ -739,7 +705,7 @@ async def test_postgresql_row_lock_serializes_concurrent_execute_across_two_sess
             tool = SlowTool()
 
             approval = await service_a.create(tool_name=tool.name, args=args, ctx=context)
-            approval = await service_a.approve(approval_id=approval.id, ctx=context)
+            approval = await service_a.approve(approval_id=approval.id, ctx=APPROVER)
 
             async def run(
                 service: ApprovalService[Arguments, Result],
@@ -769,11 +735,32 @@ async def test_postgresql_row_lock_serializes_concurrent_execute_across_two_sess
             assert slowest_get_for_update >= LOCK_HOLD_SECONDS * 0.8
             assert elapsed >= LOCK_HOLD_SECONDS * 0.8
     finally:
-        try:
-            if created:
-                async with admin_engine.begin() as connection:
-                    await connection.execute(DropSchema(schema, cascade=True))
-        finally:
-            await engine_a.dispose()
-            await engine_b.dispose()
-            await admin_engine.dispose()
+        await engine_a.dispose()
+        await engine_b.dispose()
+
+
+@pytest.mark.parametrize(
+    ("decider", "message"),
+    [
+        (Context(user_id="approver-1"), "Approver role"),
+        (Context(roles=frozenset({"Approver"})), "requester cannot decide"),
+    ],
+)
+@pytest.mark.parametrize("decision", ["approve", "reject"])
+async def test_decisions_need_an_approver_who_is_not_the_requester(
+    service: ApprovalService[Arguments, Result],
+    repository: InMemoryApprovalRepository,
+    tool: Tool,
+    args: Arguments,
+    context: Context,
+    decider: Context,
+    message: str,
+    decision: str,
+) -> None:
+    approval = await service.create(tool_name=tool.name, args=args, ctx=context)
+
+    with pytest.raises(ApprovalAuthorizationError, match=message):
+        await getattr(service, decision)(approval_id=approval.id, ctx=decider)
+
+    assert repository.approvals[approval.id].status == "pending"
+    assert [event.transition for event in repository.audit_events] == ["pending"]

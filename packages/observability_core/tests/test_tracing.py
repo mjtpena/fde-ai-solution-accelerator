@@ -2,6 +2,7 @@ import asyncio
 from collections.abc import Iterator
 from uuid import UUID, uuid4
 
+import pytest
 from asgiref.testing import ApplicationCommunicator
 from asgiref.typing import ASGIReceiveCallable, ASGISendCallable, Scope
 from opentelemetry import trace
@@ -10,7 +11,6 @@ from opentelemetry.sdk.trace.export import SimpleSpanProcessor
 from opentelemetry.sdk.trace.export.in_memory_span_exporter import InMemorySpanExporter
 from opentelemetry.trace import SpanKind, StatusCode
 from pydantic import ValidationError
-import pytest
 
 from accelerator.observability_core import SpanAttributes, Telemetry, TracingMiddleware
 
@@ -125,6 +125,26 @@ def test_errors_propagate_without_exporting_content(
 def test_unsafe_or_invalid_attributes_are_rejected(attributes: dict[str, object]) -> None:
     with pytest.raises(ValidationError):
         SpanAttributes.model_validate(attributes)
+
+
+def test_content_safety_spans_are_unnamed_client_calls(
+    runtime: tuple[Telemetry, InMemorySpanExporter],
+) -> None:
+    telemetry, exporter = runtime
+    with telemetry.span("content_safety.shield_prompt"):
+        pass
+    with telemetry.span("content_safety.analyze"):
+        pass
+    with pytest.raises(ValueError):
+        with telemetry.span("content_safety.analyze", name="answer"):
+            pass
+
+    spans = exporter.get_finished_spans()
+    assert [span.name for span in spans] == [
+        "content_safety.shield_prompt",
+        "content_safety.analyze",
+    ]
+    assert all(span.kind == SpanKind.CLIENT for span in spans)
 
 
 def test_dynamic_names_are_validated(runtime: tuple[Telemetry, InMemorySpanExporter]) -> None:

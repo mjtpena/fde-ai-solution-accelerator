@@ -1,5 +1,5 @@
 from contextlib import ExitStack
-from uuid import uuid4
+from uuid import UUID, uuid4
 
 from asgiref.typing import (
     ASGI3Application,
@@ -38,8 +38,16 @@ class TracingMiddleware:
             parent = TraceContextTextMapPropagator().extract(
                 {"traceparent": headers[0]}, context=Context()
             )
-        correlation_id = uuid4()
-        scope.setdefault("state", {})["correlation_id"] = str(correlation_id)
+        # When an outer middleware already owns the correlation ID (validated from the
+        # request or generated), reuse it and leave its response header alone.
+        state = scope.setdefault("state", {})
+        upstream = state.get("correlation_id")
+        owns_header = upstream is None
+        try:
+            correlation_id = UUID(upstream) if upstream is not None else uuid4()
+        except ValueError:
+            correlation_id, owns_header = uuid4(), True
+        state["correlation_id"] = str(correlation_id)
         with (
             self.telemetry.request(
                 correlation_id, parent=parent, method=scope["method"]
@@ -56,14 +64,15 @@ class TracingMiddleware:
                     if status >= 500:
                         request_span.set_status(StatusCode.ERROR)
                         response_span.set_status(StatusCode.ERROR)
-                    message = {
-                        **message,
-                        "headers": [
-                            (key, value)
-                            for key, value in message.get("headers", [])
-                            if key.lower() != b"x-correlation-id"
-                        ] + [(b"x-correlation-id", str(correlation_id).encode("ascii"))],
-                    }
+                    if owns_header:
+                        message = {
+                            **message,
+                            "headers": [
+                                (key, value)
+                                for key, value in message.get("headers", [])
+                                if key.lower() != b"x-correlation-id"
+                            ] + [(b"x-correlation-id", str(correlation_id).encode("ascii"))],
+                        }
                 await send(message)
 
             await self.app(scope, receive, traced_send)

@@ -1,7 +1,7 @@
 import asyncio
+import unittest
 from pathlib import Path
 from tempfile import TemporaryDirectory
-import unittest
 from unittest.mock import Mock, patch
 
 from agent_framework import Agent, FunctionTool
@@ -24,7 +24,9 @@ class FoundryRuntimeTests(unittest.TestCase):
         credential = Mock(spec=TokenCredential)
         with (
             patch("accelerator.infrastructure.foundry.agent_runtime.Agent") as agent_constructor,
-            patch("accelerator.infrastructure.foundry.agent_runtime.FoundryChatClient") as client_constructor,
+            patch(
+                "accelerator.infrastructure.foundry.agent_runtime.FoundryChatClient"
+            ) as client_constructor,
         ):
             runtime = AgentFrameworkFoundryRuntime(
                 "https://foundry.example/projects/project",
@@ -51,7 +53,9 @@ class FoundryRuntimeTests(unittest.TestCase):
         )
 
     def test_uses_default_azure_credential_when_not_injected(self) -> None:
-        with patch("accelerator.infrastructure.foundry.agent_runtime.DefaultAzureCredential") as credential:
+        with patch(
+            "accelerator.infrastructure.foundry.agent_runtime.DefaultAzureCredential"
+        ) as credential:
             runtime = AgentFrameworkFoundryRuntime("https://foundry.example/projects/project")
 
         credential.assert_called_once_with()
@@ -88,7 +92,9 @@ class FoundryRuntimeTests(unittest.TestCase):
                 self.assertIsInstance(agent.client, FoundryChatClient)
                 self.assertEqual(agent.name, config.name)
                 self.assertEqual(agent.default_options["model"], config.model)
-                self.assertEqual(agent.default_options["instructions"], "Trusted file instructions.")
+                self.assertEqual(
+                    agent.default_options["instructions"], "Trusted file instructions."
+                )
                 self.assertEqual(agent.default_options["tools"], [declaration])
                 credential.get_token.assert_not_called()
             finally:
@@ -139,3 +145,25 @@ class FoundrySettingsTests(unittest.TestCase):
             clear=True,
         ), self.assertRaises(ValidationError):
             FoundrySettings()
+
+
+async def test_runtime_closes_the_clients_it_created() -> None:
+    from unittest.mock import AsyncMock, MagicMock, patch
+
+    from accelerator.infrastructure.foundry import agent_runtime
+
+    created = MagicMock()
+    created.client.close = AsyncMock()
+    created.project_client.close = AsyncMock()
+    with patch.object(agent_runtime, "FoundryChatClient", return_value=created), patch.object(
+        agent_runtime, "Agent"
+    ):
+        runtime = AgentFrameworkFoundryRuntime(
+            "https://foundry.example.test/api/projects/p", credential=MagicMock()
+        )
+        runtime.create_agent(name="a", model="m", instructions="i", tools=())
+        await runtime.close()
+        await runtime.close()
+
+    created.client.close.assert_awaited_once()
+    created.project_client.close.assert_awaited_once()

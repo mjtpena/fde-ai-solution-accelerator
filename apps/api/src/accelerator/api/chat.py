@@ -1,12 +1,18 @@
+import asyncio
+import logging
 from collections.abc import AsyncIterator
+from dataclasses import dataclass
 from typing import Annotated, Literal, Protocol, runtime_checkable
 
 from fastapi import APIRouter, Depends, HTTPException, Request, status
 from fastapi.responses import StreamingResponse
 from pydantic import BaseModel, ConfigDict, Field, field_validator
 
+from accelerator.agent_core.workflows.generation import current_token_budget, current_token_sink
 from accelerator.agent_core.workflows.grounded_answer import GroundedAnswerResult
+from accelerator.configuration.settings import StreamReleaseMode
 from accelerator.identity.scope_resolver import get_execution_context
+from accelerator.security_core.cost_guard import TokenBudget
 from accelerator.security_core.data_boundaries.context import ExecutionContext
 from accelerator.security_core.tool_policy import ApprovalRequired
 
@@ -49,9 +55,29 @@ class ApprovalEvent(BaseModel):
     approval: ApprovalCard
 
 
+AbstentionCode = Literal[
+    "insufficient_evidence",
+    "answer_withdrawn",
+    "content_safety_prompt_attack",
+    "content_safety_output_blocked",
+    "content_safety_unavailable",
+]
+
+
 class AbstentionEvent(BaseModel):
     reason: str
     evidence_ids: list[str]
+    code: AbstentionCode = Field(
+        description=(
+            "Stable machine-readable cause. insufficient_evidence: retrieval could not "
+            "support an answer. answer_withdrawn: the answer failed verification after "
+            "the response had started, so it was withheld (or, in development-only "
+            "incremental mode, withdrawn after its tokens were streamed). "
+            "content_safety_prompt_attack: the request was refused as a prompt attack. "
+            "content_safety_output_blocked: the answer was withheld by harm screening. "
+            "content_safety_unavailable: screening could not run, so nothing was answered."
+        )
+    )
 
 
 class DoneEvent(BaseModel):
@@ -66,6 +92,22 @@ class ChatTurnPort(Protocol):
 
 
 router = APIRouter(prefix="/chat", tags=["chat"])
+logger = logging.getLogger(__name__)
+
+WITHDRAWN_REASON = (
+    "The generated answer could not be verified against its sources and was withdrawn."
+)
+TurnResult = GroundedAnswerResult | ApprovalRequired[BaseModel]
+# An SSE comment line: clients and proxies see traffic, parsers ignore it.
+KEEPALIVE_FRAME = ": keepalive\n\n"
+
+
+@dataclass(frozen=True, slots=True)
+class StreamRelease:
+    """How this route releases answer text (``API_STREAM_RELEASE_MODE``)."""
+
+    mode: StreamReleaseMode = "screened"
+    heartbeat_seconds: float = 5.0
 
 
 def get_chat_turn(request: Request) -> ChatTurnPort:
@@ -76,6 +118,19 @@ def get_chat_turn(request: Request) -> ChatTurnPort:
             detail="The chat workflow is not configured.",
         )
     return workflow
+
+
+def get_stream_release(request: Request) -> StreamRelease:
+    settings = getattr(request.app.state, "settings", None)
+    if settings is None:
+        return StreamRelease()
+    return StreamRelease(settings.stream_release_mode, settings.stream_heartbeat_seconds)
+
+
+def get_request_token_budget(request: Request) -> TokenBudget | None:
+    """The budget the route's cost-guard dependency (run first) stored for this request."""
+    guard = getattr(request.state, "request_cost_guard", None)
+    return getattr(guard, "token_budget", None)
 
 
 def _frame(
@@ -146,6 +201,7 @@ async def _stream_result(
             AbstentionEvent(
                 reason=result.abstention.reason,
                 evidence_ids=list(result.abstention.evidence_ids),
+                code=result.abstention.code,
             ),
         )
     else:
@@ -168,9 +224,19 @@ async def _stream_result(
         200: {
             "description": (
                 "Server-sent events. Each frame has an event name and JSON data. "
-                "Answered turns emit token frames followed by citations and done; "
-                "insufficient evidence emits abstention and done; policy handoffs "
-                "emit approval and done."
+                "No answer text is sent before it is released: the answer is generated "
+                "and buffered server-side, its citations are validated against this "
+                "turn's retrieval and it passes content safety screening, and only then "
+                "are token frames (the released answer, in chunks), citations and done "
+                "emitted. While a turn is being buffered the stream may carry SSE "
+                "comment lines (': keepalive'), which clients must ignore. "
+                "Insufficient evidence or a content safety refusal emits abstention "
+                "(with a stable code) and done; a failure after the response started "
+                "emits abstention with code answer_withdrawn and done; policy handoffs "
+                "emit approval and done. In development-only incremental mode, tokens "
+                "are forwarded as generated and an abstention after token frames "
+                "withdraws them, so clients must discard streamed text on abstention. "
+                "Clients must ignore event names they do not recognise."
             ),
             "content": {
                 "text/event-stream": {
@@ -192,18 +258,183 @@ async def stream_chat(
     payload: ChatRequest,
     context: Annotated[ExecutionContext, Depends(get_execution_context)],
     workflow: Annotated[ChatTurnPort, Depends(get_chat_turn)],
+    token_budget: Annotated[TokenBudget | None, Depends(get_request_token_budget)] = None,
+    release: Annotated[StreamRelease, Depends(get_stream_release)] = StreamRelease(),  # noqa: B008
 ) -> StreamingResponse:
-    result = await workflow.run(payload.message, context)
-    if isinstance(result, ApprovalRequired):
-        citations: list[CitationItem] = []
+    if release.mode == "screened":
+        frames = await _screened_frames(payload, context, workflow, token_budget, release)
     else:
-        citations = _validate_result(result)
-
+        frames = await _incremental_frames(payload, context, workflow, token_budget)
     return StreamingResponse(
-        _stream_result(result, citations),
+        frames,
         media_type="text/event-stream",
         headers={
             "Cache-Control": "no-cache",
             "X-Accel-Buffering": "no",
         },
     )
+
+
+async def _screened_frames(
+    payload: ChatRequest,
+    context: ExecutionContext,
+    workflow: ChatTurnPort,
+    token_budget: TokenBudget | None,
+    release: StreamRelease,
+) -> AsyncIterator[str]:
+    """Screen before release: no model text leaves the API before the turn finishes.
+
+    The model call runs without a token sink, so the generator buffers the whole
+    answer; citation validation and content safety run inside the workflow, and the
+    route validates the result again before a single token frame is written.
+    """
+
+    async def run_turn() -> TurnResult:
+        current_token_sink.set(None)
+        current_token_budget.set(token_budget)
+        return await workflow.run(payload.message, context)
+
+    turn = asyncio.create_task(run_turn())
+    try:
+        await asyncio.wait({turn}, timeout=release.heartbeat_seconds)
+    except BaseException:
+        turn.cancel()
+        raise
+    if turn.done():
+        # Fast turns keep the error contract: failures and invalid results surface
+        # as errors (500, or 429 for an exhausted budget) before any bytes are sent.
+        result = turn.result()
+        citations: list[CitationItem] = (
+            [] if isinstance(result, ApprovalRequired) else _validate_result(result)
+        )
+        return _stream_result(result, citations)
+    return _stream_screened(turn, release.heartbeat_seconds, context.correlation_id)
+
+
+async def _stream_screened(
+    turn: asyncio.Task[TurnResult], heartbeat_seconds: float, correlation_id: str
+) -> AsyncIterator[str]:
+    """Keep the connection alive while the turn runs, then release only a verified result."""
+    try:
+        yield KEEPALIVE_FRAME
+        while not turn.done():
+            await asyncio.wait({turn}, timeout=heartbeat_seconds)
+            if not turn.done():
+                yield KEEPALIVE_FRAME
+        try:
+            result = turn.result()
+            citations = (
+                [] if isinstance(result, ApprovalRequired) else _validate_result(result)
+            )
+        except Exception as error:  # nothing was released; the answer is withheld
+            logger.error(
+                "screened_answer_withheld",
+                extra={"correlation_id": correlation_id, "exception_type": type(error).__name__},
+            )
+            yield _frame(
+                "abstention",
+                AbstentionEvent(reason=WITHDRAWN_REASON, evidence_ids=[], code="answer_withdrawn"),
+            )
+            yield _frame("done", DoneEvent())
+            return
+        async for frame in _stream_result(result, citations):
+            yield frame
+    finally:
+        if not turn.done():
+            turn.cancel()
+
+
+async def _incremental_frames(
+    payload: ChatRequest,
+    context: ExecutionContext,
+    workflow: ChatTurnPort,
+    token_budget: TokenBudget | None,
+) -> AsyncIterator[str]:
+    """Development only: forward tokens as generated (production settings refuse it)."""
+    tokens: asyncio.Queue[str] = asyncio.Queue()
+
+    async def sink(text: str) -> None:
+        await tokens.put(text)
+
+    async def run_turn() -> TurnResult:
+        # Per-turn context: streamed tokens go to the sink, and the cost guard's
+        # token budget bounds every model call.
+        current_token_sink.set(sink)
+        current_token_budget.set(token_budget)
+        return await workflow.run(payload.message, context)
+
+    turn = asyncio.create_task(run_turn())
+    first_token = await _next_token(tokens, turn)
+    if first_token is None:
+        # Nothing was streamed: failures and invalid results surface as errors
+        # (500, or 429 for an exhausted budget) before any response bytes are sent.
+        result = await turn
+        citations: list[CitationItem] = (
+            [] if isinstance(result, ApprovalRequired) else _validate_result(result)
+        )
+        frames = _stream_result(result, citations)
+    else:
+        frames = _stream_live(first_token, tokens, turn, context.correlation_id)
+    return frames
+
+
+async def _next_token(tokens: asyncio.Queue[str], turn: asyncio.Task[TurnResult]) -> str | None:
+    """The next streamed token, or ``None`` once the turn has finished and drained."""
+    if not tokens.empty():
+        return tokens.get_nowait()
+    if turn.done():
+        return None
+    getter = asyncio.ensure_future(tokens.get())
+    try:
+        await asyncio.wait({getter, turn}, return_when=asyncio.FIRST_COMPLETED)
+    finally:
+        if not getter.done():
+            getter.cancel()
+    if getter.done() and not getter.cancelled():
+        return getter.result()
+    return tokens.get_nowait() if not tokens.empty() else None
+
+
+async def _stream_live(
+    first_token: str,
+    tokens: asyncio.Queue[str],
+    turn: asyncio.Task[TurnResult],
+    correlation_id: str,
+) -> AsyncIterator[str]:
+    """Forward model tokens as they arrive; emit citations only after validation.
+
+    If the turn fails or its citations do not validate after text was streamed,
+    an ``abstention`` frame withdraws the answer; clients must discard the
+    streamed text when they receive it.
+    """
+    try:
+        token: str | None = first_token
+        while token is not None:
+            yield _frame("token", TokenEvent(text=token))
+            token = await _next_token(tokens, turn)
+        try:
+            result = await turn
+            citations = (
+                [] if isinstance(result, ApprovalRequired) else _validate_result(result)
+            )
+        except Exception as error:  # the answer is withdrawn, never silently kept
+            logger.error(
+                "streamed_answer_withdrawn",
+                extra={"correlation_id": correlation_id, "exception_type": type(error).__name__},
+            )
+            yield _frame(
+                "abstention",
+                AbstentionEvent(reason=WITHDRAWN_REASON, evidence_ids=[], code="answer_withdrawn"),
+            )
+            yield _frame("done", DoneEvent())
+            return
+        if isinstance(result, ApprovalRequired) or result.status == "abstained":
+            async for frame in _stream_result(result, citations):
+                yield frame
+            return
+        if citations:
+            yield _frame("citations", CitationsEvent(citations=citations))
+        yield _frame("done", DoneEvent())
+    finally:
+        if not turn.done():
+            turn.cancel()

@@ -72,6 +72,57 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/approvals": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** List Pending Approvals */
+        get: operations["list_pending_approvals_approvals_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/approvals/{approval_id}/approve": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Approve */
+        post: operations["approve_approvals__approval_id__approve_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/approvals/{approval_id}/reject": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Reject */
+        post: operations["reject_approvals__approval_id__reject_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/chat/stream": {
         parameters: {
             query?: never;
@@ -93,6 +144,39 @@ export interface paths {
 export type webhooks = Record<string, never>;
 export interface components {
     schemas: {
+        /** ApprovalList */
+        ApprovalList: {
+            /** Items */
+            items: components["schemas"]["ApprovalView"][];
+        };
+        /** ApprovalView */
+        ApprovalView: {
+            /**
+             * Approval Id
+             * Format: uuid
+             */
+            approval_id: string;
+            /** Tool Name */
+            tool_name: string;
+            /**
+             * Status
+             * @enum {string}
+             */
+            status: "pending" | "approved" | "rejected" | "executed" | "expired";
+            /** Scope Id */
+            scope_id: string;
+            /** Requested By */
+            requested_by: string;
+            /** Decided By */
+            decided_by: string | null;
+            /**
+             * Expires At
+             * Format: date-time
+             */
+            expires_at: string;
+            /** Can Decide */
+            can_decide: boolean;
+        };
         /** AuditEvent */
         AuditEvent: {
             /**
@@ -115,6 +199,8 @@ export interface components {
             approval_id: string | null;
             /** Tool Name */
             tool_name: string | null;
+            /** Reason Code */
+            reason_code: ("content_safety_prompt_attack" | "content_safety_output_blocked" | "content_safety_unavailable") | null;
         };
         /** AuditPage */
         AuditPage: {
@@ -135,7 +221,7 @@ export interface components {
          * EventType
          * @enum {string}
          */
-        EventType: "auth_failure" | "approval" | "tool_execution";
+        EventType: "auth_failure" | "authorization_failure" | "approval" | "tool_execution" | "content_safety";
         /** HTTPValidationError */
         HTTPValidationError: {
             /** Detail */
@@ -145,9 +231,31 @@ export interface components {
         HealthResponse: {
             /**
              * Status
+             * @constant
+             */
+            status: "ok";
+        };
+        /** ReadinessCheck */
+        ReadinessCheck: {
+            /**
+             * Status
              * @enum {string}
              */
-            status: "ok" | "ready";
+            status: "ok" | "failed" | "not_configured";
+            /** Reason */
+            reason?: string | null;
+        };
+        /** ReadinessResponse */
+        ReadinessResponse: {
+            /**
+             * Status
+             * @enum {string}
+             */
+            status: "ready" | "not_ready";
+            /** Checks */
+            checks: {
+                [key: string]: components["schemas"]["ReadinessCheck"];
+            };
         };
         /** RetrievalDiagnosticResult */
         RetrievalDiagnosticResult: {
@@ -219,27 +327,6 @@ export interface operations {
                     "application/json": components["schemas"]["HealthResponse"];
                 };
             };
-            /** @description Missing or invalid bearer token. */
-            401: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content?: never;
-            };
-            /** @description Insufficient app role. */
-            403: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content?: never;
-            };
-            /** @description Identity, scope, or audit persistence is unavailable. */
-            503: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content?: never;
-            };
         };
     };
     readyz_readyz_get: {
@@ -257,29 +344,17 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": components["schemas"]["HealthResponse"];
+                    "application/json": components["schemas"]["ReadinessResponse"];
                 };
             };
-            /** @description Missing or invalid bearer token. */
-            401: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content?: never;
-            };
-            /** @description Insufficient app role. */
-            403: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content?: never;
-            };
-            /** @description Identity, scope, or audit persistence is unavailable. */
+            /** @description A dependency is not ready. */
             503: {
                 headers: {
                     [name: string]: unknown;
                 };
-                content?: never;
+                content: {
+                    "application/json": components["schemas"]["ReadinessResponse"];
+                };
             };
         };
     };
@@ -325,6 +400,13 @@ export interface operations {
                 content: {
                     "application/json": components["schemas"]["HTTPValidationError"];
                 };
+            };
+            /** @description Rate limit or token budget exceeded. */
+            429: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
             };
             /** @description Identity, scope, or audit persistence is unavailable. */
             503: {
@@ -389,6 +471,192 @@ export interface operations {
             };
         };
     };
+    list_pending_approvals_approvals_get: {
+        parameters: {
+            query?: {
+                limit?: number;
+            };
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApprovalList"];
+                };
+            };
+            /** @description Missing or invalid bearer token. */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description Insufficient app role. */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+            /** @description Identity, scope, or audit persistence is unavailable. */
+            503: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+        };
+    };
+    approve_approvals__approval_id__approve_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /** @description Approval identifier from an approval card. */
+                approval_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApprovalView"];
+                };
+            };
+            /** @description Missing or invalid bearer token. */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description Insufficient app role. */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description No such approval in the caller's scopes. */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description The approval is expired or no longer pending. */
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+            /** @description Identity, scope, or audit persistence is unavailable. */
+            503: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+        };
+    };
+    reject_approvals__approval_id__reject_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /** @description Approval identifier from an approval card. */
+                approval_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApprovalView"];
+                };
+            };
+            /** @description Missing or invalid bearer token. */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description Insufficient app role. */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description No such approval in the caller's scopes. */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description The approval is expired or no longer pending. */
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+            /** @description Identity, scope, or audit persistence is unavailable. */
+            503: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+        };
+    };
     stream_chat_chat_stream_post: {
         parameters: {
             query?: never;
@@ -402,7 +670,7 @@ export interface operations {
             };
         };
         responses: {
-            /** @description Server-sent events. Each frame has an event name and JSON data. Answered turns emit token frames followed by citations and done; insufficient evidence emits abstention and done; policy handoffs emit approval and done. */
+            /** @description Server-sent events. Each frame has an event name and JSON data. No answer text is sent before it is released: the answer is generated and buffered server-side, its citations are validated against this turn's retrieval and it passes content safety screening, and only then are token frames (the released answer, in chunks), citations and done emitted. While a turn is being buffered the stream may carry SSE comment lines (': keepalive'), which clients must ignore. Insufficient evidence or a content safety refusal emits abstention (with a stable code) and done; a failure after the response started emits abstention with code answer_withdrawn and done; policy handoffs emit approval and done. In development-only incremental mode, tokens are forwarded as generated and an abstention after token frames withdraws them, so clients must discard streamed text on abstention. Clients must ignore event names they do not recognise. */
             200: {
                 headers: {
                     [name: string]: unknown;
@@ -433,6 +701,13 @@ export interface operations {
                 content: {
                     "application/json": components["schemas"]["HTTPValidationError"];
                 };
+            };
+            /** @description Rate limit or token budget exceeded. */
+            429: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
             };
             /** @description The chat workflow is not configured. */
             503: {

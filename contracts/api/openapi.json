@@ -22,22 +22,8 @@
                 }
               }
             }
-          },
-          "401": {
-            "description": "Missing or invalid bearer token."
-          },
-          "403": {
-            "description": "Insufficient app role."
-          },
-          "503": {
-            "description": "Identity, scope, or audit persistence is unavailable."
           }
-        },
-        "security": [
-          {
-            "HTTPBearer": []
-          }
-        ]
+        }
       }
     },
     "/readyz": {
@@ -53,26 +39,22 @@
             "content": {
               "application/json": {
                 "schema": {
-                  "$ref": "#/components/schemas/HealthResponse"
+                  "$ref": "#/components/schemas/ReadinessResponse"
                 }
               }
             }
           },
-          "401": {
-            "description": "Missing or invalid bearer token."
-          },
-          "403": {
-            "description": "Insufficient app role."
-          },
           "503": {
-            "description": "Identity, scope, or audit persistence is unavailable."
+            "description": "A dependency is not ready.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ReadinessResponse"
+                }
+              }
+            }
           }
-        },
-        "security": [
-          {
-            "HTTPBearer": []
-          }
-        ]
+        }
       }
     },
     "/diagnostics/retrieval/{correlation_id}": {
@@ -119,6 +101,9 @@
           },
           "503": {
             "description": "Identity, scope, or audit persistence is unavailable."
+          },
+          "429": {
+            "description": "Rate limit or token budget exceeded."
           },
           "422": {
             "description": "Validation Error",
@@ -220,6 +205,195 @@
         }
       }
     },
+    "/approvals": {
+      "get": {
+        "tags": [
+          "approvals"
+        ],
+        "summary": "List Pending Approvals",
+        "operationId": "list_pending_approvals_approvals_get",
+        "security": [
+          {
+            "HTTPBearer": []
+          }
+        ],
+        "parameters": [
+          {
+            "name": "limit",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "integer",
+              "maximum": 100,
+              "minimum": 1,
+              "default": 50,
+              "title": "Limit"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApprovalList"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Missing or invalid bearer token."
+          },
+          "403": {
+            "description": "Insufficient app role."
+          },
+          "503": {
+            "description": "Identity, scope, or audit persistence is unavailable."
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/approvals/{approval_id}/approve": {
+      "post": {
+        "tags": [
+          "approvals"
+        ],
+        "summary": "Approve",
+        "operationId": "approve_approvals__approval_id__approve_post",
+        "security": [
+          {
+            "HTTPBearer": []
+          }
+        ],
+        "parameters": [
+          {
+            "name": "approval_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid",
+              "description": "Approval identifier from an approval card.",
+              "title": "Approval Id"
+            },
+            "description": "Approval identifier from an approval card."
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApprovalView"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Missing or invalid bearer token."
+          },
+          "403": {
+            "description": "Insufficient app role."
+          },
+          "503": {
+            "description": "Identity, scope, or audit persistence is unavailable."
+          },
+          "404": {
+            "description": "No such approval in the caller's scopes."
+          },
+          "409": {
+            "description": "The approval is expired or no longer pending."
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/approvals/{approval_id}/reject": {
+      "post": {
+        "tags": [
+          "approvals"
+        ],
+        "summary": "Reject",
+        "operationId": "reject_approvals__approval_id__reject_post",
+        "security": [
+          {
+            "HTTPBearer": []
+          }
+        ],
+        "parameters": [
+          {
+            "name": "approval_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid",
+              "description": "Approval identifier from an approval card.",
+              "title": "Approval Id"
+            },
+            "description": "Approval identifier from an approval card."
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApprovalView"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Missing or invalid bearer token."
+          },
+          "403": {
+            "description": "Insufficient app role."
+          },
+          "503": {
+            "description": "Identity, scope, or audit persistence is unavailable."
+          },
+          "404": {
+            "description": "No such approval in the caller's scopes."
+          },
+          "409": {
+            "description": "The approval is expired or no longer pending."
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
     "/chat/stream": {
       "post": {
         "tags": [
@@ -239,7 +413,7 @@
         },
         "responses": {
           "200": {
-            "description": "Server-sent events. Each frame has an event name and JSON data. Answered turns emit token frames followed by citations and done; insufficient evidence emits abstention and done; policy handoffs emit approval and done.",
+            "description": "Server-sent events. Each frame has an event name and JSON data. No answer text is sent before it is released: the answer is generated and buffered server-side, its citations are validated against this turn's retrieval and it passes content safety screening, and only then are token frames (the released answer, in chunks), citations and done emitted. While a turn is being buffered the stream may carry SSE comment lines (': keepalive'), which clients must ignore. Insufficient evidence or a content safety refusal emits abstention (with a stable code) and done; a failure after the response started emits abstention with code answer_withdrawn and done; policy handoffs emit approval and done. In development-only incremental mode, tokens are forwarded as generated and an abstention after token frames withdraws them, so clients must discard streamed text on abstention. Clients must ignore event names they do not recognise.",
             "content": {
               "text/event-stream": {
                 "schema": {
@@ -350,11 +524,24 @@
                         },
                         "title": "Evidence Ids",
                         "type": "array"
+                      },
+                      "code": {
+                        "description": "Stable machine-readable cause. insufficient_evidence: retrieval could not support an answer. answer_withdrawn: the answer failed verification after the response had started, so it was withheld (or, in development-only incremental mode, withdrawn after its tokens were streamed). content_safety_prompt_attack: the request was refused as a prompt attack. content_safety_output_blocked: the answer was withheld by harm screening. content_safety_unavailable: screening could not run, so nothing was answered.",
+                        "enum": [
+                          "insufficient_evidence",
+                          "answer_withdrawn",
+                          "content_safety_prompt_attack",
+                          "content_safety_output_blocked",
+                          "content_safety_unavailable"
+                        ],
+                        "title": "Code",
+                        "type": "string"
                       }
                     },
                     "required": [
                       "reason",
-                      "evidence_ids"
+                      "evidence_ids",
+                      "code"
                     ],
                     "title": "AbstentionEvent",
                     "type": "object"
@@ -377,6 +564,9 @@
           "503": {
             "description": "The chat workflow is not configured."
           },
+          "429": {
+            "description": "Rate limit or token budget exceeded."
+          },
           "422": {
             "description": "Validation Error",
             "content": {
@@ -398,6 +588,86 @@
   },
   "components": {
     "schemas": {
+      "ApprovalList": {
+        "properties": {
+          "items": {
+            "items": {
+              "$ref": "#/components/schemas/ApprovalView"
+            },
+            "type": "array",
+            "title": "Items"
+          }
+        },
+        "type": "object",
+        "required": [
+          "items"
+        ],
+        "title": "ApprovalList"
+      },
+      "ApprovalView": {
+        "properties": {
+          "approval_id": {
+            "type": "string",
+            "format": "uuid",
+            "title": "Approval Id"
+          },
+          "tool_name": {
+            "type": "string",
+            "title": "Tool Name"
+          },
+          "status": {
+            "type": "string",
+            "enum": [
+              "pending",
+              "approved",
+              "rejected",
+              "executed",
+              "expired"
+            ],
+            "title": "Status"
+          },
+          "scope_id": {
+            "type": "string",
+            "title": "Scope Id"
+          },
+          "requested_by": {
+            "type": "string",
+            "title": "Requested By"
+          },
+          "decided_by": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Decided By"
+          },
+          "expires_at": {
+            "type": "string",
+            "format": "date-time",
+            "title": "Expires At"
+          },
+          "can_decide": {
+            "type": "boolean",
+            "title": "Can Decide"
+          }
+        },
+        "type": "object",
+        "required": [
+          "approval_id",
+          "tool_name",
+          "status",
+          "scope_id",
+          "requested_by",
+          "decided_by",
+          "expires_at",
+          "can_decide"
+        ],
+        "title": "ApprovalView"
+      },
       "AuditEvent": {
         "properties": {
           "event_id": {
@@ -458,6 +728,22 @@
               }
             ],
             "title": "Tool Name"
+          },
+          "reason_code": {
+            "anyOf": [
+              {
+                "type": "string",
+                "enum": [
+                  "content_safety_prompt_attack",
+                  "content_safety_output_blocked",
+                  "content_safety_unavailable"
+                ]
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Reason Code"
           }
         },
         "additionalProperties": false,
@@ -470,7 +756,8 @@
           "correlation_id",
           "actor_id",
           "approval_id",
-          "tool_name"
+          "tool_name",
+          "reason_code"
         ],
         "title": "AuditEvent"
       },
@@ -520,8 +807,10 @@
         "type": "string",
         "enum": [
           "auth_failure",
+          "authorization_failure",
           "approval",
-          "tool_execution"
+          "tool_execution",
+          "content_safety"
         ],
         "title": "EventType"
       },
@@ -542,10 +831,7 @@
         "properties": {
           "status": {
             "type": "string",
-            "enum": [
-              "ok",
-              "ready"
-            ],
+            "const": "ok",
             "title": "Status"
           }
         },
@@ -554,6 +840,60 @@
           "status"
         ],
         "title": "HealthResponse"
+      },
+      "ReadinessCheck": {
+        "properties": {
+          "status": {
+            "type": "string",
+            "enum": [
+              "ok",
+              "failed",
+              "not_configured"
+            ],
+            "title": "Status"
+          },
+          "reason": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Reason"
+          }
+        },
+        "type": "object",
+        "required": [
+          "status"
+        ],
+        "title": "ReadinessCheck"
+      },
+      "ReadinessResponse": {
+        "properties": {
+          "status": {
+            "type": "string",
+            "enum": [
+              "ready",
+              "not_ready"
+            ],
+            "title": "Status"
+          },
+          "checks": {
+            "additionalProperties": {
+              "$ref": "#/components/schemas/ReadinessCheck"
+            },
+            "type": "object",
+            "title": "Checks"
+          }
+        },
+        "type": "object",
+        "required": [
+          "status",
+          "checks"
+        ],
+        "title": "ReadinessResponse"
       },
       "RetrievalDiagnosticResult": {
         "properties": {

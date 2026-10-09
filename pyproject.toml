@@ -7,16 +7,22 @@ dependencies = []
 
 [dependency-groups]
 dev = [
+    # The hosted-agent runtime's SDKs, pinned as in infrastructure/hosted_agent, so its
+    # tests run in the root suite.
+    "azure-ai-agentserver-invocations==1.2.0",
+    "azure-ai-projects==2.7.0",
     "mypy>=1.18,<2",
     "pre-commit>=4.3,<5",
     "pytest>=8.4,<10",
     "pytest-asyncio>=1.2,<2",
+    "pytest-cov>=6,<8",
     "ruff>=0.13,<1",
     "types-PyYAML>=6,<7",
 ]
 
 [tool.uv]
 package = false
+config-settings-package = { fde-retrieval-core = { editable_mode = "strict" }, fde-agent-core = { editable_mode = "strict" }, fde-evaluation-core = { editable_mode = "strict" }, fde-observability-core = { editable_mode = "strict" }, fde-ingestion-worker = { editable_mode = "strict" } }
 
 [tool.uv.workspace]
 members = [
@@ -34,23 +40,67 @@ line-length = 100
 target-version = "py312"
 
 [tool.ruff.lint]
-select = ["E4", "E7", "E9", "F"]
+select = ["E", "F", "W", "I", "B", "UP", "S"]
+ignore = [
+    # PEP 695 syntax infers variance; several protocols here declare it explicitly.
+    "UP046",
+    "UP047",
+]
+
+[tool.ruff.lint.isort]
+# Explicit so generated projects (where the generator renames this) sort identically.
+known-first-party = ["accelerator", "infrastructure"]
+
+[tool.ruff.lint.per-file-ignores]
+# Tests assert, use fixed fake credentials and temporary paths, and seed randomness.
+"**/test_*.py" = ["S101", "S105", "S106", "S108", "S311", "S603", "S607", "S608"]
+"**/tests/**" = ["S101", "S105", "S106", "S108", "S311", "S603", "S607", "S608"]
+# The generator runs fixed tool commands (uv, npm, make) in the generated project.
+"scripts/new_project.py" = ["S603", "S607"]
+"**/conftest.py" = ["S101"]
+
+[tool.ruff.lint.flake8-bugbear]
+# FastAPI declares dependencies as default arguments by design.
+extend-immutable-calls = [
+    "fastapi.Depends",
+    "fastapi.Query",
+    "fastapi.Header",
+    "fastapi.Body",
+    "fastapi.Path",
+    "fastapi.Security",
+]
 
 [tool.mypy]
 python_version = "3.12"
 strict = true
-mypy_path = ["packages/security_core/src", "apps/api/src"]
+mypy_path = ["packages/security_core/src", "apps/api/src", "tests/e2e_local"]
 explicit_package_bases = true
-files = [
-    "packages/agent_core",
-    "packages/evaluation_core",
-    "packages/observability_core/src",
-    "packages/retrieval_core",
-    "packages/security_core",
-    "workers/ingestion/src",
-    "apps/api/src/accelerator/identity",
-    "apps/api/tests/test_scope_resolver.py",
+# Workspace packages are checked under their import names (accelerator.*), the
+# same names every caller uses, so types match across packages.
+packages = [
+    "accelerator",
+    "accelerator.agent_core",
+    "accelerator.evaluation_core",
+    "accelerator.ingestion",
+    "accelerator.observability_core",
+    "accelerator.retrieval_core",
+    "accelerator.security_core",
 ]
+
+[tool.coverage.run]
+source = [
+    "accelerator",
+    # BEGIN ACCELERATOR ONLY
+    # The hosted-agent runtime is imported as infrastructure.hosted_agent, not under
+    # accelerator; generated projects do not copy infrastructure/.
+    "infrastructure.hosted_agent",
+    # END ACCELERATOR ONLY
+]
+
+[tool.coverage.report]
+# Measured at 87% with the PostgreSQL and Azurite suites; CI enforces this floor.
+fail_under = 85
+skip_covered = true
 
 [tool.pytest.ini_options]
 asyncio_mode = "auto"
@@ -65,4 +115,7 @@ testpaths = [
     "packages/security_core/tests",
     "packages/security_core/redaction",
     "packages/observability_core/tests",
+    "workers/ingestion/tests",
+    "infrastructure/hosted_agent/tests",
+    "infrastructure/tests",
 ]

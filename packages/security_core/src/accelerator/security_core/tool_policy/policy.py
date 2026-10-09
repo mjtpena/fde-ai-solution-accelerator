@@ -4,7 +4,6 @@ from typing import Literal
 
 from .models import ToolPolicyViolation
 
-
 ToolPolicyAction = Literal["execute", "approval"]
 
 

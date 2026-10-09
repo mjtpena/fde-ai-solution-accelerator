@@ -1,6 +1,7 @@
+import inspect
+import math
 from collections.abc import Awaitable, Callable
 from dataclasses import dataclass
-import math
 from typing import Annotated
 
 from fastapi import Depends, HTTPException
@@ -10,13 +11,12 @@ from starlette.requests import Request
 from accelerator.configuration.settings import Settings
 from accelerator.security_core.cost_guard import (
     CostGuardContext,
-    RateLimitExceeded,
     RateLimiter,
+    RateLimitExceeded,
     SlidingWindowRateLimiter,
     TokenBudget,
     TokenBudgetExceeded,
 )
-
 
 ContextDependency = Callable[..., CostGuardContext | Awaitable[CostGuardContext]]
 
@@ -50,7 +50,9 @@ def create_cost_guard_dependency(
         if isinstance(existing_guard, RequestCostGuard):
             return existing_guard
         try:
-            limiter.check(context)
+            pending = limiter.check(context)
+            if inspect.isawaitable(pending):
+                await pending
         except RateLimitExceeded as error:
             retry_after = max(1, math.ceil(error.retry_after_seconds))
             raise HTTPException(
@@ -75,11 +77,11 @@ def create_cost_guard_dependency(
     return guard_request_cost
 
 
-async def handle_token_budget_exceeded(
-    request: Request,
-    error: TokenBudgetExceeded,
-) -> JSONResponse:
+async def handle_token_budget_exceeded(request: Request, error: Exception) -> JSONResponse:
+    """Starlette exception handler; registered for ``TokenBudgetExceeded`` only."""
     del request
+    if not isinstance(error, TokenBudgetExceeded):
+        raise error
     return JSONResponse(
         status_code=429,
         content={

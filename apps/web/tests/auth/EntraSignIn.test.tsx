@@ -16,6 +16,7 @@ const { mockMsal, mockScope } = vi.hoisted(() => ({
     getAllAccounts: vi.fn(),
     setActiveAccount: vi.fn(),
     acquireTokenSilent: vi.fn(),
+    acquireTokenPopup: vi.fn(),
     loginPopup: vi.fn(),
     logoutPopup: vi.fn(),
   },
@@ -55,7 +56,7 @@ const tokenResult = {
 
 describe("EntraSignIn", () => {
   beforeEach(() => {
-    vi.clearAllMocks();
+    vi.resetAllMocks();
     mockMsal.initialize.mockResolvedValue(undefined);
     mockMsal.handleRedirectPromise.mockResolvedValue(null);
     mockMsal.getActiveAccount.mockReturnValue(null);
@@ -63,7 +64,6 @@ describe("EntraSignIn", () => {
     mockMsal.acquireTokenSilent.mockResolvedValue(tokenResult);
     mockMsal.loginPopup.mockResolvedValue(tokenResult);
     mockMsal.logoutPopup.mockResolvedValue(undefined);
-    vi.stubEnv("NEXT_PUBLIC_API_URL", "http://localhost:8000");
     vi.stubGlobal(
       "fetch",
       vi.fn(
@@ -81,7 +81,7 @@ describe("EntraSignIn", () => {
     vi.unstubAllGlobals();
   });
 
-  it("restores a cached account and sends its acquired token to the API", async () => {
+  it("restores a cached account and checks API health through this origin", async () => {
     mockMsal.getAllAccounts.mockReturnValue([account]);
     render(<EntraSignIn />);
 
@@ -91,16 +91,73 @@ describe("EntraSignIn", () => {
       scopes: [mockScope],
     });
     await waitFor(() => {
-      expect(fetch).toHaveBeenCalledWith(
-        new URL("/healthz", "http://localhost:8000"),
-        expect.objectContaining({
-          headers: expect.objectContaining({
-            Authorization: "Bearer test-access-token",
-          }),
-        }),
-      );
+      expect(fetch).toHaveBeenCalledWith("/api/health", expect.anything());
     });
     expect(await screen.findByText("API status: ok")).toBeTruthy();
+  });
+
+  it("acquires a fresh token silently for every chat request", async () => {
+    mockMsal.getAllAccounts.mockReturnValue([account]);
+    mockMsal.acquireTokenSilent
+      .mockResolvedValueOnce(tokenResult)
+      .mockResolvedValueOnce({ ...tokenResult, accessToken: "renewed-token-1" })
+      .mockResolvedValueOnce({ ...tokenResult, accessToken: "renewed-token-2" });
+    const authorizations: (string | null)[] = [];
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
+        if (String(input).endsWith("/api/chat/stream")) {
+          authorizations.push(new Headers(init?.headers).get("Authorization"));
+          return new Response("event: done\ndata: {}\n\n", {
+            headers: { "Content-Type": "text/event-stream" },
+          });
+        }
+        return new Response(JSON.stringify({ status: "ok" }), {
+          headers: { "Content-Type": "application/json" },
+        });
+      }),
+    );
+    render(<AuthenticatedChat />);
+    expect(await screen.findByText("Signed in as API Reader")).toBeTruthy();
+
+    for (const [index, question] of ["First", "Second"].entries()) {
+      fireEvent.change(screen.getByLabelText("Message"), {
+        target: { value: question },
+      });
+      const send = screen.getByRole("button", { name: "Send" });
+      await waitFor(() => expect(send.getAttribute("disabled")).toBeNull());
+      fireEvent.click(send);
+      await waitFor(() => expect(authorizations).toHaveLength(index + 1));
+      // Streaming finished: the button is usable again.
+      await waitFor(() => expect(send.getAttribute("disabled")).toBeNull());
+    }
+
+    await waitFor(() =>
+      expect(authorizations).toEqual([
+        "Bearer renewed-token-1",
+        "Bearer renewed-token-2",
+      ]),
+    );
+  });
+
+  it("falls back to an interactive popup when silent renewal needs interaction", async () => {
+    const { InteractionRequiredAuthError } = await import("@azure/msal-browser");
+    const { acquireApiToken } = await import("../../lib/auth/token");
+    mockMsal.acquireTokenSilent.mockRejectedValue(
+      new InteractionRequiredAuthError("interaction_required", "test-correlation"),
+    );
+    mockMsal.acquireTokenPopup.mockResolvedValue({
+      ...tokenResult,
+      accessToken: "interactive-token",
+    });
+
+    await expect(
+      acquireApiToken(mockMsal as never, account, mockScope),
+    ).resolves.toBe("interactive-token");
+    expect(mockMsal.acquireTokenPopup).toHaveBeenCalledWith({
+      account,
+      scopes: [mockScope],
+    });
   });
 
   it("forwards the MSAL-acquired API token with chat requests", async () => {
@@ -159,7 +216,7 @@ describe("EntraSignIn", () => {
     ).not.toBeNull();
   });
 
-  it("signs in through the popup and sends the returned token to the API", async () => {
+  it("signs in through the popup and checks the API", async () => {
     render(<EntraSignIn />);
     fireEvent.click(
       await screen.findByRole("button", { name: "Sign in with Microsoft" }),
@@ -169,14 +226,7 @@ describe("EntraSignIn", () => {
     expect(mockMsal.loginPopup).toHaveBeenCalledWith({ scopes: [mockScope] });
     expect(mockMsal.setActiveAccount).toHaveBeenCalledWith(account);
     await waitFor(() => {
-      expect(fetch).toHaveBeenCalledWith(
-        expect.any(URL),
-        expect.objectContaining({
-          headers: expect.objectContaining({
-            Authorization: "Bearer test-access-token",
-          }),
-        }),
-      );
+      expect(fetch).toHaveBeenCalledWith("/api/health", expect.anything());
     });
   });
 

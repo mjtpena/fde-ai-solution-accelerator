@@ -1,0 +1,82 @@
+"""PostgreSQL engine construction for the API host."""
+
+import ssl
+from collections.abc import Awaitable, Callable
+
+from azure.core.credentials_async import AsyncTokenCredential
+from sqlalchemy.exc import SQLAlchemyError
+from sqlalchemy.ext.asyncio import AsyncEngine, create_async_engine
+
+from accelerator.configuration.settings import Settings
+
+# Exceptions that mean "the database is unavailable". SQLAlchemy wraps what the
+# driver raises on an open connection, but asyncpg reports a server it cannot reach
+# (connection refused, unresolvable host, connect timeout) with plain OSError
+# subclasses before any DBAPI connection exists, and SQLAlchemy passes them through.
+DATABASE_UNAVAILABLE_ERRORS: tuple[type[Exception], ...] = (SQLAlchemyError, OSError)
+
+# Microsoft Entra resource for Azure Database for PostgreSQL Flexible Server.
+POSTGRES_ENTRA_SCOPE = "https://ossrdbms-aad.database.windows.net/.default"
+
+
+def entra_password_provider(
+    credential: AsyncTokenCredential,
+) -> Callable[[], Awaitable[str]]:
+    """Return an asyncpg password callable that fetches a fresh Entra token per connection."""
+
+    async def password() -> str:
+        token = await credential.get_token(POSTGRES_ENTRA_SCOPE)
+        return token.token
+
+    return password
+
+
+def verified_tls_context(ca_file: str | None = None) -> ssl.SSLContext:
+    """TLS that verifies the server certificate and hostname.
+
+    The Entra token is sent as the password, so an unverified connection would hand
+    it to anyone able to impersonate the server. ``ca_file`` adds a private CA; by
+    default the system trust store (which covers Azure Database for PostgreSQL) is used.
+    """
+    context = ssl.create_default_context(cafile=ca_file)
+    context.check_hostname = True
+    context.verify_mode = ssl.CERT_REQUIRED
+    return context
+
+
+def asyncpg_url(url: str) -> str:
+    """Pin the asyncpg driver so a plain ``postgresql://`` DSN works unchanged."""
+    scheme, separator, rest = url.partition("://")
+    if scheme in {"postgres", "postgresql"}:
+        return f"postgresql+asyncpg{separator}{rest}"
+    return url
+
+
+def create_database_engine(
+    settings: Settings,
+    *,
+    credential: AsyncTokenCredential | None = None,
+) -> AsyncEngine:
+    """Build the async engine with explicit pool limits.
+
+    No connection is opened here. Managed-identity mode requires ``credential`` and
+    authenticates every new pooled connection with a short-lived Entra token, so the
+    pool recycle interval stays below the token lifetime.
+    """
+    if settings.database_url is None:
+        raise ValueError("API_DATABASE_URL is not configured.")
+    connect_args: dict[str, object] = {"timeout": settings.database_connect_timeout_seconds}
+    if settings.database_auth_mode == "managed_identity":
+        if credential is None:
+            raise ValueError("Managed-identity database auth requires an Azure credential.")
+        connect_args["password"] = entra_password_provider(credential)
+        connect_args["ssl"] = verified_tls_context(settings.database_tls_ca_file)
+    return create_async_engine(
+        asyncpg_url(str(settings.database_url)),
+        pool_size=settings.database_pool_size,
+        max_overflow=settings.database_max_overflow,
+        pool_timeout=settings.database_pool_timeout_seconds,
+        pool_recycle=settings.database_pool_recycle_seconds,
+        pool_pre_ping=True,
+        connect_args=connect_args,
+    )

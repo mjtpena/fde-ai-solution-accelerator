@@ -1,10 +1,10 @@
 import asyncio
+import json
+import unittest
 from concurrent.futures import ThreadPoolExecutor
 from copy import copy
 from dataclasses import dataclass
-import json
-from typing import Annotated
-import unittest
+from typing import Annotated, Any
 
 from fastapi import Depends
 from pydantic import ValidationError
@@ -73,7 +73,9 @@ def get_asgi_response(app: ASGIApp, path: str) -> AsgiResponse:
             send,
         )
 
-        response_start = next(message for message in messages if message["type"] == "http.response.start")
+        response_start = next(
+            message for message in messages if message["type"] == "http.response.start"
+        )
         response_body = b"".join(
             message.get("body", b"")  # type: ignore[arg-type]
             for message in messages
@@ -280,7 +282,9 @@ class CostGuardApiTests(unittest.TestCase):
 
     def test_rate_limit_uses_execution_context_and_returns_retry_after(self) -> None:
         first = get_asgi_response(self.app, "/protected?user_id=attacker&scope_id=other")
-        second = get_asgi_response(self.app, "/protected?user_id=another-user&scope_id=another-scope")
+        second = get_asgi_response(
+            self.app, "/protected?user_id=another-user&scope_id=another-scope"
+        )
 
         self.assertEqual(first.status_code, 200)
         self.assertEqual(first.body["user_id"], "user-1")
@@ -312,3 +316,130 @@ class CostGuardApiTests(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class CostGuardOnProductRoutesTests(unittest.TestCase):
+    def make_app(self) -> Any:
+        from accelerator.agent_core.workflows.grounded_answer import (
+            Abstention,
+            GroundedAnswerResult,
+        )
+
+        class AbstainingChat:
+            async def run(self, query: str, ctx: Any) -> GroundedAnswerResult:
+                return GroundedAnswerResult(
+                    status="abstained",
+                    answer=None,
+                    citations=(),
+                    citation_sources=(),
+                    abstention=Abstention(reason="No evidence.", evidence_ids=()),
+                )
+
+        from datetime import UTC, datetime, timedelta
+
+        from accelerator.security_core.data_boundaries.context import ExecutionContext
+
+        context = ExecutionContext(
+            correlation_id="correlation-1",
+            user_id="user-1",
+            roles=frozenset({"Reader", "Contributor"}),
+            scope_ids=frozenset({"scope-1"}),
+            deadline_utc=datetime.now(UTC) + timedelta(minutes=1),
+        )
+
+        async def get_execution_context() -> ExecutionContext:
+            return context
+
+        from accelerator.identity import scope_resolver
+
+        app = create_app(
+            Settings(
+                environment="test",
+                entra_tenant_id="00000000-0000-0000-0000-000000000001",
+                entra_audience="api://test",
+                request_rate_limit=1,
+            ),
+            chat_turn=AbstainingChat(),
+        )
+
+        async def authenticated_principal() -> Principal:
+            return Principal(subject="user-1", roles=frozenset({AppRole.READER}))
+
+        app.dependency_overrides[get_current_principal] = authenticated_principal
+        app.dependency_overrides[scope_resolver.get_execution_context] = get_execution_context
+        return app
+
+    def test_chat_stream_is_rate_limited(self) -> None:
+        from fastapi.testclient import TestClient
+
+        with TestClient(self.make_app()) as client:
+            first = client.post("/chat/stream", json={"message": "Question"})
+            second = client.post("/chat/stream", json={"message": "Question"})
+
+        self.assertEqual(first.status_code, 200)
+        self.assertEqual(second.status_code, 429)
+        self.assertEqual(second.json()["detail"]["code"], "rate_limit_exceeded")
+
+    def test_diagnostics_route_shares_the_rate_limit(self) -> None:
+        from fastapi.testclient import TestClient
+
+        with TestClient(self.make_app()) as client:
+            first = client.post("/chat/stream", json={"message": "Question"})
+            diagnostics = client.get("/diagnostics/retrieval/correlation-1")
+
+        self.assertEqual(first.status_code, 200)
+        self.assertEqual(diagnostics.status_code, 429)
+
+    def test_openapi_declares_429_on_guarded_routes_only(self) -> None:
+        paths = self.make_app().openapi()["paths"]
+
+        self.assertIn("429", paths["/chat/stream"]["post"]["responses"])
+        self.assertNotIn("429", paths["/audit-events"]["get"]["responses"])
+
+
+class TokenBudgetOnChatTests(unittest.TestCase):
+    def test_chat_model_calls_draw_from_the_request_token_budget(self) -> None:
+        from datetime import UTC, datetime, timedelta
+
+        from fastapi.testclient import TestClient
+
+        from accelerator.agent_core.workflows.generation import current_token_budget
+        from accelerator.identity import scope_resolver
+        from accelerator.security_core.data_boundaries.context import ExecutionContext
+
+        class BudgetedChat:
+            async def run(self, query: str, ctx: Any) -> Any:
+                budget = current_token_budget.get()
+                assert budget is not None
+                budget.reserve(budget.limit + 1)  # a model call larger than the budget
+
+        context = ExecutionContext(
+            correlation_id="correlation-1",
+            user_id="user-1",
+            roles=frozenset({"Reader"}),
+            scope_ids=frozenset({"scope-1"}),
+            deadline_utc=datetime.now(UTC) + timedelta(minutes=1),
+        )
+        app = create_app(
+            Settings(
+                environment="test",
+                entra_tenant_id="00000000-0000-0000-0000-000000000001",
+                entra_audience="api://test",
+                request_token_budget=100,
+            ),
+            chat_turn=BudgetedChat(),
+        )
+
+        async def principal() -> Principal:
+            return Principal(subject="user-1", roles=frozenset({AppRole.READER}))
+
+        async def trusted() -> ExecutionContext:
+            return context
+
+        app.dependency_overrides[get_current_principal] = principal
+        app.dependency_overrides[scope_resolver.get_execution_context] = trusted
+        with TestClient(app) as client:
+            response = client.post("/chat/stream", json={"message": "Question"})
+
+        self.assertEqual(response.status_code, 429)
+        self.assertEqual(response.json()["detail"]["code"], "token_budget_exceeded")

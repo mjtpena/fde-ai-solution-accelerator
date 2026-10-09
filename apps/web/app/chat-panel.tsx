@@ -4,6 +4,7 @@ import { useState } from "react";
 import type { FormEvent } from "react";
 import { streamChat } from "../lib/api/chat";
 import type { ChatApproval, ChatCitation } from "../lib/api/chat";
+import type { AccessTokenProvider } from "../lib/auth/token";
 
 function citationHref(sourceUri: string): string | null {
   try {
@@ -16,7 +17,11 @@ function citationHref(sourceUri: string): string | null {
   }
 }
 
-export function ChatPanel({ accessToken }: { accessToken: string | null }) {
+export function ChatPanel({
+  getAccessToken,
+}: {
+  getAccessToken: AccessTokenProvider | null;
+}) {
   const [message, setMessage] = useState("");
   const [answer, setAnswer] = useState("");
   const [citations, setCitations] = useState<ChatCitation[]>([]);
@@ -31,7 +36,7 @@ export function ChatPanel({ accessToken }: { accessToken: string | null }) {
   async function submit(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
     const prompt = message.trim();
-    if (!prompt || !accessToken || isStreaming) return;
+    if (!prompt || !getAccessToken || isStreaming) return;
 
     setAnswer("");
     setCitations([]);
@@ -41,6 +46,8 @@ export function ChatPanel({ accessToken }: { accessToken: string | null }) {
     setIsStreaming(true);
 
     try {
+      // A fresh (silently renewed) token for every request.
+      const accessToken = await getAccessToken();
       await streamChat(
         prompt,
         (streamEvent) => {
@@ -55,6 +62,9 @@ export function ChatPanel({ accessToken }: { accessToken: string | null }) {
               setApproval(streamEvent.approval);
               break;
             case "abstention":
+              // An abstention after streamed tokens withdraws that text.
+              setAnswer("");
+              setCitations([]);
               setAbstention({
                 reason: streamEvent.reason,
                 evidenceIds: streamEvent.evidence_ids,
@@ -94,13 +104,13 @@ export function ChatPanel({ accessToken }: { accessToken: string | null }) {
         />
         <button
           type="submit"
-          disabled={isStreaming || !message.trim() || !accessToken}
+          disabled={isStreaming || !message.trim() || !getAccessToken}
         >
           {isStreaming ? "Generating…" : "Send"}
         </button>
       </form>
 
-      {!accessToken && <p role="status">Sign in to send a chat message.</p>}
+      {!getAccessToken && <p role="status">Sign in to send a chat message.</p>}
       {isStreaming && <p role="status">Generating answer…</p>}
       {error && <p role="alert">{error}</p>}
       {answer && (

@@ -1,14 +1,12 @@
-"""Run explicitly against an isolated PostgreSQL with schema/001_audit_event.sql applied."""
+"""PostgreSQL audit persistence against a freshly migrated database (TEST_POSTGRES_DSN)."""
 
-import os
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from uuid import UUID, uuid4
 
 import httpx
 import pytest
 from fastapi import Depends
 from sqlalchemy import text
-from sqlalchemy.engine import URL
 from sqlalchemy.exc import DBAPIError, IntegrityError
 from sqlalchemy.ext.asyncio import create_async_engine
 
@@ -17,27 +15,21 @@ from accelerator.api.audit import configure_audit, get_audit_recorder
 from accelerator.application.audit import AuditRecorder
 from accelerator.configuration.settings import Settings
 from accelerator.domain.audit import AuditEvent, AuditPage, EventOutcome, EventType
-from accelerator.infrastructure.audit import PostgresAuditRepository
 from accelerator.identity.authentication import AppRole, Principal, get_current_principal
 from accelerator.identity.scope_resolver import configure_scope_resolver, get_execution_context
+from accelerator.infrastructure.audit import PostgresAuditRepository
 from accelerator.security_core.data_boundaries.context import ExecutionContext
-from accelerator.security_core.infrastructure.database import Base, create_session_factory
+from accelerator.security_core.infrastructure.database import create_session_factory
 from accelerator.security_core.infrastructure.memberships import (
     ScopeMembership,
     SqlAlchemyScopeMembershipRepository,
 )
 
 
-async def test_postgres_append_query_and_database_immutability() -> None:
-    engine = create_async_engine(
-        URL.create(
-            "postgresql+asyncpg",
-            username="postgres",
-            host="127.0.0.1",
-            port=int(os.environ["API_AUDIT_TEST_PORT"]),
-            database="postgres",
-        )
-    )
+async def test_postgres_append_query_and_database_immutability(
+    migrated_database_url: str,
+) -> None:
+    engine = create_async_engine(migrated_database_url)
     sessions = create_session_factory(engine)
     repository = PostgresAuditRepository(sessions)
     try:
@@ -63,7 +55,9 @@ async def test_postgres_append_query_and_database_immutability() -> None:
                 await session.rollback()
         assert (await repository.query(limit=1, offset=0)).items == (event,)
         assert (await repository.query(limit=1, offset=1)).items == ()
-        assert (await repository.query(limit=1, offset=0, event_type=EventType.APPROVAL)).items == ()
+        assert (
+            await repository.query(limit=1, offset=0, event_type=EventType.APPROVAL)
+        ).items == ()
         with pytest.raises(ValueError):
             await repository.query(limit=101, offset=0)
         with pytest.raises(ValueError):
@@ -93,7 +87,8 @@ async def test_postgres_append_query_and_database_immutability() -> None:
                     await session.execute(
                         text(
                             "INSERT INTO audit_event "
-                            "(event_id, occurred_at, event_type, outcome, correlation_id, actor_id) "
+                            "(event_id, occurred_at, event_type, outcome, "
+                            "correlation_id, actor_id) "
                             "VALUES (:id, now(), 'tool_execution', :outcome, 'invalid', 'actor')"
                         ),
                         {"id": uuid4(), "outcome": invalid_outcome},
@@ -102,7 +97,7 @@ async def test_postgres_append_query_and_database_immutability() -> None:
         assert len((await repository.query(limit=100, offset=0)).items) == 3
 
         # Deliberately tie timestamps: the UUID ordering must break the tie consistently.
-        timestamp = datetime(2100, 1, 1, tzinfo=timezone.utc)
+        timestamp = datetime(2100, 1, 1, tzinfo=UTC)
         tied_events = sorted(
             (
                 AuditEvent(
@@ -124,13 +119,10 @@ async def test_postgres_append_query_and_database_immutability() -> None:
         await engine.dispose()
 
 
-async def test_http_audit_uses_shared_postgres_and_trusted_execution_context() -> None:
-    engine = create_async_engine(
-        URL.create(
-            "postgresql+asyncpg", username="postgres", host="127.0.0.1",
-            port=int(os.environ["API_AUDIT_TEST_PORT"]), database="postgres",
-        )
-    )
+async def test_http_audit_uses_shared_postgres_and_trusted_execution_context(
+    migrated_database_url: str,
+) -> None:
+    engine = create_async_engine(migrated_database_url)
     factory = create_session_factory(engine)
     actor_id = str(uuid4())
     app = create_app(
@@ -161,11 +153,11 @@ async def test_http_audit_uses_shared_postgres_and_trusted_execution_context() -
         assert context.user_id == actor_id
         assert context.scope_ids == frozenset({"allowed"})
         await recorder.approval(context, approval_id=uuid4(), outcome=EventOutcome.APPROVED)
-        await recorder.tool_execution(context, tool_name="read_document", outcome=EventOutcome.FAILED)
+        await recorder.tool_execution(
+            context, tool_name="read_document", outcome=EventOutcome.FAILED
+        )
 
     try:
-        async with engine.begin() as connection:
-            await connection.run_sync(Base.metadata.create_all)
         async with factory.begin() as session:
             session.add(ScopeMembership(object_id=actor_id, scope_id="allowed"))
         async with httpx.AsyncClient(

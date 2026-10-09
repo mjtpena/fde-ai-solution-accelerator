@@ -501,14 +501,19 @@ Thresholds are **project-owned**. The accelerator ships `thresholds.example.yml`
 ## 10. Project generator
 
 ```bash
-make new-project NAME=northstar-delivery-assurance DISPLAY="Northstar Delivery Assurance"
+make new-project NAME=northstar-delivery-assurance TITLE="Northstar Delivery Assurance"
 ```
 
 `scripts/new_project.py` reads `accelerator.manifest.yml` and:
 
 1. Copies the accelerator into a new directory.
 2. Renames the Python package `accelerator` → `<name>` and TypeScript namespaces.
-3. Removes `engagement/examples`, example datasets and the generator itself.
+3. Removes `engagement/examples` and the generator itself, keeps only the CI
+   workflows the manifest lists (`workflows`; deployment and accelerator-maintenance
+   workflows are dropped), and strips `# BEGIN/END ACCELERATOR ONLY` blocks
+   (`<!-- BEGIN/END ACCELERATOR ONLY -->` in Markdown) from every UTF-8 text file,
+   extensionless ones such as `CODEOWNERS` included. The smoke dataset is kept (as `evaluations/datasets/smoke.jsonl`)
+   because the evaluation gate measures the generated product with it.
 4. Creates empty project docs from `engagement/templates`.
 5. Creates starter `evaluations/datasets/*.jsonl` with schema-valid placeholders.
 6. Writes a project `README.md` and records the accelerator version in `ACCELERATOR_VERSION`.
@@ -637,7 +642,7 @@ make test-int     # integration tests (needs Azure dev env or emulators)
 make eval-smoke   # PR evaluation subset
 make eval-full    # full evaluation suite
 make deploy-dev   # bicep + containers to dev
-make new-project NAME=... DISPLAY="..."
+make new-project NAME=... TITLE="..."
 ```
 
 ---

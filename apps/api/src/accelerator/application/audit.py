@@ -23,6 +23,16 @@ class AuditRecorder:
             )
         )
 
+    async def authorization_failure(self, correlation_id: str, actor_id: str | None) -> None:
+        await self._repository.append(
+            AuditEvent(
+                event_type=EventType.AUTHORIZATION_FAILURE,
+                outcome=EventOutcome.DENIED,
+                correlation_id=correlation_id,
+                actor_id=actor_id,
+            )
+        )
+
     async def approval(
         self,
         context: ExecutionContext,
@@ -37,6 +47,30 @@ class AuditRecorder:
                 correlation_id=context.correlation_id,
                 actor_id=context.user_id,
                 approval_id=approval_id,
+            )
+        )
+
+    async def content_safety_refusal(
+        self,
+        context: ExecutionContext,
+        *,
+        reason_code: Literal[
+            "content_safety_prompt_attack",
+            "content_safety_output_blocked",
+            "content_safety_unavailable",
+        ],
+    ) -> None:
+        await self._repository.append(
+            AuditEvent(
+                event_type=EventType.CONTENT_SAFETY,
+                outcome=(
+                    EventOutcome.FAILED
+                    if reason_code == "content_safety_unavailable"
+                    else EventOutcome.DENIED
+                ),
+                correlation_id=context.correlation_id,
+                actor_id=context.user_id,
+                reason_code=reason_code,
             )
         )
 

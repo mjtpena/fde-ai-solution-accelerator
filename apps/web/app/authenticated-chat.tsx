@@ -3,18 +3,24 @@
 import { useCallback, useState } from "react";
 
 import { EntraSignIn } from "../lib/auth/EntraSignIn";
+import type { AccessTokenProvider } from "../lib/auth/token";
 import { ChatPanel } from "./chat-panel";
 
 export function AuthenticatedChat() {
-  const [accessToken, setAccessToken] = useState<string | null>(null);
-  const handleAccessTokenChange = useCallback((token: string | null) => {
-    setAccessToken(token);
-  }, []);
+  const [getAccessToken, setGetAccessToken] =
+    useState<AccessTokenProvider | null>(null);
+  const handleTokenProviderChange = useCallback(
+    (provider: AccessTokenProvider | null) => {
+      // A function value must be wrapped, or React treats it as an updater.
+      setGetAccessToken(() => provider);
+    },
+    [],
+  );
 
   return (
     <>
-      <EntraSignIn onAccessTokenChange={handleAccessTokenChange} />
-      <ChatPanel accessToken={accessToken} />
+      <EntraSignIn onTokenProviderChange={handleTokenProviderChange} />
+      <ChatPanel getAccessToken={getAccessToken} />
     </>
   );
 }

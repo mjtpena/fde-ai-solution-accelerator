@@ -19,12 +19,28 @@ structured abstentions, or a pending approval reference. Approval cards do not
 execute tools or expose bound arguments. Answer chunks are emitted only after
 the workflow completes citation validation, not during unvalidated generation.
 
-The default ASGI entry point has no host providers: absent workflow or scope
-repository returns 503, never a synthetic answer or permissive scope. Configure
-audit persistence as described below so authentication failures can be recorded.
-`test_configured_app_authenticates_and_streams_without_dependency_overrides`
-exercises this composition seam with a signed test JWT, real authentication and
-scope resolution, and test-only workflow/repository/JWKS fixtures.
+The default ASGI entry point, `accelerator.api.main:app`, is built by the
+composition root `accelerator.api.composition.build_application(settings)`. It
+creates the async SQLAlchemy engine from `API_DATABASE_URL` with explicit pool
+limits (`API_DATABASE_POOL_*`), disposes it on shutdown, and wires
+`SqlAlchemyScopeMembershipRepository`, `PostgresAuditRepository`, the
+request-scoped `ApprovalService` dependency (`get_approval_service`) and the
+cost-guard dependency. With `API_DATABASE_AUTH_MODE=managed_identity` every
+pooled connection authenticates with a fresh Microsoft Entra token from
+`DefaultAzureCredential`; the DSN carries no password. Development and test may
+run without a database, in which case persistence-backed routes return 503;
+production settings validation refuses to start without one. A route whose
+workflow is not configured still returns 503, never a synthetic answer.
+
+When Foundry and Azure AI Search are configured (always, in production), the
+composition root builds the grounded-answer workflow from
+`accelerator.infrastructure.grounded_answer`: the scope-injecting
+`AzureSearchRetriever` with Foundry query embeddings, the threshold
+`EvidenceSufficiencyChecker` (`API_SUFFICIENCY_*`, gating on the semantic
+reranker score by default), a tool-less Foundry agent created by `AgentFactory`
+from `instructions/grounded_answer.md` as the answer generator, and
+`SameTurnCitationValidator`. All Azure clients share one `DefaultAzureCredential`
+for the user-assigned identity in `AZURE_CLIENT_ID` and are closed on shutdown.
 
 `AuditRecorder` exposes async `auth_failure`, `approval`, and `tool_execution`
 hooks. Call approval/tool hooks from trusted API application code with the
@@ -36,8 +52,8 @@ or user-supplied tool names. There is no arbitrary metadata payload.
 
 `PostgresAuditRepository` takes #10's shared async `SessionFactory`; its table is
 registered in the shared `Base.metadata`. It has only
-`append` and bounded `query` operations. Apply `schema/001_audit_event.sql` once
-with the deployment/migration identity. The runtime database identity must not
+`append` and bounded `query` operations. The `0001_audit_event` Alembic migration creates
+it; run migrations with the deployment/migration identity. The runtime database identity must not
 own the table or schema: grant only SELECT and INSERT on `audit_event`, and no
 schema CREATE or trigger-management privileges. Database triggers also reject
 UPDATE, DELETE, and TRUNCATE. Runtime code never creates schema or connects using
@@ -53,7 +69,8 @@ The HTTP middleware records 401 responses before sending headers; request
 headers, paths, bodies, and query strings are never stored. Correlation IDs for
 unauthenticated requests come from #10's UUID-validating correlation boundary,
 and match the response header. Missing IDs are server-generated. SQLAlchemy
-failures and unconfigured persistence return 503 with a correlated, structured
+failures, an unreachable database server (which asyncpg reports as `OSError`,
+see `DATABASE_UNAVAILABLE_ERRORS`) and unconfigured persistence return 503 with a correlated, structured
 error log; raw database errors are never returned or logged. Unexpected errors
 propagate rather than returning an apparently successful audit operation.
 
@@ -70,8 +87,9 @@ explicit fail-closed audit outage, not a successful unaudited authentication
 response. Health and CORS behavior for authenticated requests is unchanged.
 
 Like #10's membership table, schema is provisioned by deployment migrations,
-never by runtime repositories. Include `schema/001_audit_event.sql` in the
-deployment's one-time migration sequence; `Base.metadata.create_all` alone does
+never by runtime repositories. Alembic migrations under
+`src/accelerator/migrations` (`make migrate`, or
+`python -m accelerator.migrations upgrade head` in a container) provision it; `Base.metadata.create_all` alone does
 not install the PostgreSQL immutability triggers. Provisioning database roles and
 the managed-identity engine remains the host's responsibility.
 
@@ -92,3 +110,13 @@ does not skip or silently replace PostgreSQL with an in-memory database.
 It also exercises HTTP admin authorisation and auth-failure persistence, shared
 scope resolution, and approval/tool hooks through test-only routes using the same
 PostgreSQL session factory.
+
+## Container image
+
+`apps/api/Dockerfile` builds from the repository root
+(`docker build -f apps/api/Dockerfile .`). It installs the locked dependencies
+with `uv sync --frozen --no-dev` into a virtual environment, copies only that
+environment into a digest-pinned `python:3.12-alpine` runtime, runs as UID 10001,
+and health-checks `GET /healthz` over HTTP. The same image runs migrations
+(`python -m accelerator.migrations upgrade head`); `docker compose up` does this
+in the one-shot `migrate` service before the API starts.

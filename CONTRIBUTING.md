@@ -15,14 +15,37 @@ npm run build --workspace apps/web
 make eval-smoke
 ```
 
+Database-backed tests (migrations, audit persistence, the approval row lock and
+the production boot test) run when `TEST_POSTGRES_DSN` names a PostgreSQL server
+whose role can create databases; each test uses a throwaway, freshly migrated
+database. Without it they are reported as skipped. CI always provides one, with
+TLS enabled, for example:
+
+```sh
+TEST_POSTGRES_DSN=postgresql://postgres:password@127.0.0.1:5432/postgres make check
+```
+
+Ingestion queue and blob tests run against the Azurite emulator when
+`TEST_AZURITE_CONNECTION_STRING` is set (`UseDevelopmentStorage=true` for Azurite
+on its default ports, which CI starts). The cross-scope Azure AI Search test
+runs only when `TEST_AZURE_SEARCH_ENDPOINT` is set; see
+`apps/api/src/accelerator/infrastructure/search/tests/test_live_isolation.py`.
+
+`make e2e-local` runs the API, the ingestion worker and the web app as real
+processes against the same two services; CI runs it as its own job. Run it
+before changing authentication, rate limiting, approvals, health checks or the
+worker. `docs/testing-strategy.md` says what each layer covers and what still
+needs Azure.
+
 `make check` runs Python linting, strict type-checking and tests, then the web
 workspace's API-client generation, linting, formatting check, type-checking and
 tests. The build commands produce Python distributions and the standalone
 Next.js application.
 
-`make eval-smoke` currently reports that evaluations are not implemented until
-M5 (issue #30). A successful placeholder invocation is not evidence that model
-quality has been evaluated.
+`make eval-smoke` runs the deterministic smoke evaluation of the product's control
+plane and gates every pull request (see `packages/evaluation_core/runners/README.md`).
+It does not measure model quality; `make eval-full` does, against a deployed
+environment.
 
 ## Required pull-request status check
 

@@ -1,25 +1,29 @@
 """File contracts shared by smoke and full evaluation reporting."""
 
 import json
-from pathlib import Path
 import re
+from pathlib import Path
 
-from pydantic import Field, TypeAdapter
 import yaml
+from pydantic import Field, TypeAdapter
 
 from .comparison import (
     ComparisonReport,
     EvaluationResult,
     MetricName,
-    MetricThreshold,
     ReportModel,
     Thresholds,
     markdown_summary,
 )
 
 SMOKE_METRICS = (
-    "citation_validity", "abstention", "tool_selection", "scope_isolation",
-    "approval_bypass", "injection_followed",
+    "citation_validity",
+    "abstention",
+    "tool_selection",
+    "scope_isolation",
+    "approval_bypass",
+    "injection_followed",
+    "content_safety",
 )
 
 
@@ -35,34 +39,15 @@ def load_comparison_config(
     baseline_path: Path,
     thresholds_path: Path,
     *,
-    allow_fixture: bool = False,
     name: str = "smoke",
-) -> tuple[EvaluationResult, Thresholds, bool]:
-    """Fixtures are opt-in and only available when neither project file exists."""
-    if (
-        allow_fixture and name == "smoke"
-        and not baseline_path.exists() and not thresholds_path.exists()
-    ):
-        return (
-            EvaluationResult(metrics={name: 1.0 for name in SMOKE_METRICS}),
-            Thresholds(
-                metrics={
-                    name: MetricThreshold(direction="higher", tolerance=0)
-                    for name in SMOKE_METRICS
-                }
-            ),
-            True,
-        )
+) -> tuple[EvaluationResult, Thresholds]:
+    """Both project files are required; there is no fixture fallback."""
     accepted: EvaluationResult | AcceptedBaselines = TypeAdapter(
         EvaluationResult | AcceptedBaselines
-    ).validate_json(
-        baseline_path.read_text(encoding="utf-8")
-    )
+    ).validate_json(baseline_path.read_text(encoding="utf-8"))
     configured: Thresholds | SuiteThresholds = TypeAdapter(
         Thresholds | SuiteThresholds
-    ).validate_python(
-        yaml.safe_load(thresholds_path.read_text(encoding="utf-8"))
-    )
+    ).validate_python(yaml.safe_load(thresholds_path.read_text(encoding="utf-8")))
     if isinstance(accepted, AcceptedBaselines):
         if name not in accepted.suites:
             raise ValueError(f"Missing accepted baseline suite: {name}")
@@ -75,7 +60,7 @@ def load_comparison_config(
         thresholds = configured.suites[name]
     else:
         thresholds = configured
-    return baseline, thresholds, False
+    return baseline, thresholds
 
 
 def write_report(

@@ -10,6 +10,7 @@ dependencies = [
     "azure-ai-evaluation>=1,<2",
     "azure-identity>=1,<2",
     "fde-agent-core>=0.1,<1",
+    "fde-retrieval-core",
     "fde-security-core>=0.1,<1",
     "pydantic>=2.7,<3",
     "pydantic-settings>=2.7,<3",
@@ -18,6 +19,7 @@ dependencies = [
 
 [tool.uv.sources]
 fde-agent-core = { workspace = true }
+fde-retrieval-core = { workspace = true }
 fde-security-core = { workspace = true }
 
 [tool.setuptools]

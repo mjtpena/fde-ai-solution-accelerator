@@ -101,7 +101,11 @@ class TokenBudget:
 
     def _validate_token_count(self, token_count: int, *, allow_zero: bool = False) -> None:
         minimum = 0 if allow_zero else 1
-        if isinstance(token_count, bool) or not isinstance(token_count, int) or token_count < minimum:
+        if (
+            isinstance(token_count, bool)
+            or not isinstance(token_count, int)
+            or token_count < minimum
+        ):
             qualifier = "non-negative" if allow_zero else "positive"
             raise ValueError(f"Token count must be a {qualifier} integer.")
 

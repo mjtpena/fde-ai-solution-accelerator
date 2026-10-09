@@ -44,6 +44,15 @@ function isApproval(value: unknown): value is ChatApproval {
   );
 }
 
+const SUPPORTED_EVENTS: ReadonlySet<string> = new Set<ChatStreamEvent["type"]>([
+  "token",
+  "citations",
+  "approval",
+  "abstention",
+  "done",
+  "error",
+]);
+
 function parseEvent(frame: string): ChatStreamEvent | null {
   let eventName = "";
   const data: string[] = [];
@@ -58,6 +67,9 @@ function parseEvent(frame: string): ChatStreamEvent | null {
     if (field === "data") data.push(value);
   }
 
+  // Forward compatibility: the API may add event types, whose payloads need not
+  // be JSON objects; older clients skip them before parsing anything.
+  if (!SUPPORTED_EVENTS.has(eventName)) return null;
   if (data.length === 0) return null;
   let value: unknown;
   try {
@@ -103,10 +115,6 @@ function parseEvent(frame: string): ChatStreamEvent | null {
       if (typeof value.message === "string")
         return { type: "error", message: value.message };
       break;
-    default:
-      throw new Error(
-        `The chat stream returned an unknown event: ${eventName}.`,
-      );
   }
 
   throw new Error(`The chat stream returned an invalid ${eventName} event.`);

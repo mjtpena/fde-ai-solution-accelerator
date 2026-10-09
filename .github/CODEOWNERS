@@ -1,0 +1,19 @@
+# Review owners. Every path needs an owner's review once "Require review from Code
+# Owners" is enabled in the branch ruleset (see .github/SECURITY_SCANNING.md).
+# Replace @mjtpena with the owning team in a generated project.
+*                                   @mjtpena
+
+# Security-sensitive areas: identity, authorization, approvals, tool policy,
+# untrusted-content handling, CI/CD and cloud infrastructure.
+/.github/                           @mjtpena
+/infrastructure/                    @mjtpena
+/packages/security_core/            @mjtpena
+/packages/agent_core/approvals/     @mjtpena
+/packages/agent_core/middleware/    @mjtpena
+/packages/agent_core/tools/         @mjtpena
+/apps/api/src/accelerator/identity/ @mjtpena
+/apps/api/src/accelerator/migrations/ @mjtpena
+/evaluations/baselines/             @mjtpena
+/evaluations/thresholds.example.yml @mjtpena
+/evaluations/full-gates.example.yml @mjtpena
+/threat-model/                      @mjtpena

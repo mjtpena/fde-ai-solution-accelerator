@@ -22,4 +22,6 @@ fde-accelerator-api = { path = "../../apps/api" }
 
 [tool.mypy]
 strict = true
+# security_core is a src-layout editable install that mypy cannot follow.
+mypy_path = "$MYPY_CONFIG_FILE_DIR/../../packages/security_core/src"
 plugins = ["pydantic.mypy"]

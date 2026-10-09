@@ -1,27 +1,31 @@
 # Evaluation reporting
 
-`make eval-smoke` runs the deterministic `runners.run_smoke()` API, fails on
+`make eval-smoke` runs the offline smoke evaluation (`runners.run_smoke()`, see
+`runners/README.md`) over `evaluations/example-datasets/smoke.jsonl`, fails on
 any hard-gate failure or out-of-tolerance regression, and writes
 `evaluations/reports/smoke.json` and `evaluations/reports/smoke.md`.
 Exit codes: 0 passed, 1 gate/regression failure, 2 configuration/reporting error.
 Reports contain aggregate metrics only, not prompts or retrieved text.
 
-The smoke runner returns six pass-rate metrics: `citation_validity`, `abstention`,
-`tool_selection`, `scope_isolation`, `approval_bypass`, and `injection_followed`.
+The smoke runner returns seven pass-rate metrics: `citation_validity`, `abstention`,
+`tool_selection`, `scope_isolation`, `approval_bypass`, `injection_followed`, and
+`content_safety`.
 `injection_followed` measures the fraction of observations where injection was
 **not** followed (higher is better). The runner owns hard-gate classification:
-citation validity, scope isolation, approval bypass, and injection resistance
+citation validity, scope isolation, approval bypass, injection resistance and content safety
 populate `hard_failures`; abstention and tool selection are tolerance-based
 metrics only. Reporting preserves those failures without redefining gate policy.
 
-The accelerator has no accepted production baseline. If **both**
-`evaluations/baselines/accepted.json` and `evaluations/thresholds.yml` are
-absent, the Make target explicitly permits fixture comparison, labeled in
-logs and both reports. Those fixtures expect 1.0 and zero tolerance for each
-deterministic check; they are not written into the baseline directory.
-Once either project file exists, both are required and no fixture fallback
-is allowed. Production gates should invoke the CLI **without**
-`--allow-fixture`.
+`evaluations/baselines/accepted.json` holds the accepted smoke baseline, and
+`evaluations/thresholds.example.yml` the shipped tolerances. `make eval-smoke`
+uses `evaluations/thresholds.yml` instead when a project creates one. Both files
+are required: there is no fixture fallback, and a missing or invalid file is a
+configuration error (exit 2). Baseline and threshold changes are separate,
+reviewed PRs, never part of a feature PR.
+
+The `Evaluation` workflow runs this on every pull request and fails the job on
+any hard-gate failure or regression beyond tolerance. Make its `smoke` job a
+required status check in branch protection so a failing gate blocks merge.
 
 Accepted JSON shape (project-owned; baseline updates require a separate PR):
 
@@ -42,8 +46,8 @@ When smoke and full have different metrics, both files can instead wrap their
 respective configurations in `suites: {smoke: ..., full: ...}`. This keeps both
 accepted results in the same `accepted.json` without silently dropping metrics.
 `load_comparison_config(baseline_path, thresholds_path, name="full")` selects the
-full suite; a missing suite is an error. Only the smoke suite can opt into
-fixtures. A single-suite document remains supported with the shapes above.
+full suite; a missing suite is an error.
+A single-suite document remains supported with the shapes above.
 
 Names must be lowercase identifiers. Values must be finite. Tolerances are
 absolute, nonnegative, and inclusive at the boundary. `higher` measures
@@ -63,7 +67,7 @@ overall `passed`, and `fixture`. Configuration errors produce `passed: false`
 and an `error` class instead of a success-shaped comparison.
 
 The Evaluation workflow uploads artifacts and adds a job summary even when
-gates fail. A separate `workflow_run` job, using the default-branch workflow
+gates fail. The separate `Evaluation report` workflow (`workflow_run`), from the default branch
 without checking out or executing PR/artifact code, updates one bot comment
 on the matching open PR. Fork evaluation receives no write token. Publication
 starts after this workflow is present on the default branch; the first PR
