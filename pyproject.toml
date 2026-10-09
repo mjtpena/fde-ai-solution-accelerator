@@ -88,7 +88,14 @@ packages = [
 ]
 
 [tool.coverage.run]
-source = ["accelerator"]
+source = [
+    "accelerator",
+    # BEGIN ACCELERATOR ONLY
+    # The hosted-agent runtime is imported as infrastructure.hosted_agent, not under
+    # accelerator; generated projects do not copy infrastructure/.
+    "infrastructure.hosted_agent",
+    # END ACCELERATOR ONLY
+]
 
 [tool.coverage.report]
 # Measured at 87% with the PostgreSQL and Azurite suites; CI enforces this floor.
