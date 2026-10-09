@@ -31,6 +31,12 @@ on its default ports, which CI starts). The cross-scope Azure AI Search test
 runs only when `TEST_AZURE_SEARCH_ENDPOINT` is set; see
 `apps/api/src/accelerator/infrastructure/search/tests/test_live_isolation.py`.
 
+`make e2e-local` runs the API, the ingestion worker and the web app as real
+processes against the same two services; CI runs it as its own job. Run it
+before changing authentication, rate limiting, approvals, health checks or the
+worker. `docs/testing-strategy.md` says what each layer covers and what still
+needs Azure.
+
 `make check` runs Python linting, strict type-checking and tests, then the web
 workspace's API-client generation, linting, formatting check, type-checking and
 tests. The build commands produce Python distributions and the standalone

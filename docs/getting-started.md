@@ -176,6 +176,7 @@ set `TEST_POSTGRES_CA_FILE` to the certificate.
 | `make openapi` | Regenerates `contracts/api/openapi.json` from the FastAPI app and `apps/web/lib/api/schema.d.ts` from it |
 | `make openapi-check` | Runs `make openapi` and fails if either file changed. CI runs it; commit the regenerated files with any API change |
 | `make migrate` | `python -m accelerator.migrations upgrade head` against `API_DATABASE_URL` (and `API_DATABASE_AUTH_MODE`). `make` does not read `.env`; export the variables first |
+| `make e2e-local` | Real-process end-to-end suite: migrations, two API replicas, two ingestion workers and Playwright against the real API, on PostgreSQL and Azurite. Needs `TEST_POSTGRES_DSN` and `TEST_AZURITE_CONNECTION_STRING`; fails rather than skips without them. See `docs/testing-strategy.md`, which also lists the live Azure checks |
 | `npm run test:e2e --workspace apps/web` | Playwright end-to-end tests. Starts a mock API (`tests/e2e/mock-api.mjs`, port 8100) and `next dev` on port 3100 with placeholder Entra values; no Azure or Entra access needed |
 | `uv build --all-packages` and `npm run build --workspace apps/web` | Build the Python distributions and the standalone Next.js app (also run by PR CI) |
 
