@@ -100,7 +100,7 @@ environment variables):
 | `WEB_ENTRA_CLIENT_ID`, `WEB_ENTRA_API_SCOPE` | yes | Compiled into the web bundle (`NEXT_PUBLIC_*`); not secrets |
 | `AZURE_DEPLOYMENT_PRINCIPAL_ID` | no | Your own object ID (or the OIDC principal's), granted Search Service Contributor for the `index` stage |
 | `AZURE_EVALUATION_PRINCIPAL_ID` | no | Object ID of the identity that runs the full evaluation |
-| `DEPLOYMENT_NAME` | no | Default `fde-dev-<12-char git SHA>`; the app deployment is `<name>-apps` |
+| `DEPLOYMENT_NAME` | no | Default `fde-dev-<12-char git SHA>`; the migration and app deployments are `<name>-migrations` and `<name>-apps` |
 | `IMAGE_TAG` | no | Default the git SHA |
 | `SMOKE_ATTEMPTS`, `SMOKE_INTERVAL_SECONDS` | no | Default 30 attempts, 10 seconds apart |
 | `API_IMAGE`, `WEB_IMAGE`, `WORKER_IMAGE` | set by `images` | Immutable `registry/repository@sha256:<digest>` references, written to `.deploy-dev/images.env` |
@@ -186,7 +186,7 @@ oss-rdbms`), connects with `sslmode=verify-full`, binds `accelerator_api`,
 (`pgaadauth_create_principal_with_oid` in the `postgres` database), and grants
 CONNECT and schema USAGE, plus schema CREATE for the migrator only. It rejects an
 existing mismatched or admin role. Table privileges come later, from the
-migration job. Do not deploy applications if verification fails.
+migration job. Do not run migrations or deploy applications if verification fails.
 
 ### 3. Images
 
@@ -198,30 +198,22 @@ Builds `api`, `worker` and `web` in the registry with `az acr build`, passing
 the Entra tenant, web client ID and API scope as web build arguments, and
 writes the digests to `.deploy-dev/images.env` (ignored by Git).
 
-### 4. Applications
-
-```sh
-make deploy-dev STAGE=applications
-```
-
-Redeploys the template as `<DEPLOYMENT_NAME>-apps` with
-`DEPLOY_APPLICATIONS=true` and the image digests. Bicep creates the three
-Container Apps and the migration job, attaches a distinct identity to each, and
-configures them in production mode (`API_ENVIRONMENT=production`,
-`INGESTION_ENVIRONMENT=production`, managed identity for every dependency).
-
-### 5. Migrations
+### 4. Migrations
 
 ```sh
 make deploy-dev STAGE=migrate
 ```
 
-Starts the `migrate` job (`python -m accelerator.migrations upgrade head` as
-`accelerator_migrator`) and polls for up to ten minutes. After upgrading, the job
-grants `accelerator_api` and `accelerator_worker` exactly their table privileges
-(`accelerator.migrations.grants`). Run it before traffic reaches a new revision.
+Deploys the template as `<DEPLOYMENT_NAME>-migrations` with
+`DEPLOY_APPLICATIONS=false` and the image digests, which creates or updates only
+the migration job (it needs just the API image) and leaves the running revisions
+alone. Then starts the `migrate` job (`python -m accelerator.migrations upgrade
+head` as `accelerator_migrator`) and polls for up to ten minutes. After upgrading,
+the job grants `accelerator_api` and `accelerator_worker` exactly their table
+privileges (`accelerator.migrations.grants`). This runs before the applications
+stage, so a new revision never serves against an old schema.
 
-### 6. Search index
+### 5. Search index
 
 ```sh
 make deploy-dev STAGE=index
@@ -229,8 +221,21 @@ make deploy-dev STAGE=index
 
 Runs `python -m accelerator.infrastructure.search.provision` with your login,
 reading `AZURE_SEARCH_ENDPOINT`, `AZURE_SEARCH_INDEX_NAME` and
-`AZURE_SEARCH_VECTOR_DIMENSIONS` from the deployment outputs. Needs Search
+`AZURE_SEARCH_VECTOR_DIMENSIONS` from the infrastructure deployment's outputs,
+before any application revision starts. Needs Search
 Service Contributor (`AZURE_DEPLOYMENT_PRINCIPAL_ID`).
+
+### 6. Applications
+
+```sh
+make deploy-dev STAGE=applications
+```
+
+Redeploys the template as `<DEPLOYMENT_NAME>-apps` with
+`DEPLOY_APPLICATIONS=true` and the image digests, once the schema and the index
+exist. Bicep creates the three Container Apps, attaches a distinct identity to
+each, and configures them in production mode (`API_ENVIRONMENT=production`,
+`INGESTION_ENVIRONMENT=production`, managed identity for every dependency).
 
 ### 7. Smoke
 
@@ -327,7 +332,7 @@ On push to `main` (or `workflow_dispatch` on `main`):
 | `quality` | GitHub-hosted | `make check SKIP_GENERATOR=1`, credential-free Bicep validation, `make eval-smoke` (report uploaded) |
 | `deploy_dev` (`dev`) | GitHub-hosted | Checks variables, OIDC sign-in, what-if (artifact uploaded), infrastructure deployment `fde-dev-<sha>`, builds and pushes api, web, worker and hosted-agent images with `docker buildx` and records their digests, checks provisioning states |
 | `verify_database` (`dev-database`) | VNet runner | `bootstrap-postgres.ps1 -VerifyOnly`: verifies, never creates, the database roles |
-| `deploy_applications` (`dev`) | GitHub-hosted | What-if, then `deploy-dev.sh applications`, provisioning check, `deploy-dev.sh migrate`, `index`, `smoke`, then hosted-agent `deploy` and `smoke` |
+| `deploy_applications` (`dev`) | GitHub-hosted | What-if, then `deploy-dev.sh migrate` and `index`, then `deploy-dev.sh applications`, provisioning check, `smoke`, then hosted-agent `deploy` and `smoke` |
 | `full_evaluation` (`dev-database`) | VNet runner | `make eval-full` against the deployed services |
 | `deploy_production` (`production`) | GitHub-hosted | Only on `workflow_dispatch` with `deploy_production: true`; see [Promote to production](#promote-to-production) |
 

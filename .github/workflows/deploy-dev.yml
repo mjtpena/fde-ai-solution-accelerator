@@ -479,6 +479,13 @@ jobs:
           if-no-files-found: error
           retention-days: 30
 
+      # The schema and the search index must exist before a new revision serves.
+      - name: Run schema migrations
+        run: infrastructure/scripts/deploy-dev.sh migrate
+
+      - name: Create or update the search index
+        run: infrastructure/scripts/deploy-dev.sh index
+
       - name: Deploy application resources through Bicep
         run: infrastructure/scripts/deploy-dev.sh applications
 
@@ -500,12 +507,6 @@ jobs:
               exit 1
             fi
           done
-
-      - name: Run schema migrations
-        run: infrastructure/scripts/deploy-dev.sh migrate
-
-      - name: Create or update the search index
-        run: infrastructure/scripts/deploy-dev.sh index
 
       - name: Smoke test the web app and the API behind it
         run: infrastructure/scripts/deploy-dev.sh smoke

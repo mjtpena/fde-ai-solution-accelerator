@@ -58,7 +58,7 @@ Host all four workloads in **one Azure Container Apps environment**
   with Entra tokens.
 - **Delivery.** `.github/workflows/deploy-dev.yml` (GitHub OIDC) and
   `infrastructure/scripts/deploy-dev.sh` (`make deploy-dev`) share the same stages:
-  infrastructure, images, applications by digest, migrate, index, smoke. Revisions
+  infrastructure, images, migrate, index, applications by digest, smoke. Revisions
   use `activeRevisionsMode: Single`.
 
 ## Consequences

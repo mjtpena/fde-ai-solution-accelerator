@@ -226,8 +226,10 @@ resource apps 'Microsoft.App/containerApps@2024-03-01' = [for workload in worklo
 }]
 
 // Schema migrations run once per deployment, before the new revision serves, under
-// a separate identity whose database role alone may change the schema.
-resource migrationJob 'Microsoft.App/jobs@2024-03-01' = if (deployApplications) {
+// a separate identity whose database role alone may change the schema. The job needs
+// only the API image, not deployApplications, so deploy-dev.sh can provision and run
+// it before the application revisions are deployed.
+resource migrationJob 'Microsoft.App/jobs@2024-03-01' = if (!empty(apiImage)) {
   name: migrationJobName
   location: location
   tags: tags

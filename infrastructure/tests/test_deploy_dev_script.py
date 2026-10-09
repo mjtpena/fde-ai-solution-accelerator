@@ -14,6 +14,11 @@ import pytest
 ROOT = Path(__file__).resolve().parents[2]
 SCRIPT = ROOT / "infrastructure" / "scripts" / "deploy-dev.sh"
 DIGEST = "sha256:" + "a" * 64
+IMAGES = {
+    "API_IMAGE": f"fdedevacr.azurecr.io/api@{DIGEST}",
+    "WEB_IMAGE": f"fdedevacr.azurecr.io/web@{DIGEST}",
+    "WORKER_IMAGE": f"fdedevacr.azurecr.io/worker@{DIGEST}",
+}
 
 FAKE_AZ = r"""#!/usr/bin/env python3
 import json, os, sys
@@ -127,17 +132,25 @@ def test_all_deploys_builds_migrates_provisions_and_smoke_tests_in_order(tmp_pat
     result = run(tmp_path, "all")
 
     assert result.returncode == 0, result.stderr
-    commands = az_commands(tmp_path)
-    stages = [
-        commands.index("deployment sub create"),
-        commands.index("acr build --registry"),
-        len(commands) - 1 - commands[::-1].index("deployment sub create"),
-        commands.index("containerapp job start"),
+    steps = [
+        "uv" if c["tool"] == "uv" else " ".join(str(a) for a in c["args"][:3])  # type: ignore[index]
+        for c in calls(tmp_path)
+        if c["tool"] in {"az", "uv"}
     ]
+    stages = [
+        steps.index("deployment sub create"),
+        steps.index("acr build --registry"),
+        steps.index("containerapp job start"),
+        steps.index("uv"),
+        len(steps) - 1 - steps[::-1].index("deployment sub create"),
+    ]
+    # Migrations and the index come before the application revisions.
     assert stages == sorted(stages)
     deployments = [c for c in calls(tmp_path) if c["args"][:3] == ["deployment", "sub", "create"]]
-    assert [d["deploy_applications"] for d in deployments] == ["false", "true"]
+    assert [d["deploy_applications"] for d in deployments] == ["false", "false", "true"]
+    assert deployments[0]["api_image"] is None
     assert deployments[1]["api_image"] == f"fdedevacr.azurecr.io/api@{DIGEST}"
+    assert deployments[2]["api_image"] == f"fdedevacr.azurecr.io/api@{DIGEST}"
     builds = [c["args"] for c in calls(tmp_path) if c["args"][:2] == ["acr", "build"]]
     assert sorted(b[b.index("--image") + 1].split(":")[0] for b in builds) == [
         "api",
@@ -160,9 +173,41 @@ def test_missing_configuration_fails_before_touching_azure(tmp_path: Path) -> No
     assert calls(tmp_path) == []
 
 
+def test_migrate_provisions_and_runs_the_job_without_activating_applications(
+    tmp_path: Path,
+) -> None:
+    result = run(tmp_path, "migrate", **IMAGES)
+
+    assert result.returncode == 0, result.stderr
+    commands = az_commands(tmp_path)
+    assert commands.index("deployment sub create") < commands.index("containerapp job start")
+    [deployment] = [c for c in calls(tmp_path) if c["args"][:3] == ["deployment", "sub", "create"]]
+    assert deployment["deploy_applications"] == "false"
+    assert deployment["api_image"] == IMAGES["API_IMAGE"]
+    name = deployment["args"][deployment["args"].index("--name") + 1]  # type: ignore[union-attr]
+    assert name == "fde-dev-test-migrations"
+
+
+def test_migrate_requires_an_immutable_api_image(tmp_path: Path) -> None:
+    result = run(tmp_path, "migrate", **{**IMAGES, "API_IMAGE": "fdedevacr.azurecr.io/api:latest"})
+
+    assert result.returncode != 0
+    assert "containerapp job start" not in az_commands(tmp_path)
+
+
+def test_migration_job_does_not_wait_for_the_application_deployment() -> None:
+    template = (ROOT / "infrastructure" / "modules" / "container-apps.bicep").read_text(
+        encoding="utf-8"
+    )
+
+    assert "resource migrationJob 'Microsoft.App/jobs@2024-03-01' = if (!empty(apiImage)) {" in (
+        template
+    )
+
+
 @pytest.mark.parametrize("status", ["Failed", "Stopped"])
 def test_a_failed_migration_fails_the_deployment(tmp_path: Path, status: str) -> None:
-    result = run(tmp_path, "migrate", FAKE_MIGRATION_STATUS=status)
+    result = run(tmp_path, "migrate", FAKE_MIGRATION_STATUS=status, **IMAGES)
 
     assert result.returncode != 0
     assert status in result.stderr
@@ -194,5 +239,9 @@ def test_make_and_the_workflow_share_the_script() -> None:
     workflow = (ROOT / ".github" / "workflows" / "deploy-dev.yml").read_text(encoding="utf-8")
 
     assert "deploy-dev:\n\tinfrastructure/scripts/deploy-dev.sh $(STAGE)" in makefile
-    for stage in ("applications", "migrate", "index", "smoke"):
-        assert f"infrastructure/scripts/deploy-dev.sh {stage}" in workflow
+    # Same order as `all`: the schema and index exist before a new revision serves.
+    positions = [
+        workflow.index(f"infrastructure/scripts/deploy-dev.sh {stage}\n")
+        for stage in ("migrate", "index", "applications", "smoke")
+    ]
+    assert positions == sorted(positions)

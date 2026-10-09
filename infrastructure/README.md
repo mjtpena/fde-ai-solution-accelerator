@@ -63,13 +63,14 @@ identity for every dependency, verified TLS to PostgreSQL, and
    `postgresFqdn`, `postgresDatabaseName`, `apiIdentityPrincipalId`,
    `workerIdentityPrincipalId`, and `migratorIdentityPrincipalId`. Supply the trusted CA bundle for `verify-full`.
    Run the same command with `-VerifyOnly` as a required deployment gate.
-4. Set `DEPLOY_APPLICATIONS=true`, run authenticated what-if again, then deploy
-   the same root/parameter file. Bicep creates all three real Container Apps and
-   the migration job, attaches a distinct UAMI and registry pull identity to each,
-   and emits `apiInternalUrl` and `webUrl`. The worker has no ingress and one
-   minimum replica.
-5. Start the migration job (`az containerapp job start`) and wait for it to
-   succeed before traffic reaches the new revision.
+4. With `API_IMAGE` set and `DEPLOY_APPLICATIONS=false`, deploy again: this
+   creates (or updates) only the migration job, which needs just the API image.
+   Start it (`az containerapp job start`) and wait for it to succeed, then create
+   or update the search index, so neither is missing when a revision serves.
+5. Set `DEPLOY_APPLICATIONS=true`, run authenticated what-if again, then deploy
+   the same root/parameter file. Bicep creates all three real Container Apps,
+   attaches a distinct UAMI and registry pull identity to each, and emits
+   `apiInternalUrl` and `webUrl`. The worker has no ingress and one minimum replica.
 
 ```powershell
 pwsh infrastructure/scripts/validate-deployment.ps1 `
@@ -104,9 +105,9 @@ the same stages after its OIDC sign-in.
 | --- | --- |
 | `infrastructure` | Subscription deployment with `DEPLOY_APPLICATIONS=false` |
 | `images` | Builds api, worker and web in the registry with ACR Tasks (no local Docker) and records their digests |
-| `applications` | Deploys the Container Apps and migration job by digest |
-| `migrate` | Starts the migration job and waits for it to succeed |
+| `migrate` | Deploys the migration job by digest (`DEPLOY_APPLICATIONS=false`), starts it and waits for it to succeed |
 | `index` | Creates or updates the search index from the schema-as-code definition |
+| `applications` | Deploys the Container Apps by digest, after the schema and index exist |
 | `smoke` | Requires the web page and `/api/health` (the API through the internal hop) to answer |
 
 Set `AZURE_SUBSCRIPTION_ID`, `AZURE_LOCATION`, the three
@@ -114,7 +115,7 @@ Set `AZURE_SUBSCRIPTION_ID`, `AZURE_LOCATION`, the three
 `WEB_ENTRA_CLIENT_ID` and `WEB_ENTRA_API_SCOPE`. Set
 `AZURE_DEPLOYMENT_PRINCIPAL_ID` to your own object ID so the `index` stage may
 create the index. The database bootstrap (below) runs once, between the
-`infrastructure` and `applications` stages, from a VNet-connected machine.
+`infrastructure` and `migrate` stages, from a VNet-connected machine.
 
 The workflow's full evaluation runs on the VNet runner: the evaluation principal's
 scopes are read from the private database. Set `AZURE_EVALUATION_PRINCIPAL_ID` to

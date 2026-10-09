@@ -1,10 +1,12 @@
 #!/usr/bin/env bash
 # Deploy the dev environment end to end, or one stage of it.
 #
-#   infrastructure/scripts/deploy-dev.sh [all|infrastructure|images|applications|migrate|index|smoke]
+#   infrastructure/scripts/deploy-dev.sh [all|infrastructure|images|migrate|index|applications|smoke]
 #
 # Uses the signed-in Azure CLI identity (a developer login locally, OIDC in CI). No
-# keys or passwords are read or written. `make deploy-dev` runs `all`.
+# keys or passwords are read or written. `make deploy-dev` runs `all`: the schema
+# migrations and the search index come before the application revisions, so a new
+# revision never serves against a schema or index that does not exist yet.
 #
 # Required: AZURE_SUBSCRIPTION_ID, AZURE_LOCATION, AZURE_POSTGRES_ADMIN_OBJECT_ID,
 # AZURE_POSTGRES_ADMIN_NAME, AZURE_POSTGRES_ADMIN_PRINCIPAL_TYPE, API_ENTRA_TENANT_ID,
@@ -114,8 +116,14 @@ stage_applications() {
 }
 
 stage_migrate() {
-  require AZURE_SUBSCRIPTION_ID
-  local deployment="$DEPLOYMENT_NAME-apps" group job execution status
+  require AZURE_SUBSCRIPTION_ID AZURE_LOCATION
+  load_images
+  local deployment="$DEPLOYMENT_NAME-migrations" group job execution status
+  # The migration job needs only the API image; the application revisions stay as
+  # they are until the applications stage, after the schema is current.
+  log "provisioning the migration job ($deployment)"
+  DEPLOY_APPLICATIONS=false API_IMAGE="$API_IMAGE" WEB_IMAGE="$WEB_IMAGE" \
+    WORKER_IMAGE="$WORKER_IMAGE" deploy_template "$deployment"
   group="$(output "$deployment" resourceGroupName)"
   job="$(az deployment sub show --subscription "$AZURE_SUBSCRIPTION_ID" --name "$deployment" \
     --query 'properties.outputs.containerAppNames.value.migrations' --output tsv)"
@@ -137,7 +145,8 @@ stage_migrate() {
 
 stage_index() {
   require AZURE_SUBSCRIPTION_ID
-  local deployment="$DEPLOYMENT_NAME-apps"
+  # Search is shared infrastructure, so the index exists before any app revision.
+  local deployment="$DEPLOYMENT_NAME"
   AZURE_SEARCH_ENDPOINT="$(output "$deployment" searchEndpoint)" \
   AZURE_SEARCH_INDEX_NAME="$(output "$deployment" searchIndexName)" \
   AZURE_SEARCH_VECTOR_DIMENSIONS="$(output "$deployment" searchVectorDimensions)" \
@@ -166,16 +175,16 @@ main() {
   case "$stage" in
     infrastructure) stage_infrastructure ;;
     images) stage_images ;;
-    applications) stage_applications ;;
     migrate) stage_migrate ;;
     index) stage_index ;;
+    applications) stage_applications ;;
     smoke) stage_smoke ;;
     all)
       stage_infrastructure
       stage_images
-      stage_applications
       stage_migrate
       stage_index
+      stage_applications
       stage_smoke
       ;;
     *) fail "unknown stage: $stage" ;;
