@@ -79,6 +79,9 @@ async def isolated_index() -> AsyncIterator[tuple[SearchClient, SearchSettings]]
                         if await client.get_document_count() == 2:
                             break
                         await asyncio.sleep(1)
+                    else:
+                        # Without the other scope's document the test proves nothing.
+                        pytest.fail("Both isolation documents were not indexed within 30 s.")
                     settings = SearchSettings.model_validate(
                         {
                             "endpoint": ENDPOINT,
