@@ -2,7 +2,8 @@ name: Copilot Setup Steps
 
 # Prepares the environment the GitHub Copilot coding agent works in. It mirrors the
 # "Quality checks" job in pull-request.yml (same tool versions, the same TLS
-# PostgreSQL and Azurite, the same `make check`), so the agent sees what CI sees.
+# PostgreSQL and Azurite, the same `make check` with coverage, `make openapi-check`
+# and `make eval-smoke`), so the agent sees what CI sees.
 on:
   workflow_dispatch:
   push:
@@ -97,8 +98,11 @@ jobs:
       - name: Install Bicep
         run: az bicep install
 
+      # Same gates as the quality job: coverage floor ([tool.coverage.report] fail_under),
+      # up-to-date OpenAPI contract and web client, and the evaluation smoke check.
       - name: Verify toolchain
         run: |
           uv lock --check
-          make check SKIP_GENERATOR=1
+          make check SKIP_GENERATOR=1 PYTEST_ARGS="--cov --cov-report=term"
+          make openapi-check
           make eval-smoke
