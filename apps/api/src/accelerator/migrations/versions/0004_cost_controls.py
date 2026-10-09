@@ -23,6 +23,9 @@ def upgrade() -> None:
         sa.Column("window_start", sa.DateTime(timezone=True), primary_key=True),
         sa.Column("request_count", sa.Integer(), nullable=False),
     )
+    op.create_index(
+        "ix_rate_limit_windows_window_start", "rate_limit_windows", ["window_start"]
+    )
     op.create_table(
         "tool_call_counters",
         sa.Column("session_id", sa.String(255), primary_key=True),

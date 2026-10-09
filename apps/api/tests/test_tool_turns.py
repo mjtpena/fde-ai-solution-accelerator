@@ -137,6 +137,26 @@ async def test_read_runs_and_write_becomes_a_persisted_pending_approval(
     assert Update.executions == 0
 
 
+async def test_request_scoped_sessions_leave_no_counter_rows(migrated_database_url: str) -> None:
+    engine = create_async_engine(migrated_database_url)
+    turn = PolicyEnforcedChatTurn(
+        ModelCallingTools(("lookup", {"value": "1"})),
+        registry(),
+        session_factory=create_session_factory(engine),
+        limits=ToolCallLimits(),
+    )
+    try:
+        await turn.run("q", context())
+        async with engine.connect() as connection:
+            rows = (
+                await connection.execute(text("SELECT count(*) FROM tool_call_counters"))
+            ).scalar_one()
+    finally:
+        await engine.dispose()
+
+    assert rows == 0
+
+
 async def test_tool_call_limits_apply_to_model_chosen_calls(migrated_database_url: str) -> None:
     engine = create_async_engine(migrated_database_url)
     turn = PolicyEnforcedChatTurn(

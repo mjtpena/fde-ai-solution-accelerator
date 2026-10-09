@@ -140,3 +140,19 @@ def test_tools_are_offered_only_inside_an_active_turn() -> None:
 
     assert offered.name == "lookup"
     assert tools_for_current_turn() == []
+
+
+async def test_no_further_tools_run_once_an_approval_is_pending() -> None:
+    from ..agent_bridge import TURN_PAUSED_MESSAGE
+
+    invoker = RecordingInvoker()
+    turn = ToolTurn(invoker=invoker, context=server_context(), turn_id="t", tools=[Update()])
+
+    await as_agent_tool(Update(), turn).invoke(arguments={"term": "first"})
+    second = await as_agent_tool(Update(), turn).invoke(arguments={"term": "second"})
+    lookup = await as_agent_tool(Lookup(), turn).invoke(arguments={"term": "read"})
+
+    assert text_of(second) == TURN_PAUSED_MESSAGE
+    assert text_of(lookup) == TURN_PAUSED_MESSAGE
+    assert len(invoker.calls) == 1
+    assert len(turn.approvals) == 1

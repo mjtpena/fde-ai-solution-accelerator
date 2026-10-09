@@ -11,7 +11,18 @@ from collections.abc import Callable
 from typing import Any
 from datetime import UTC, datetime, timedelta
 
-from sqlalchemy import Column, DateTime, Integer, String, Table, delete
+from sqlalchemy import (
+    Column,
+    DateTime,
+    Index,
+    Integer,
+    String,
+    Table,
+    delete,
+    func,
+    select,
+    text,
+)
 from sqlalchemy.dialects.postgresql import insert
 
 from accelerator.agent_core.middleware import ToolCallLimitExceeded, ToolCallLimits
@@ -24,6 +35,7 @@ rate_limit_windows = Table(
     Column("limiter_key", String(64), primary_key=True),
     Column("window_start", DateTime(timezone=True), primary_key=True),
     Column("request_count", Integer, nullable=False),
+    Index("ix_rate_limit_windows_window_start", "window_start"),
 )
 
 tool_call_counters = Table(
@@ -37,6 +49,8 @@ tool_call_counters = Table(
 )
 
 SESSION_TOTAL = ""
+# Arbitrary constant key for the pg_advisory_xact_lock serializing session admission.
+_ADMISSION_LOCK = 0x46444541  # "FDEA"
 
 
 def _limiter_key(context: CostGuardContext) -> str:
@@ -82,11 +96,12 @@ class PostgresRateLimiter:
         async with self._sessions() as session, session.begin():
             count = (await session.execute(statement)).scalar_one()
             if count == 1:
-                # First request of a new window: drop this key's expired windows.
+                # First request of a new window for this key: drop every key's windows
+                # older than the previous one, so one-off callers do not accumulate.
                 await session.execute(
                     delete(rate_limit_windows).where(
-                        rate_limit_windows.c.limiter_key == key,
-                        rate_limit_windows.c.window_start < window_start,
+                        rate_limit_windows.c.window_start
+                        < window_start - timedelta(seconds=self.window_seconds)
                     )
                 )
         if count > self.limit:
@@ -128,6 +143,21 @@ class PostgresToolCallCounter:
             session_total = (
                 await session.execute(self._increment(session_id, SESSION_TOTAL, now))
             ).scalar_one()
+            if session_total == 1:
+                # A new session: admit it only within the shared capacity. The advisory
+                # lock serializes admissions across replicas until this commit.
+                await session.execute(
+                    text("SELECT pg_advisory_xact_lock(:key)"), {"key": _ADMISSION_LOCK}
+                )
+                tracked = (
+                    await session.execute(
+                        select(func.count()).where(
+                            tool_call_counters.c.turn_id == SESSION_TOTAL
+                        )
+                    )
+                ).scalar_one()
+                if tracked > limits.max_tracked_sessions:
+                    raise ToolCallLimitExceeded("tracked-session capacity exceeded")
             if session_total > limits.max_calls_per_session:
                 raise ToolCallLimitExceeded("per-session tool call limit exceeded")
             turn_total = (

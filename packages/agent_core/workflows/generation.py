@@ -108,8 +108,10 @@ def extract_citations(text: str) -> tuple[str, tuple[str, ...]]:
 class AgentAnswerGenerator:
     """``AnswerGenerator`` backed by an agent created from trusted instructions.
 
-    The agent has no tools. Citations are parsed from ``[cite:<chunk_id>]`` markers
-    and validated by the workflow against this turn's retrieval, never trusted here.
+    The agent itself is created without tools. Registered tools are offered per turn,
+    only through ``agent_bridge`` and therefore only through tool policy (writes become
+    approval requests). Citations are parsed from ``[cite:<chunk_id>]`` markers and
+    validated by the workflow against this turn's retrieval, never trusted here.
     """
 
     def __init__(

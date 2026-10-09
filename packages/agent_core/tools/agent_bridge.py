@@ -19,6 +19,10 @@ from accelerator.security_core.tool_policy import ApprovalRequired
 
 from .base import EnterpriseTool, ExecutionContextProtocol
 
+TURN_PAUSED_MESSAGE = (
+    "An approval request is already pending for this turn. No further tools can run "
+    "until a person decides it; tell the user."
+)
 APPROVAL_PENDING_MESSAGE = (
     "This action requires human approval. An approval request was created; "
     "tell the user it is pending. Do not call the tool again."
@@ -52,6 +56,10 @@ current_tool_turn: ContextVar[ToolTurn | None] = ContextVar("current_tool_turn",
 
 def as_agent_tool(tool: EnterpriseTool[Any, Any], turn: ToolTurn) -> FunctionTool:
     async def invoke(**arguments: Any) -> str:
+        if turn.approvals:
+            # One approval per turn: the model cannot queue further (hidden) requests
+            # or keep acting after it asked a person to decide.
+            return TURN_PAUSED_MESSAGE
         validated = tool.args_model.model_validate(arguments)
         result = await turn.invoker.invoke(tool, validated, turn.context, turn_id=turn.turn_id)
         if isinstance(result, ApprovalRequired):

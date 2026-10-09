@@ -50,10 +50,11 @@ class PolicyEnforcedChatTurn:
         if self._session_factory is None:
             raise RuntimeError("Registered tools require approval persistence.")
         # Chat requests carry no conversation session yet; the request is the session.
+        synthesized_session = not ctx.session_id
         turn_context = (
-            ctx
-            if ctx.session_id
-            else ctx.model_copy(update={"session_id": f"request:{ctx.correlation_id}"})
+            ctx.model_copy(update={"session_id": f"request:{ctx.correlation_id}"})
+            if synthesized_session
+            else ctx
         )
         async with self._session_factory() as session:
             middleware: ToolPolicyMiddleware[Any, Any] = ToolPolicyMiddleware(
@@ -80,6 +81,9 @@ class PolicyEnforcedChatTurn:
                 )
             finally:
                 current_tool_turn.reset(token)
+                if synthesized_session and turn_context.session_id is not None:
+                    # A request-scoped session ends with the request; drop its counters.
+                    await middleware.release_session(turn_context.session_id)
         if turn.approvals:
             return turn.approvals[0]
         return result

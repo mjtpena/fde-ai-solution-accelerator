@@ -93,3 +93,39 @@ async def test_tool_call_limits_hold_across_counters_and_refusals_consume_nothin
         await replica_b.consume("session-1", "turn-4", limits)
     finally:
         await engine.dispose()
+
+
+async def test_expired_windows_of_other_callers_are_pruned(migrated_database_url: str) -> None:
+    from sqlalchemy import text
+
+    engine = create_async_engine(migrated_database_url)
+    clock = Clock()
+    limiter = PostgresRateLimiter(create_session_factory(engine), 5, 60, clock=clock)
+    try:
+        await limiter.check(Caller(user_id="one-off-caller"))
+        clock.now += timedelta(seconds=180)
+        await limiter.check(Caller(user_id="regular-caller"))
+        async with engine.connect() as connection:
+            remaining = (
+                await connection.execute(text("SELECT count(*) FROM rate_limit_windows"))
+            ).scalar_one()
+    finally:
+        await engine.dispose()
+
+    assert remaining == 1
+
+
+async def test_tracked_session_capacity_is_shared_and_released(migrated_database_url: str) -> None:
+    engine = create_async_engine(migrated_database_url)
+    counter = PostgresToolCallCounter(create_session_factory(engine))
+    limits = ToolCallLimits(max_tracked_sessions=2)
+    try:
+        await counter.consume("s-1", "t", limits)
+        await counter.consume("s-2", "t", limits)
+        with pytest.raises(ToolCallLimitExceeded, match="capacity"):
+            await counter.consume("s-3", "t", limits)
+        await counter.consume("s-1", "t2", limits)  # existing sessions keep working
+        await counter.release_session("s-1")
+        await counter.consume("s-3", "t", limits)
+    finally:
+        await engine.dispose()
