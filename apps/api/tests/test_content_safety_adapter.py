@@ -262,6 +262,50 @@ async def test_transport_errors_and_timeouts_fail_closed() -> None:
         await adapter.analyze_text("a")
 
 
+async def test_a_credential_failure_fails_closed() -> None:
+    from azure.core.exceptions import ClientAuthenticationError
+
+    class BrokenCredential(FakeCredential):
+        async def get_token(self, *scopes: str, **kwargs: Any) -> AccessToken:
+            raise ClientAuthenticationError("no managed identity")
+
+    adapter = AzureContentSafetyChecker(
+        ENDPOINT,
+        BrokenCredential(),  # type: ignore[arg-type]
+        client=httpx.AsyncClient(transport=httpx.MockTransport(shield_reply)),
+    )
+
+    with pytest.raises(ContentSafetyUnavailableError, match="credential_error"):
+        await adapter.shield_prompt("q", [])
+
+
+async def test_one_failed_batch_cancels_the_others_and_fails_closed() -> None:
+    cancelled: list[bool] = []
+
+    async def handler(request: httpx.Request) -> httpx.Response:
+        if b"FAIL" in request.content:
+            return httpx.Response(503)
+        try:
+            await asyncio.sleep(5)
+        except asyncio.CancelledError:
+            cancelled.append(True)
+            raise
+        return shield_reply(request)
+
+    adapter = AzureContentSafetyChecker(
+        ENDPOINT,
+        FakeCredential(),  # type: ignore[arg-type]
+        client=httpx.AsyncClient(transport=httpx.MockTransport(handler)),
+        timeout_seconds=30,
+    )
+    documents = [ScreenedDocument(f"c{n}", "x" * 6_000) for n in range(3)]
+    documents.append(ScreenedDocument("c-fail", "FAIL"))
+
+    with pytest.raises(ContentSafetyUnavailableError, match="http_503"):
+        await adapter.shield_prompt("q", documents)
+    assert cancelled
+
+
 async def test_a_slow_service_is_cut_off_by_the_request_deadline() -> None:
     async def slow(request: httpx.Request) -> httpx.Response:
         await asyncio.sleep(5)

@@ -25,12 +25,13 @@ request deadline) raises ``ContentSafetyUnavailableError`` so the workflow refus
 """
 
 import asyncio
-from collections.abc import Sequence
+from collections.abc import Coroutine, Iterable, Sequence
 from datetime import UTC, datetime
 from typing import Any, Final
 
 import httpx
 from azure.core.credentials_async import AsyncTokenCredential
+from azure.core.exceptions import AzureError
 from pydantic import BaseModel, ConfigDict, ValidationError
 
 from accelerator.security_core.content_safety import (
@@ -106,6 +107,26 @@ def plan_document_batches(
     return batches
 
 
+async def _all[T](requests: Iterable[Coroutine[Any, Any, T]]) -> list[T]:
+    """Run requests concurrently; the first failure cancels the rest.
+
+    The first failure is re-raised on its own (not as an exception group), preferring
+    an unexpected error over ``ContentSafetyUnavailableError`` so bugs are not
+    disguised as outages. Either way the workflow never receives a verdict.
+    """
+    tasks: list[asyncio.Task[T]] = []
+    try:
+        async with asyncio.TaskGroup() as group:
+            tasks = [group.create_task(request) for request in requests]
+    except ExceptionGroup as failures:
+        unavailable, other = failures.split(ContentSafetyUnavailableError)
+        first: BaseException = other if other is not None else (unavailable or failures)
+        while isinstance(first, BaseExceptionGroup):
+            first = first.exceptions[0]
+        raise first from failures
+    return [task.result() for task in tasks]
+
+
 class AzureContentSafetyChecker:
     """``ContentSafetyChecker`` backed by an Azure AI Content Safety account."""
 
@@ -148,16 +169,14 @@ class AzureContentSafetyChecker:
             )
             for index in range(count)
         ]
-        replies = await asyncio.gather(
-            *(
-                self._post(
-                    "text:shieldPrompt",
-                    {"userPrompt": prompt, "documents": [piece for _, piece in batch]},
-                    _ShieldResponse,
-                    deadline_utc,
-                )
-                for prompt, batch in requests
+        replies = await _all(
+            self._post(
+                "text:shieldPrompt",
+                {"userPrompt": prompt, "documents": [piece for _, piece in batch]},
+                _ShieldResponse,
+                deadline_utc,
             )
+            for prompt, batch in requests
         )
         attack = False
         attacked: set[str] = set()
@@ -180,20 +199,18 @@ class AzureContentSafetyChecker:
     async def analyze_text(
         self, text: str, *, deadline_utc: datetime | None = None
     ) -> TextAnalysis:
-        replies = await asyncio.gather(
-            *(
-                self._post(
-                    "text:analyze",
-                    {
-                        "text": piece,
-                        "categories": [category.value for category in HarmCategory],
-                        "outputType": "FourSeverityLevels",
-                    },
-                    _AnalyzeResponse,
-                    deadline_utc,
-                )
-                for piece in split_text(text, MAX_ANALYZE_CHARS)
+        replies = await _all(
+            self._post(
+                "text:analyze",
+                {
+                    "text": piece,
+                    "categories": [category.value for category in HarmCategory],
+                    "outputType": "FourSeverityLevels",
+                },
+                _AnalyzeResponse,
+                deadline_utc,
             )
+            for piece in split_text(text, MAX_ANALYZE_CHARS)
         )
         severities = dict.fromkeys(HarmCategory, 0)
         seen: set[HarmCategory] = set()
@@ -241,6 +258,8 @@ class AzureContentSafetyChecker:
             raise ContentSafetyUnavailableError("timeout") from error
         except httpx.HTTPError as error:
             raise ContentSafetyUnavailableError("transport_error") from error
+        except AzureError as error:  # the managed identity could not issue a token
+            raise ContentSafetyUnavailableError("credential_error") from error
         if response.status_code != 200:
             raise ContentSafetyUnavailableError(f"http_{response.status_code}")
         try:
