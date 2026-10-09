@@ -71,12 +71,6 @@ def test_trivy_findings_fail_without_ignoring_unfixed_issues(
         assert options["skip-dirs"] == ".git"
         assert step["env"]["TRIVY_INCLUDE_DEV_DEPS"] == "true"
     else:
-        assert job["strategy"]["matrix"]["include"] == [
-            {"image": "api", "dockerfile": "apps/api/Dockerfile"},
-            {"image": "web", "dockerfile": "apps/web/Dockerfile"},
-            {"image": "ingestion", "dockerfile": "workers/ingestion/Dockerfile"},
-            {"image": "hosted-agent", "dockerfile": "infrastructure/hosted_agent/Dockerfile"},
-        ]
         dockerfiles = {
             path.relative_to(GITHUB.parent).as_posix()
             for path in GITHUB.parent.glob("**/Dockerfile")
@@ -118,9 +112,12 @@ def test_dependabot_covers_locked_workspaces_actions_and_images() -> None:
     assert set(updates) == {"uv", "npm", "github-actions", "docker"}
     for ecosystem in ["uv", "npm", "github-actions"]:
         assert updates[ecosystem]["directory"] == "/"
-    assert set(updates["docker"]["directories"]) == {
-        "/apps/api", "/apps/web", "/workers/ingestion", "/infrastructure/hosted_agent"
+    dockerfile_directories = {
+        "/" + path.parent.relative_to(GITHUB.parent).as_posix()
+        for path in GITHUB.parent.glob("**/Dockerfile")
+        if "node_modules" not in path.parts
     }
+    assert set(updates["docker"]["directories"]) == dockerfile_directories
     assert all(update["schedule"]["interval"] == "weekly" for update in updates.values())
     assert all(int(update["open-pull-requests-limit"]) > 0 for update in updates.values())
 

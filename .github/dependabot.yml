@@ -20,7 +20,9 @@ updates:
       - /apps/api
       - /apps/web
       - /workers/ingestion
+      # BEGIN ACCELERATOR ONLY
       - /infrastructure/hosted_agent
+      # END ACCELERATOR ONLY
     schedule:
       interval: weekly
     open-pull-requests-limit: 5

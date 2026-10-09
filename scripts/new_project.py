@@ -1,6 +1,8 @@
 """Generate an independent project; the manifest uses JSON-compatible YAML.
 
-Usage: make new-project NAME=my-solution DISPLAY="My Solution" [DEST=absolute-path]
+Usage: make new-project NAME=my-solution TITLE="My Solution" [DEST=absolute-path]
+TITLE is required. (It is not called DISPLAY: that is the X11 display variable, set in
+most desktop shells, and would silently become the project title.)
 The default destination is a sibling of the accelerator checkout. Existing destinations
 are never overwritten. A failed dependency install/check leaves the output for diagnosis
 and exits nonzero. Only a successful make check counts as a generated project.
@@ -32,6 +34,10 @@ ROOT = Path(__file__).resolve().parents[1]
 LOGGER = logging.getLogger(__name__)
 BEGIN_GENERATOR = "# BEGIN PROJECT GENERATOR"
 END_GENERATOR = "# END PROJECT GENERATOR"
+# Lines between these markers (any text file) exist only in the accelerator.
+BEGIN_ACCELERATOR_ONLY = "# BEGIN ACCELERATOR ONLY"
+END_ACCELERATOR_ONLY = "# END ACCELERATOR ONLY"
+WORKFLOWS = Path(".github/workflows")
 TEXT_SUFFIXES = {
     ".py",
     ".toml",
@@ -86,6 +92,7 @@ class Manifest:
     project_docs: Path
     dataset: Path
     starter_row: Mapping[str, object]
+    workflows: frozenset[str]
 
     @classmethod
     def load(cls, source: Path) -> Manifest:
@@ -155,7 +162,10 @@ class Manifest:
             project_docs=path_field("project_docs"),
             dataset=path_field("dataset"),
             starter_row=row,
+            workflows=frozenset(string_list(raw.get("workflows"), "workflows")),
         )
+        if any(len(relative_path(name).parts) != 1 for name in manifest.workflows):
+            raise ValueError("workflows entries must be file names in .github/workflows")
         if not manifest.copy or len(set(manifest.copy)) != len(manifest.copy):
             raise ValueError("Manifest copy paths must be nonempty and unique")
         return manifest
@@ -231,6 +241,29 @@ def relax_line_length(pyproject: Path, growth: int) -> None:
     )
 
 
+def strip_accelerator_only(text: str, path: Path) -> str:
+    """Drop every BEGIN/END ACCELERATOR ONLY block, markers included."""
+    if BEGIN_ACCELERATOR_ONLY not in text and END_ACCELERATOR_ONLY not in text:
+        return text
+    kept: list[str] = []
+    inside = False
+    for line in text.splitlines(keepends=True):
+        marker = line.strip()
+        if marker == BEGIN_ACCELERATOR_ONLY:
+            if inside:
+                raise ValueError(f"Nested accelerator-only block in {path}")
+            inside = True
+        elif marker == END_ACCELERATOR_ONLY:
+            if not inside:
+                raise ValueError(f"Unmatched accelerator-only end marker in {path}")
+            inside = False
+        elif not inside:
+            kept.append(line)
+    if inside:
+        raise ValueError(f"Unclosed accelerator-only block in {path}")
+    return "".join(kept)
+
+
 def generated_makefile(text: str) -> str:
     if text.count(BEGIN_GENERATOR) != 1 or text.count(END_GENERATOR) != 1:
         raise ValueError("Makefile must contain exactly one project generator block")
@@ -281,7 +314,7 @@ def generated_spec(text: str) -> str:
 def generate(source: Path, destination: Path, name: str, display: str) -> None:
     module = validate_name(name)
     if not display.strip() or any(ord(char) < 32 for char in display):
-        raise ValueError("DISPLAY must be nonempty text without control characters")
+        raise ValueError("TITLE must be nonempty text without control characters")
     source = source.resolve(strict=True)
     # Reject aliases before resolve() can hide a symlink or junction.
     destination = destination.absolute()
@@ -314,6 +347,10 @@ def generate(source: Path, destination: Path, name: str, display: str) -> None:
             for part in relative.parts
         ) or any(relative.is_relative_to(removed) for removed in manifest.remove):
             return
+        if relative.parent == WORKFLOWS and relative.name not in manifest.workflows:
+            # Deployment and accelerator-maintenance workflows do not apply to a
+            # generated project; it keeps only the checks listed in the manifest.
+            return
         original = source / relative
         for component in (original, *original.parents):
             if component == source:
@@ -336,6 +373,10 @@ def generate(source: Path, destination: Path, name: str, display: str) -> None:
 
     for entry in manifest.copy:
         collect(entry)
+    copies_workflows = any(WORKFLOWS.is_relative_to(entry) for entry in manifest.copy)
+    for workflow in sorted(manifest.workflows) if copies_workflows else ():
+        if not (source / WORKFLOWS / workflow).is_file():
+            raise ValueError(f"Manifest workflow does not exist: {workflow}")
     version_path = source / manifest.version_file
     if is_link(version_path) or not version_path.resolve().is_relative_to(source):
         raise ValueError("Version file must be inside the source and not a link")
@@ -354,6 +395,7 @@ def generate(source: Path, destination: Path, name: str, display: str) -> None:
         output.parent.mkdir(parents=True, exist_ok=True)
         if original.suffix in TEXT_SUFFIXES or original.name in {"Makefile", "Dockerfile"}:
             text = (source / original).read_text(encoding="utf-8")
+            text = strip_accelerator_only(text, original)
             if original == Path("Makefile"):
                 text = generated_makefile(text)
             text_replacements = dict(replacements)
@@ -475,12 +517,12 @@ class GeneratorTests(unittest.TestCase):
             "├── accelerator.manifest.yml # what the generator copies\n"
             "├── scripts/new_project.py # project generator\n\n"
             "## 10. Project generator\n\n"
-            'Run `make new-project NAME=solution DISPLAY="Solution"`.\n\n'
+            'Run `make new-project NAME=solution TITLE="Solution"`.\n\n'
             "scripts/new_project.py reads accelerator.manifest.yml.\n\n"
             "## 11. Delivery milestones\n\n"
             "| 36 | accelerator.manifest.yml + new_project.py | generated project |\n\n"
             "## 13. Developer commands\n\n"
-            'make new-project NAME=... DISPLAY="..."\n',
+            'make new-project NAME=... TITLE="..."\n',
         )
         self.write(
             "packages/agent_core/pyproject.toml",
@@ -661,6 +703,54 @@ class GeneratorTests(unittest.TestCase):
             self.run_generator()
         self.assertNotIn("pycodestyle", (self.destination / "pyproject.toml").read_text())
 
+    def test_generated_projects_keep_only_listed_workflows_without_accelerator_blocks(
+        self,
+    ) -> None:
+        self.manifest["copy"] = [*self.manifest["copy"], ".github"]
+        self.manifest["workflows"] = ["pull-request.yml"]
+        self.write("accelerator.manifest.yml", json.dumps(self.manifest))
+        self.write(
+            ".github/workflows/pull-request.yml",
+            "jobs:\n  quality: {}\n  # BEGIN ACCELERATOR ONLY\n  generator: {}\n"
+            "  # END ACCELERATOR ONLY\n",
+        )
+        self.write(".github/workflows/deploy-dev.yml", "jobs: {}\n")
+        self.write(".github/CODEOWNERS", "* @owner\n")
+        with patch("subprocess.run"):
+            self.run_generator()
+        workflows = self.destination / ".github/workflows"
+        self.assertEqual(sorted(path.name for path in workflows.iterdir()), ["pull-request.yml"])
+        self.assertEqual((workflows / "pull-request.yml").read_text(), "jobs:\n  quality: {}\n")
+        self.assertTrue((self.destination / ".github/CODEOWNERS").exists())
+
+    def test_rejects_missing_workflows_and_unbalanced_accelerator_blocks(self) -> None:
+        self.manifest["copy"] = [*self.manifest["copy"], ".github"]
+        self.manifest["workflows"] = ["missing.yml"]
+        self.write("accelerator.manifest.yml", json.dumps(self.manifest))
+        self.write(".github/workflows/pull-request.yml", "jobs: {}\n")
+        with self.assertRaisesRegex(ValueError, "workflow does not exist"):
+            self.run_generator()
+        for text, error in (
+            ("# BEGIN ACCELERATOR ONLY\nx\n", "Unclosed"),
+            ("x\n# END ACCELERATOR ONLY\n", "Unmatched"),
+            ("# BEGIN ACCELERATOR ONLY\n# BEGIN ACCELERATOR ONLY\n", "Nested"),
+        ):
+            with self.subTest(text=text), self.assertRaisesRegex(ValueError, error):
+                strip_accelerator_only(text, Path("file"))
+
+    def test_title_is_required_and_the_x11_display_variable_is_ignored(self) -> None:
+        environment = {"NAME": "my-solution", "DISPLAY": ":0"}
+        with patch.dict(os.environ, environment, clear=False), patch(
+            "sys.argv", ["new_project.py"]
+        ), patch.dict(os.environ, {"TITLE": ""}), self.assertRaises(SystemExit) as raised:
+            main()
+        self.assertEqual(raised.exception.code, 2)
+        with patch.dict(os.environ, {**environment, "TITLE": "My Solution"}), patch(
+            "sys.argv", ["new_project.py", "--destination", str(self.destination)]
+        ), patch(__name__ + ".generate") as generate_mock:
+            self.assertEqual(main(), 0)
+        self.assertEqual(generate_mock.call_args.args[2:], ("my-solution", "My Solution"))
+
     def test_rejects_invalid_starter_schema(self) -> None:
         self.manifest["starter_row"]["expected_abstain"] = False
         self.write("accelerator.manifest.yml", json.dumps(self.manifest))
@@ -729,7 +819,10 @@ class GeneratorTests(unittest.TestCase):
 def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--name", default=os.environ.get("NAME"))
-    parser.add_argument("--display", default=os.environ.get("DISPLAY") or None)
+    # Never read DISPLAY: it is the X11 display (for example ":0") in desktop shells.
+    parser.add_argument(
+        "--title", "--display", dest="title", default=os.environ.get("TITLE") or None
+    )
     parser.add_argument("--destination", type=Path, default=os.environ.get("DEST") or None)
     parser.add_argument("--self-test", action="store_true", help="Run temporary-tree fixture tests")
     parser.add_argument(
@@ -741,8 +834,10 @@ def main() -> int:
     if arguments.self_test:
         suite = unittest.defaultTestLoader.loadTestsFromTestCase(GeneratorTests)
         return 0 if unittest.TextTestRunner(verbosity=2).run(suite).wasSuccessful() else 1
-    if not arguments.name and not arguments.check_generated:
-        parser.error("Supply --name or NAME via make new-project")
+    if not arguments.check_generated and (not arguments.name or not arguments.title):
+        parser.error(
+            'Supply both NAME and TITLE: make new-project NAME=my-solution TITLE="My Solution"'
+        )
     try:
         if arguments.check_generated:
             with tempfile.TemporaryDirectory(prefix="accelerator-generator-") as temporary:
@@ -751,7 +846,7 @@ def main() -> int:
                         "make",
                         "new-project",
                         "NAME=generated-solution",
-                        "DISPLAY=Generated Solution",
+                        "TITLE=Generated Solution",
                         f"DEST={Path(temporary) / 'generated-solution'}",
                     ],
                     cwd=ROOT,
@@ -759,7 +854,7 @@ def main() -> int:
                 )
         else:
             destination = arguments.destination or ROOT.parent / arguments.name
-            generate(ROOT, destination, arguments.name, arguments.display or arguments.name)
+            generate(ROOT, destination, arguments.name, arguments.title)
     except (ValueError, KeyError, OSError, subprocess.CalledProcessError) as error:
         LOGGER.error("Generation failed: %s; any output is retained for diagnosis", error)
         return 1
