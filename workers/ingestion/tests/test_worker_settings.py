@@ -28,6 +28,12 @@ async def test_unconfigured_development_worker_has_no_consumer() -> None:
         ({"storage_connection_string": "UseDevelopmentStorage=true"}, "managed identity"),
         ({"database_auth_mode": "password"}, "managed_identity"),
         ({"search_endpoint": None}, "requires storage"),
+        ({"queue_account_url": None}, "requires storage"),
+        ({"database_url": "postgresql://worker:secret@db.example.test/accelerator"}, "password"),
+        ({"blob_account_url": "http://account.blob.core.windows.net"}, "https"),
+        ({"queue_account_url": "http://account.queue.core.windows.net"}, "https"),
+        ({"search_endpoint": "http://search.example.test"}, "https"),
+        ({"foundry_project_endpoint": "http://foundry.example.test/api/projects/p"}, "https"),
     ],
 )
 def test_production_requires_managed_identity_and_complete_settings(
@@ -50,3 +56,34 @@ def test_production_requires_managed_identity_and_complete_settings(
 
     with pytest.raises(ValidationError, match=message):
         WorkerSettings.model_validate(values)
+
+
+def test_work_and_poison_queues_must_differ() -> None:
+    with pytest.raises(ValidationError, match="must differ"):
+        WorkerSettings(queue_name="ingestion", poison_queue_name="ingestion")
+
+
+def test_account_url_storage_needs_both_blob_and_queue_endpoints() -> None:
+    values: dict[str, object] = {
+        "blob_account_url": "https://account.blob.core.windows.net",
+        "database_url": "postgresql://worker@db.example.test/accelerator",
+        "search_endpoint": "https://search.example.test",
+        "search_index_name": "chunks",
+        "vector_dimensions": 1536,
+        "foundry_project_endpoint": "https://foundry.example.test/api/projects/p",
+        "foundry_embedding_deployment": "embeddings",
+    }
+    assert not WorkerSettings.model_validate(values).indexing_configured
+
+    values["queue_account_url"] = "https://account.queue.core.windows.net"
+    assert WorkerSettings.model_validate(values).indexing_configured
+
+
+def test_rejected_settings_do_not_echo_the_dsn() -> None:
+    with pytest.raises(ValidationError) as raised:
+        WorkerSettings(
+            environment="production",
+            database_url="postgresql://worker:secret-value@db.example.test/accelerator",
+        )
+
+    assert "secret-value" not in str(raised.value)

@@ -48,8 +48,12 @@ class IngestionHandler:
                 title=message.title or (existing.title if existing else message.document_id),
                 source_uri=message.source_uri or (existing.source_uri if existing else ""),
                 content_hash=existing.content_hash if existing else "",
-                version=message.version,
-                effective_date=message.effective_date,
+                version=message.version
+                if message.version is not None
+                else (existing.version if existing else None),
+                effective_date=message.effective_date
+                if message.effective_date is not None
+                else (existing.effective_date if existing else None),
                 status=IngestionStatus.FAILED,
                 failure_reason=reason,
             )

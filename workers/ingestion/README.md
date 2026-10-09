@@ -43,7 +43,7 @@ poison queue with the document recorded as `failed(reason)`. Transient failures
 `INGESTION_MAX_ATTEMPTS` (default 5). Invalid messages and rejected documents
 (type, size, unparseable or empty) are poisoned immediately. Messages stay
 invisible for `INGESTION_VISIBILITY_TIMEOUT_SECONDS` (default 300) while being
-processed; size that above the longest expected document.
+processed; set it above the longest expected processing time for one document.
 
 ## Configuration
 

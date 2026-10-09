@@ -1,6 +1,5 @@
 import asyncio
 import json
-from collections.abc import AsyncIterator
 from dataclasses import dataclass, field
 from datetime import date
 from typing import Any
@@ -29,14 +28,11 @@ class FakeQueue:
     delayed: list[tuple[str, int]] = field(default_factory=list)
     sent: list[str] = field(default_factory=list)
 
-    def receive_messages(self, **kwargs: Any) -> AsyncIterator[Message]:
-        batch, self.pending = self.pending, []
+    visibility_timeouts: list[int | None] = field(default_factory=list)
 
-        async def messages() -> AsyncIterator[Message]:
-            for message in batch:
-                yield message
-
-        return messages()
+    async def receive_message(self, *, visibility_timeout: int | None = None) -> Message | None:
+        self.visibility_timeouts.append(visibility_timeout)
+        return self.pending.pop(0) if self.pending else None
 
     async def delete_message(self, message: Message, pop_receipt: str | None = None) -> None:
         assert pop_receipt == message.pop_receipt
@@ -135,6 +131,31 @@ async def test_invalid_messages_are_poisoned_without_touching_documents(content:
     assert json.loads(poison.sent[0])["reason"] == "invalid message"
 
 
+async def test_messages_are_received_one_at_a_time_just_before_processing() -> None:
+    queue = FakeQueue([Message(INGEST, id=f"m-{i}") for i in range(3)])
+
+    assert await consumer(Recorder(), queue, FakeQueue()).drain_once() == 3
+
+    # One receive (and so one fresh visibility deadline) per message, then an empty poll.
+    assert queue.visibility_timeouts == [300, 300, 300, 300]
+    assert queue.deleted == ["m-0", "m-1", "m-2"]
+
+
+async def test_drain_stops_between_messages_when_asked() -> None:
+    stop = asyncio.Event()
+    queue = FakeQueue([Message(INGEST, id=f"m-{i}") for i in range(3)])
+    recorder = Recorder()
+
+    async def handle_then_stop(message: IngestionMessage) -> None:
+        await recorder.handle(message)
+        stop.set()
+
+    worker = QueueConsumer(queue, FakeQueue(), handle_then_stop, recorder.record_failure)
+
+    assert await worker.drain_once(stop) == 1
+    assert [message.id for message in queue.pending] == ["m-1", "m-2"]
+
+
 async def test_run_stops_promptly_when_idle() -> None:
     stop = asyncio.Event()
     task = asyncio.create_task(consumer(Recorder(), FakeQueue(), FakeQueue()).run(stop))
@@ -209,7 +230,14 @@ async def test_failure_record_keeps_known_document_fields() -> None:
     repository = FakeRepository(existing)
 
     await handler(FakeService(), repository).record_failure(
-        IngestionMessage(operation="ingest", document_id="doc-1", scope_id="scope-a"), "poisoned"
+        IngestionMessage(
+            operation="ingest",
+            document_id="doc-1",
+            scope_id="scope-a",
+            content_type="text/plain",
+            source_blob="doc-1.txt",
+        ),
+        "poisoned",
     )
 
     [saved] = repository.saved
@@ -217,3 +245,5 @@ async def test_failure_record_keeps_known_document_fields() -> None:
     assert saved.failure_reason == "poisoned"
     assert saved.title == "Original"
     assert saved.content_hash == "a" * 64
+    assert saved.version == "1"
+    assert saved.effective_date == date(2026, 1, 1)

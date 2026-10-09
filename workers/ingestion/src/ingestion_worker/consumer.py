@@ -10,7 +10,7 @@ that exhausted their attempts go straight to the poison path.
 import asyncio
 import json
 import logging
-from collections.abc import AsyncIterable, Awaitable, Callable
+from collections.abc import Awaitable, Callable
 from dataclasses import dataclass
 from typing import Any, Protocol
 
@@ -38,9 +38,7 @@ class QueueMessage(Protocol):
 class Queue(Protocol):
     """The subset of ``azure.storage.queue.aio.QueueClient`` the worker uses."""
 
-    def receive_messages(
-        self, *, messages_per_page: int | None = None, visibility_timeout: int | None = None
-    ) -> AsyncIterable[Any]: ...
+    def receive_message(self, *, visibility_timeout: int | None = None) -> Awaitable[Any]: ...
 
     def delete_message(self, message: Any, pop_receipt: str | None = None) -> Awaitable[None]: ...
 
@@ -90,7 +88,7 @@ class QueueConsumer:
     async def run(self, stop_event: asyncio.Event) -> None:
         idle_delay = self._idle_poll_seconds
         while not stop_event.is_set():
-            processed = await self.drain_once()
+            processed = await self.drain_once(stop_event)
             if processed:
                 idle_delay = self._idle_poll_seconds
                 continue
@@ -99,12 +97,19 @@ class QueueConsumer:
             except TimeoutError:
                 idle_delay = min(idle_delay * 2, self._max_idle_poll_seconds)
 
-    async def drain_once(self) -> int:
+    async def drain_once(self, stop_event: asyncio.Event | None = None) -> int:
+        """Process visible messages one at a time until the queue is empty or a stop.
+
+        Each message is received just before it is handled, so its visibility timeout
+        covers only its own processing and never waits behind other messages.
+        """
         processed = 0
-        messages = self._queue.receive_messages(
-            messages_per_page=16, visibility_timeout=self._retry.visibility_timeout_seconds
-        )
-        async for message in messages:
+        while stop_event is None or not stop_event.is_set():
+            message = await self._queue.receive_message(
+                visibility_timeout=self._retry.visibility_timeout_seconds
+            )
+            if message is None:
+                break
             await self.process(message)
             processed += 1
         return processed

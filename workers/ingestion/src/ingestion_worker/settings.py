@@ -5,7 +5,10 @@ from pydantic_settings import BaseSettings, SettingsConfigDict
 
 
 class WorkerSettings(BaseSettings):
-    model_config = SettingsConfigDict(env_prefix="INGESTION_", env_ignore_empty=True)
+    # Validation errors must never echo inputs: a rejected DSN can carry a password.
+    model_config = SettingsConfigDict(
+        env_prefix="INGESTION_", env_ignore_empty=True, hide_input_in_errors=True
+    )
 
     environment: Literal["development", "test", "production"] = "development"
     log_level: str = "INFO"
@@ -49,7 +52,17 @@ class WorkerSettings(BaseSettings):
                 self.foundry_project_endpoint,
                 self.foundry_embedding_deployment,
             )
-        ) and (self.storage_connection_string is not None or self.blob_account_url is not None)
+        ) and (
+            self.storage_connection_string is not None
+            or (self.blob_account_url is not None and self.queue_account_url is not None)
+        )
+
+    @model_validator(mode="after")
+    def queues_are_distinct(self) -> Self:
+        if self.queue_name == self.poison_queue_name:
+            # Poisoned wrappers would land back on the work queue and loop forever.
+            raise ValueError("INGESTION_POISON_QUEUE_NAME must differ from INGESTION_QUEUE_NAME.")
+        return self
 
     @model_validator(mode="after")
     def production_uses_managed_identity(self) -> Self:
@@ -59,6 +72,16 @@ class WorkerSettings(BaseSettings):
             raise ValueError("Production storage access uses managed identity, not a connection string.")
         if self.database_auth_mode != "managed_identity":
             raise ValueError("Production requires INGESTION_DATABASE_AUTH_MODE=managed_identity.")
-        if not self.indexing_configured or self.queue_account_url is None:
+        if not self.indexing_configured:
             raise ValueError("Production requires storage, database, search and embedding settings.")
+        if self.database_url is not None and self.database_url.hosts()[0].get("password"):
+            raise ValueError("Production database access uses managed identity; remove the DSN password.")
+        endpoints = (
+            self.blob_account_url,
+            self.queue_account_url,
+            self.search_endpoint,
+            self.foundry_project_endpoint,
+        )
+        if any(endpoint is not None and endpoint.scheme != "https" for endpoint in endpoints):
+            raise ValueError("Production Azure endpoints must use https.")
         return self
