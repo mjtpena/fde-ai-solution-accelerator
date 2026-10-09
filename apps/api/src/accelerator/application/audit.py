@@ -23,6 +23,16 @@ class AuditRecorder:
             )
         )
 
+    async def authorization_failure(self, correlation_id: str, actor_id: str | None) -> None:
+        await self._repository.append(
+            AuditEvent(
+                event_type=EventType.AUTHORIZATION_FAILURE,
+                outcome=EventOutcome.DENIED,
+                correlation_id=correlation_id,
+                actor_id=actor_id,
+            )
+        )
+
     async def approval(
         self,
         context: ExecutionContext,

@@ -43,7 +43,7 @@ async def get_current_principal(
 
     validator: EntraTokenValidator = request.app.state.token_validator
     try:
-        return await validator.validate(
+        principal = await validator.validate(
             credentials.credentials,
             request.app.state.http_client,
             correlation_id=getattr(request.state, "correlation_id", None),
@@ -59,6 +59,9 @@ async def get_current_principal(
             detail="Invalid bearer token.",
             headers={"WWW-Authenticate": "Bearer"},
         ) from exc
+    # Lets the audit middleware attribute a later 403 to a validated identity.
+    request.state.principal_object_id = principal.object_id
+    return principal
 
 
 def require_any_role(

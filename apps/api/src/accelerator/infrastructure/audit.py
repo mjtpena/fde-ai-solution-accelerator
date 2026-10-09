@@ -27,6 +27,8 @@ audit_event = Table(
     CheckConstraint(
         "(event_type = 'auth_failure' AND outcome = 'failed' "
         "AND actor_id IS NULL AND approval_id IS NULL AND tool_name IS NULL) OR "
+        "(event_type = 'authorization_failure' AND outcome = 'denied' "
+        "AND approval_id IS NULL AND tool_name IS NULL) OR "
         "(event_type = 'approval' AND outcome IN ('approved', 'denied') "
         "AND actor_id IS NOT NULL AND approval_id IS NOT NULL AND tool_name IS NULL) OR "
         "(event_type = 'tool_execution' AND outcome IN ('succeeded', 'failed') "

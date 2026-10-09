@@ -8,6 +8,7 @@ from pydantic import AwareDatetime, BaseModel, ConfigDict, Field, model_validato
 
 class EventType(StrEnum):
     AUTH_FAILURE = "auth_failure"
+    AUTHORIZATION_FAILURE = "authorization_failure"
     APPROVAL = "approval"
     TOOL_EXECUTION = "tool_execution"
 
@@ -43,6 +44,14 @@ class AuditEvent(BaseModel):
             valid = (
                 self.outcome == EventOutcome.FAILED
                 and self.actor_id is None
+                and self.approval_id is None
+                and self.tool_name is None
+            )
+        elif self.event_type == EventType.AUTHORIZATION_FAILURE:
+            # The actor is recorded when the token was valid; scope-less denials
+            # (no Entra object ID) have none.
+            valid = (
+                self.outcome == EventOutcome.DENIED
                 and self.approval_id is None
                 and self.tool_name is None
             )

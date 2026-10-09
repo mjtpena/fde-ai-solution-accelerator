@@ -219,7 +219,7 @@ export interface components {
          * EventType
          * @enum {string}
          */
-        EventType: "auth_failure" | "approval" | "tool_execution";
+        EventType: "auth_failure" | "authorization_failure" | "approval" | "tool_execution";
         /** HTTPValidationError */
         HTTPValidationError: {
             /** Detail */

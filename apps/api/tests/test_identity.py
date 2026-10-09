@@ -103,7 +103,7 @@ def test_reader_role_can_access_protected_routes() -> None:
 
 
 def test_empty_role_set_is_forbidden_on_protected_routes() -> None:
-    app = protected_app()
+    app = protected_app(audit_repository=AsyncMock(spec=AuditRepository))
 
     async def unassigned() -> Principal:
         return Principal(subject="unassigned")

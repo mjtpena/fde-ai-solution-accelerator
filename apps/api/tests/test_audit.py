@@ -176,7 +176,10 @@ async def test_non_admin_cannot_read_events_or_forge_roles_in_headers() -> None:
     async with httpx.AsyncClient(transport=httpx.ASGITransport(app=app), base_url="http://test") as c:
         response = await c.get("/audit-events?roles=Admin", headers={"X-Roles": "Admin"})
     assert response.status_code == 403
-    assert repository.events == []
+    # The denial itself is audited (authorization_failure), nothing else is written.
+    assert [event.event_type for event in repository.events] == [
+        EventType.AUTHORIZATION_FAILURE
+    ]
 
 
 async def test_admin_query_is_bounded_ordered_and_filterable() -> None:
@@ -393,3 +396,41 @@ def test_globally_throttled_floods_allocate_no_per_client_state() -> None:
 
     assert allowed.count(True) == 2
     assert len(throttle._per_client._requests) == 2
+
+
+async def test_forbidden_responses_are_audited_with_the_validated_actor() -> None:
+    repository = MemoryRepository()
+    app = make_app(repository)
+
+    async def reader_context() -> Context:
+        return Context(roles=frozenset({"Reader"}))
+
+    async def reader() -> Principal:
+        return Principal(subject="s", object_id="reader-1", roles=frozenset({AppRole.READER}))
+
+    app.dependency_overrides[get_execution_context] = reader_context
+    app.dependency_overrides[get_current_principal] = reader
+    async with httpx.AsyncClient(transport=httpx.ASGITransport(app=app), base_url="http://test") as c:
+        response = await c.get("/audit-events")
+
+    assert response.status_code == 403
+    [event] = repository.events
+    assert event.event_type == EventType.AUTHORIZATION_FAILURE
+    assert event.outcome == EventOutcome.DENIED
+    assert event.correlation_id == response.headers["x-correlation-id"]
+
+
+def test_authorization_failure_events_reject_approval_or_tool_fields() -> None:
+    with pytest.raises(ValidationError):
+        AuditEvent(
+            event_type=EventType.AUTHORIZATION_FAILURE,
+            outcome=EventOutcome.DENIED,
+            correlation_id="c",
+            tool_name="read_document",
+        )
+    with pytest.raises(ValidationError):
+        AuditEvent(
+            event_type=EventType.AUTHORIZATION_FAILURE,
+            outcome=EventOutcome.FAILED,
+            correlation_id="c",
+        )

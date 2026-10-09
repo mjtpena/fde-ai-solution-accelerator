@@ -14,6 +14,7 @@ from accelerator.api.chat import ChatTurnPort
 from accelerator.observability_core import SpanAttributes, Telemetry
 from accelerator.retrieval_core.models import Evidence, RetrievalRequest
 from accelerator.security_core.data_boundaries.context import ExecutionContext
+from accelerator.security_core.prompt_injection import injection_signals
 from accelerator.security_core.tool_policy import ApprovalRequired
 
 
@@ -29,6 +30,12 @@ class TracedRetriever:
         ) as span:
             evidence: list[Evidence] = list(await self._inner.retrieve(req, ctx))
             span.set_attribute("fde.retrieval.result_count", len(evidence))
+            # Retrieved text stays untrusted data regardless; this only counts
+            # instruction-like documents so poisoning attempts are visible.
+            span.set_attribute(
+                "fde.retrieval.injection_signal_count",
+                sum(1 for item in evidence if injection_signals(item.text)),
+            )
             return evidence
 
 

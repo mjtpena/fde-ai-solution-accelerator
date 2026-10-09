@@ -18,6 +18,7 @@ from accelerator.configuration.settings import Settings
 from accelerator.identity.authentication import AppRole, Principal, get_current_principal
 from accelerator.identity.scope_resolver import get_execution_context
 from accelerator.infrastructure.approvals import SQLAlchemyApprovalRepository
+from accelerator.infrastructure.audit import PostgresAuditRepository
 from accelerator.security_core.data_boundaries.context import ExecutionContext
 from accelerator.security_core.infrastructure.database import create_session_factory
 
@@ -53,6 +54,7 @@ def make_app(database_url: str) -> tuple[FastAPI, list[ExecutionContext]]:
             entra_audience="api://test",
         ),
         session_factory=sessions,
+        audit_repository=PostgresAuditRepository(sessions),
     )
     current: list[ExecutionContext] = [APPROVER]
 
@@ -174,6 +176,12 @@ async def test_requester_non_approver_and_other_scope_cannot_decide(
         assert listed.json()["items"] == []
     if caller is REQUESTER:
         assert listed.json()["items"][0]["can_decide"] is False
+    if status == 403:
+        denied = await rows(
+            migrated_database_url,
+            "SELECT outcome FROM audit_event WHERE event_type = 'authorization_failure'",
+        )
+        assert ("denied",) in denied
 
 
 async def test_expired_approval_cannot_be_decided(migrated_database_url: str) -> None:

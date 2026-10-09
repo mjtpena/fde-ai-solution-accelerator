@@ -109,6 +109,13 @@ class AuthFailureAuditThrottle:
 
 
 class AuthFailureAuditMiddleware:
+    """Record every 401 (authentication) and 403 (authorization) before it is sent.
+
+    If the audit write fails the response becomes a 503: an unaudited denial is
+    never reported as an ordinary one. Request headers, paths, bodies and query
+    strings are never stored.
+    """
+
     def __init__(self, app: ASGIApp) -> None:
         self.app = app
 
@@ -124,7 +131,7 @@ class AuthFailureAuditMiddleware:
             nonlocal response_replaced
             if response_replaced:
                 return
-            if message["type"] == "http.response.start" and message["status"] == 401:
+            if message["type"] == "http.response.start" and message["status"] in (401, 403):
                 throttle: AuthFailureAuditThrottle | None = getattr(
                     request.app.state, "auth_failure_audit_throttle", None
                 )
@@ -139,7 +146,13 @@ class AuthFailureAuditMiddleware:
                     )
                 try:
                     recorder = AuditRecorder(get_audit_repository(request))
-                    await recorder.auth_failure(correlation_id)
+                    if message["status"] == 401:
+                        await recorder.auth_failure(correlation_id)
+                    else:
+                        await recorder.authorization_failure(
+                            correlation_id,
+                            getattr(request.state, "principal_object_id", None),
+                        )
                 except HTTPException as exc:
                     response_replaced = True
                     response = JSONResponse({"detail": exc.detail}, status_code=exc.status_code)

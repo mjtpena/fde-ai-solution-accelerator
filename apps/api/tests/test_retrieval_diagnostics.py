@@ -1,6 +1,7 @@
 import asyncio
 from datetime import UTC, datetime
 import unittest
+from unittest.mock import AsyncMock
 from typing import Any, Protocol, runtime_checkable
 from uuid import UUID
 
@@ -19,6 +20,7 @@ from accelerator.api.retrieval_diagnostics import (
     require_contributor,
 )
 from accelerator.configuration.settings import Settings
+from accelerator.domain.audit import AuditRepository
 from accelerator.identity.authentication import AppRole, Principal, get_current_principal
 from accelerator.identity.scope_resolver import get_execution_context
 from accelerator.security_core.data_boundaries.context import ExecutionContext
@@ -69,7 +71,9 @@ class RetrievalDiagnosticsTests(unittest.TestCase):
         )
 
     def get_response(self, context: ExecutionContext) -> HttpResponse:
-        app = create_app(self.settings(), self.store)
+        app = create_app(
+            self.settings(), self.store, audit_repository=AsyncMock(spec=AuditRepository)
+        )
         app.dependency_overrides[get_execution_context] = lambda: context
         principal = Principal(
             subject=context.user_id,

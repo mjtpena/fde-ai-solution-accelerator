@@ -777,6 +777,7 @@
         "type": "string",
         "enum": [
           "auth_failure",
+          "authorization_failure",
           "approval",
           "tool_execution"
         ],

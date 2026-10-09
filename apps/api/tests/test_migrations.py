@@ -30,6 +30,7 @@ def test_migration_history_is_linear() -> None:
 
     assert len(script.get_heads()) == 1
     assert [revision.revision for revision in script.walk_revisions()] == [
+        "0006_authorization_failure_audit",
         "0005_ingestion",
         "0004_cost_controls",
         "0003_approvals",
