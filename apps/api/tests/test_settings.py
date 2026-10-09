@@ -288,3 +288,30 @@ def test_content_safety_thresholds_must_be_able_to_block(threshold: int) -> None
         Settings.model_validate(
             production_values(content_safety_block_severity_violence=threshold)
         )
+
+
+def test_streaming_is_screened_by_default_and_required_in_production() -> None:
+    settings = Settings.model_validate(production_values())
+
+    assert settings.stream_release_mode == "screened"
+    with pytest.raises(ValidationError, match="API_STREAM_RELEASE_MODE=screened"):
+        Settings.model_validate(production_values(stream_release_mode="incremental"))
+
+
+def test_development_may_stream_incrementally() -> None:
+    settings = Settings.model_validate(
+        {
+            "environment": "development",
+            "entra_tenant_id": TENANT,
+            "entra_audience": "api://x",
+            "stream_release_mode": "incremental",
+        }
+    )
+
+    assert settings.stream_release_mode == "incremental"
+
+
+@pytest.mark.parametrize("seconds", [0, 10.5])
+def test_stream_heartbeat_stays_inside_the_web_proxy_timeouts(seconds: float) -> None:
+    with pytest.raises(ValidationError):
+        Settings.model_validate(production_values(stream_heartbeat_seconds=seconds))

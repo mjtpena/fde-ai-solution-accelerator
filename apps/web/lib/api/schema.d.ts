@@ -670,7 +670,7 @@ export interface operations {
             };
         };
         responses: {
-            /** @description Server-sent events. Each frame has an event name and JSON data. Answered turns emit token frames as the model produces them, then citations (only after they validate against this turn's retrieval and the answer passes content safety screening) and done; insufficient evidence or a content safety refusal emits abstention (with a stable code) and done; policy handoffs emit approval and done. An abstention after token frames withdraws the streamed text, and clients must discard it. Clients must ignore event names they do not recognise. */
+            /** @description Server-sent events. Each frame has an event name and JSON data. No answer text is sent before it is released: the answer is generated and buffered server-side, its citations are validated against this turn's retrieval and it passes content safety screening, and only then are token frames (the released answer, in chunks), citations and done emitted. While a turn is being buffered the stream may carry SSE comment lines (': keepalive'), which clients must ignore. Insufficient evidence or a content safety refusal emits abstention (with a stable code) and done; a failure after the response started emits abstention with code answer_withdrawn and done; policy handoffs emit approval and done. In development-only incremental mode, tokens are forwarded as generated and an abstention after token frames withdraws them, so clients must discard streamed text on abstention. Clients must ignore event names they do not recognise. */
             200: {
                 headers: {
                     [name: string]: unknown;

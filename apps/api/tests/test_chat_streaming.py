@@ -1,4 +1,6 @@
-"""Token frames leave the API while the model is still generating."""
+"""Incremental mode (development only): token frames leave the API while the model
+is still generating, and a failed answer is withdrawn afterwards. The default,
+screened mode is tested in ``test_chat_screened_release.py``."""
 
 import asyncio
 import json
@@ -15,10 +17,12 @@ from accelerator.agent_core.workflows.grounded_answer import (
     CitationSource,
     GroundedAnswerResult,
 )
-from accelerator.api.chat import WITHDRAWN_REASON, ChatRequest, stream_chat
+from accelerator.api.chat import WITHDRAWN_REASON, ChatRequest, StreamRelease, stream_chat
 from accelerator.retrieval_core.citations import CitationValidationError, CitationValidationResult
 from accelerator.security_core.data_boundaries.context import ExecutionContext
 from accelerator.security_core.tool_policy import ApprovalRequired
+
+INCREMENTAL = StreamRelease(mode="incremental")
 
 
 def context() -> ExecutionContext:
@@ -79,7 +83,9 @@ async def frames(response: StreamingResponse) -> AsyncIterator[tuple[str, dict[s
 
 async def test_first_token_is_sent_before_generation_finishes() -> None:
     turn = GatedStreamingTurn(ANSWERED)
-    response = await stream_chat(ChatRequest(message="When do backups run?"), context(), turn)
+    response = await stream_chat(
+        ChatRequest(message="When do backups run?"), context(), turn, release=INCREMENTAL
+    )
     received = frames(response)
 
     first = await anext(received)
@@ -106,7 +112,7 @@ async def test_invalid_citations_after_streaming_withdraw_the_answer() -> None:
     turn = GatedStreamingTurn(failure)
     turn.release.set()
 
-    response = await stream_chat(ChatRequest(message="q"), context(), turn)
+    response = await stream_chat(ChatRequest(message="q"), context(), turn, release=INCREMENTAL)
     events = [frame async for frame in frames(response)]
 
     assert [name for name, _ in events] == ["token", "token", "abstention", "done"]
@@ -135,7 +141,7 @@ async def test_approval_after_streamed_text_is_still_delivered() -> None:
     turn = GatedStreamingTurn(approval)
     turn.release.set()
 
-    response = await stream_chat(ChatRequest(message="q"), context(), turn)
+    response = await stream_chat(ChatRequest(message="q"), context(), turn, release=INCREMENTAL)
     events = [name for name, _ in [frame async for frame in frames(response)]]
 
     assert events == ["token", "token", "approval", "done"]
@@ -143,7 +149,7 @@ async def test_approval_after_streamed_text_is_still_delivered() -> None:
 
 async def test_client_disconnect_cancels_generation() -> None:
     turn = GatedStreamingTurn(ANSWERED)
-    response = await stream_chat(ChatRequest(message="q"), context(), turn)
+    response = await stream_chat(ChatRequest(message="q"), context(), turn, release=INCREMENTAL)
     received = frames(response)
     await anext(received)
 
@@ -172,7 +178,7 @@ async def test_a_blocked_answer_after_streaming_is_withdrawn_with_its_code() -> 
     turn = GatedStreamingTurn(blocked)
     turn.release.set()
 
-    response = await stream_chat(ChatRequest(message="q"), context(), turn)
+    response = await stream_chat(ChatRequest(message="q"), context(), turn, release=INCREMENTAL)
     events = [frame async for frame in frames(response)]
 
     assert [name for name, _ in events] == ["token", "token", "abstention", "done"]
@@ -195,7 +201,9 @@ async def test_a_refused_prompt_streams_no_tokens() -> None:
                 ),
             )
 
-    response = await stream_chat(ChatRequest(message="q"), context(), RefusingTurn())
+    response = await stream_chat(
+        ChatRequest(message="q"), context(), RefusingTurn(), release=INCREMENTAL
+    )
     events = [frame async for frame in frames(response)]
 
     assert events == [

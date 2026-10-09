@@ -22,6 +22,11 @@ from accelerator.security_core.content_safety import (
 
 Environment = Literal["development", "test", "production"]
 DatabaseAuthMode = Literal["password", "managed_identity"]
+# How /chat/stream releases answer text. ``screened``: nothing the model generated
+# reaches the client until citation validation and content safety have passed.
+# ``incremental`` forwards tokens as they are generated and withdraws a failed
+# answer afterwards; development and test only.
+StreamReleaseMode = Literal["screened", "incremental"]
 
 # Environments where local fakes (offline workflow, unconfigured adapters) may stand
 # in for Azure services. Every deployed environment, including an Azure "dev"
@@ -119,6 +124,12 @@ class Settings(BaseSettings):
     content_safety_block_severity_violence: int = Field(
         default=DEFAULT_BLOCK_SEVERITY, ge=1, le=6
     )
+
+    # Chat streaming (ADR-0007). ``screened`` is the default and required in production.
+    stream_release_mode: StreamReleaseMode = "screened"
+    # SSE comment frames sent while a screened answer is buffered, so the web proxy's
+    # header (15 s) and idle (60 s) timeouts never fire on a slow turn.
+    stream_heartbeat_seconds: float = Field(default=5.0, gt=0, le=10, allow_inf_nan=False)
 
     # Application Insights. The standard Azure Monitor variable name is accepted
     # so platform-injected configuration works unchanged.
@@ -237,6 +248,8 @@ class Settings(BaseSettings):
             raise ValueError("Production requires API_DATABASE_AUTH_MODE=managed_identity.")
         if not self.content_safety_enabled:
             raise ValueError("Production requires API_CONTENT_SAFETY_ENABLED=true.")
+        if self.stream_release_mode != "screened":
+            raise ValueError("Production requires API_STREAM_RELEASE_MODE=screened.")
         if "web_origin" not in self.model_fields_set:
             raise ValueError("Production requires API_WEB_ORIGIN to be set explicitly.")
         origin = urlsplit(self.web_origin)
