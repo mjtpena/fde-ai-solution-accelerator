@@ -71,3 +71,18 @@ class ScaffoldTests(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+    def test_every_azurite_the_tests_use_skips_the_api_version_check(self) -> None:
+        # The storage SDKs pinned in uv.lock send a newer x-ms-version than
+        # Azurite 3.33 accepts; without the flag the emulator rejects every call.
+        compose = (ROOT / "docker-compose.yml").read_text(encoding="utf-8")
+        workflow = (ROOT / ".github/workflows/pull-request.yml").read_text(encoding="utf-8")
+        azurite_commands = [
+            line
+            for line in (compose + workflow).splitlines()
+            if line.strip().startswith(("command: azurite", "azurite --"))
+        ]
+        self.assertGreaterEqual(len(azurite_commands), 3)
+        for command in azurite_commands:
+            with self.subTest(command=command.strip()):
+                self.assertIn("--skipApiVersionCheck", command)

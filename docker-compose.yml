@@ -18,7 +18,10 @@ services:
 
   azurite:
     image: mcr.microsoft.com/azure-storage/azurite:3.33.0
-    command: azurite --location /data --blobHost 0.0.0.0 --queueHost 0.0.0.0 --tableHost 0.0.0.0
+    # --skipApiVersionCheck: the storage SDKs in uv.lock request a newer service API
+    # version than this emulator accepts, and it would refuse every call (CI and
+    # tests/e2e_local run it the same way).
+    command: azurite --location /data --blobHost 0.0.0.0 --queueHost 0.0.0.0 --tableHost 0.0.0.0 --skipApiVersionCheck --loose
     ports:
       - "${AZURITE_BLOB_PORT:-10000}:10000"
       - "${AZURITE_QUEUE_PORT:-10001}:10001"
