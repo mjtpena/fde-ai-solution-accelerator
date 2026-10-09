@@ -43,6 +43,14 @@ class Settings(BaseSettings):
     auth_failure_audit_window_seconds: float = Field(default=60.0, gt=0, allow_inf_nan=False)
     entra_tenant_id: UUID
     entra_audience: str = Field(min_length=1)
+    # Sovereign clouds use a different authority, e.g. https://login.microsoftonline.us
+    # or https://login.chinacloudapi.cn. Explicit issuer/JWKS URLs override it.
+    entra_authority_host: HttpUrl = HttpUrl("https://login.microsoftonline.com")
+    entra_issuer: str | None = Field(default=None, min_length=1)
+    entra_jwks_uri: HttpUrl | None = None
+    jwt_leeway_seconds: int = Field(default=60, ge=0, le=300)
+    jwks_cache_seconds: float = Field(default=300.0, ge=30, le=86_400, allow_inf_nan=False)
+    jwks_max_stale_seconds: float = Field(default=86_400.0, ge=60, le=7 * 86_400, allow_inf_nan=False)
     web_origin: str = Field(default="http://localhost:3000", min_length=1)
 
     # PostgreSQL. In production the DSN carries no password: the API authenticates
@@ -106,6 +114,19 @@ class Settings(BaseSettings):
         return url
 
     @property
+    def entra_issuer_url(self) -> str:
+        if self.entra_issuer is not None:
+            return self.entra_issuer
+        return f"{str(self.entra_authority_host).rstrip('/')}/{self.entra_tenant_id}/v2.0"
+
+    @property
+    def entra_jwks_url(self) -> str:
+        if self.entra_jwks_uri is not None:
+            return str(self.entra_jwks_uri)
+        host = str(self.entra_authority_host).rstrip("/")
+        return f"{host}/{self.entra_tenant_id}/discovery/v2.0/keys"
+
+    @property
     def allows_fakes(self) -> bool:
         return self.environment in FAKE_FRIENDLY_ENVIRONMENTS
 
@@ -150,7 +171,7 @@ class Settings(BaseSettings):
             raise ValueError("Production requires API_DATABASE_AUTH_MODE=managed_identity.")
         if self.database_url is not None and self.database_url.hosts()[0].get("password"):
             raise ValueError("Production database URLs must not embed a password.")
-        for name in ("foundry_project_endpoint", "search_endpoint"):
+        for name in ("foundry_project_endpoint", "search_endpoint", "entra_authority_host"):
             url: HttpUrl | None = getattr(self, name)
             if url is not None and url.scheme != "https":
                 raise ValueError(f"API_{name.upper()} must use HTTPS in production.")
