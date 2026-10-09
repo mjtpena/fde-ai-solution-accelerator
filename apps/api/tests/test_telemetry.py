@@ -1,14 +1,16 @@
 import json
 import logging
 import sys
+import warnings
 from uuid import UUID, uuid4
 
 import httpx
+import pytest
 from opentelemetry.sdk.trace.export.in_memory_span_exporter import InMemorySpanExporter
 
 from accelerator.api.composition import build_application
 from accelerator.configuration.settings import Settings
-from accelerator.telemetry.logging import JsonFormatter
+from accelerator.telemetry.logging import JsonFormatter, configure_logging
 from accelerator.telemetry.tracing import build_telemetry
 
 
@@ -93,3 +95,25 @@ def test_json_logs_never_include_exception_messages() -> None:
     assert json.loads(line)["exception_type"] == "ValueError"
     assert "SEEDED-SECRET-EXCEPTION" not in line
     assert "prompt text" not in line
+
+
+def test_python_warnings_are_logged_as_structured_json(capsys: pytest.CaptureFixture[str]) -> None:
+    """A dependency's import-time warning must not put an unstructured line on stderr."""
+    root = logging.getLogger()
+    saved_handlers, saved_level = root.handlers[:], root.level
+    try:
+        configure_logging("INFO")
+        with warnings.catch_warnings():
+            warnings.simplefilter("always")
+            warnings.warn("invalid escape sequence", SyntaxWarning, stacklevel=1)
+        lines = [line for line in capsys.readouterr().err.splitlines() if line.strip()]
+    finally:
+        logging.captureWarnings(False)
+        root.handlers[:] = saved_handlers
+        root.setLevel(saved_level)
+
+    assert lines
+    entries = [json.loads(line) for line in lines]
+    assert any(
+        entry["logger"] == "py.warnings" and "SyntaxWarning" in entry["event"] for entry in entries
+    )

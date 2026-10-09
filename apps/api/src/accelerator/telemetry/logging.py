@@ -48,7 +48,12 @@ class JsonFormatter(logging.Formatter):
 
 
 def configure_logging(level: str = "INFO") -> None:
-    """Route the root logger (and uvicorn's) through one JSON handler on stderr."""
+    """Route the root logger (and uvicorn's) through one JSON handler on stderr.
+
+    Python warnings (``warnings.warn``, including SyntaxWarnings raised while a
+    dependency compiles) are captured into the ``py.warnings`` logger, so no
+    unstructured line reaches stderr.
+    """
     handler = logging.StreamHandler()
     handler.setFormatter(JsonFormatter())
     root = logging.getLogger()
@@ -58,3 +63,4 @@ def configure_logging(level: str = "INFO") -> None:
         uvicorn_logger = logging.getLogger(name)
         uvicorn_logger.handlers[:] = []
         uvicorn_logger.propagate = True
+    logging.captureWarnings(True)
