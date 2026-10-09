@@ -328,3 +328,56 @@ def test_response_schema_requires_always_serialized_event_fields() -> None:
     assert set(event.model_dump()) == set(event_schema["required"])
     assert {"event_id", "occurred_at"} <= set(event_schema["required"])
     assert "event_id" not in AuditEvent.model_json_schema(mode="validation")["required"]
+
+
+def throttled_app(repository: MemoryRepository, **limits: int) -> FastAPI:
+    return create_app(
+        Settings(
+            environment="test",
+            entra_tenant_id=UUID("00000000-0000-0000-0000-000000000001"),
+            entra_audience="api://test",
+            **limits,
+        ),
+        audit_repository=repository,
+    )
+
+
+async def test_unauthenticated_audit_inserts_are_throttled_per_client() -> None:
+    repository = MemoryRepository()
+    app = throttled_app(repository, auth_failure_audit_per_client_limit=2)
+    async with httpx.AsyncClient(
+        transport=httpx.ASGITransport(app=app, client=("203.0.113.7", 1234)),
+        base_url="http://test",
+    ) as c:
+        statuses = [(await c.get("/audit-events")).status_code for _ in range(5)]
+
+    # Every caller still gets a 401; only the first two failures cost a database write.
+    assert statuses == [401] * 5
+    assert len(repository.events) == 2
+
+
+async def test_throttle_is_per_client_and_globally_capped() -> None:
+    repository = MemoryRepository()
+    app = throttled_app(
+        repository, auth_failure_audit_per_client_limit=1, auth_failure_audit_global_limit=2
+    )
+    for host in ("198.51.100.1", "198.51.100.2", "198.51.100.3"):
+        async with httpx.AsyncClient(
+            transport=httpx.ASGITransport(app=app, client=(host, 1)), base_url="http://test"
+        ) as c:
+            assert (await c.get("/audit-events")).status_code == 401
+
+    assert len(repository.events) == 2
+
+
+def test_suppressed_failures_are_counted_for_the_next_audit_log_line() -> None:
+    from accelerator.api.audit import AuthFailureAuditThrottle
+
+    throttle = AuthFailureAuditThrottle(per_client_limit=1, global_limit=10, window_seconds=60)
+
+    assert throttle.allow("client-a")
+    assert not throttle.allow("client-a")
+    assert not throttle.allow("client-a")
+    assert throttle.allow("client-b")
+    assert throttle.take_suppressed_count() == 2
+    assert throttle.take_suppressed_count() == 0

@@ -6,7 +6,11 @@ import httpx
 from fastapi import Depends, FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
-from accelerator.api.audit import AuthFailureAuditMiddleware, router as audit_router
+from accelerator.api.audit import (
+    AuthFailureAuditMiddleware,
+    AuthFailureAuditThrottle,
+    router as audit_router,
+)
 from accelerator.api.chat import ChatTurnPort, router as chat_router
 from accelerator.api.cost_guard import (
     ContextDependency,
@@ -25,6 +29,7 @@ from accelerator.identity.authentication import AppRole, require_any_role
 from accelerator.identity.jwt_validator import EntraTokenValidator
 from accelerator.identity.scope_resolver import (
     configure_scope_resolver,
+    get_execution_context as resolve_execution_context,
     install_scope_boundary,
 )
 from accelerator.security_core.authorisation.memberships import ScopeMembershipRepository
@@ -92,14 +97,27 @@ def create_app(
         else InMemoryRetrievalDiagnosticsStore()
     )
     app.add_exception_handler(TokenBudgetExceeded, handle_token_budget_exceeded)
-    if get_execution_context is not None:
-        app.state.request_cost_guard = create_cost_guard_dependency(
-            settings,
-            get_execution_context,
-            rate_limiter=rate_limiter,
-        )
+    request_cost_guard = create_cost_guard_dependency(
+        settings,
+        get_execution_context if get_execution_context is not None else resolve_execution_context,
+        rate_limiter=rate_limiter,
+    )
+    app.state.request_cost_guard = request_cost_guard
+    # Model-backed routes are rate limited per user and scope set and get a token budget.
+    cost_guarded: dict[str, Any] = {
+        "dependencies": [*AUTHENTICATED["dependencies"], Depends(request_cost_guard)],
+        "responses": {
+            **AUTHENTICATED["responses"],
+            429: {"description": "Rate limit or token budget exceeded."},
+        },
+    }
     app.state.token_validator = EntraTokenValidator(settings)
     app.state.audit_repository = audit_repository
+    app.state.auth_failure_audit_throttle = AuthFailureAuditThrottle(
+        per_client_limit=settings.auth_failure_audit_per_client_limit,
+        global_limit=settings.auth_failure_audit_global_limit,
+        window_seconds=settings.auth_failure_audit_window_seconds,
+    )
     app.add_middleware(AuthFailureAuditMiddleware)
     app.add_middleware(
         CORSMiddleware,
@@ -108,12 +126,12 @@ def create_app(
         allow_headers=["*"],
     )
     app.include_router(health_router)
-    app.include_router(retrieval_diagnostics_router, **AUTHENTICATED)
+    app.include_router(retrieval_diagnostics_router, **cost_guarded)
     app.include_router(audit_router, **AUTHENTICATED)
     if chat_turn is not None:
         app.state.chat_turn = chat_turn
     if scope_repository is not None:
         configure_scope_resolver(app, scope_repository)
-    app.include_router(chat_router, **AUTHENTICATED)
+    app.include_router(chat_router, **cost_guarded)
     install_scope_boundary(app)
     return app

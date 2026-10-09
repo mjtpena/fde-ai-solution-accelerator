@@ -34,6 +34,11 @@ class Settings(BaseSettings):
     request_rate_limit: int = Field(default=60, gt=0)
     request_rate_window_seconds: float = Field(default=60.0, gt=0, allow_inf_nan=False)
     diagnostics_include_content: bool = False
+    # Unauthenticated requests write an audit row per 401. These caps bound that
+    # write amplification; failures beyond them are counted in logs instead.
+    auth_failure_audit_per_client_limit: int = Field(default=20, gt=0)
+    auth_failure_audit_global_limit: int = Field(default=200, gt=0)
+    auth_failure_audit_window_seconds: float = Field(default=60.0, gt=0, allow_inf_nan=False)
     entra_tenant_id: UUID
     entra_audience: str = Field(min_length=1)
     web_origin: str = Field(default="http://localhost:3000", min_length=1)

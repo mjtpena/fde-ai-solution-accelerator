@@ -102,6 +102,9 @@
           "503": {
             "description": "Identity, scope, or audit persistence is unavailable."
           },
+          "429": {
+            "description": "Rate limit or token budget exceeded."
+          },
           "422": {
             "description": "Validation Error",
             "content": {
@@ -358,6 +361,9 @@
           },
           "503": {
             "description": "The chat workflow is not configured."
+          },
+          "429": {
+            "description": "Rate limit or token budget exceeded."
           },
           "422": {
             "description": "Validation Error",
