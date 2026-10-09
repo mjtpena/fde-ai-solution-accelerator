@@ -92,6 +92,34 @@ This name-based masking is defense in depth, not a general-purpose guarantee
 against secrets embedded inside arbitrary strings. Never put secrets in these
 inputs or upload transcripts.
 
+## `make deploy-dev`
+
+`infrastructure/scripts/deploy-dev.sh` (`make deploy-dev`, or `STAGE=<stage>` for
+one stage) is the single deployment path; `.github/workflows/deploy-dev.yml` runs
+the same stages after its OIDC sign-in.
+
+| Stage | Does |
+| --- | --- |
+| `infrastructure` | Subscription deployment with `DEPLOY_APPLICATIONS=false` |
+| `images` | Builds api, worker and web in the registry with ACR Tasks (no local Docker) and records their digests |
+| `applications` | Deploys the Container Apps and migration job by digest |
+| `migrate` | Starts the migration job and waits for it to succeed |
+| `index` | Creates or updates the search index from the schema-as-code definition |
+| `smoke` | Requires the web page and `/api/health` (the API through the internal hop) to answer |
+
+Set `AZURE_SUBSCRIPTION_ID`, `AZURE_LOCATION`, the three
+`AZURE_POSTGRES_ADMIN_*` values, `API_ENTRA_TENANT_ID`, `API_ENTRA_AUDIENCE`,
+`WEB_ENTRA_CLIENT_ID` and `WEB_ENTRA_API_SCOPE`. Set
+`AZURE_DEPLOYMENT_PRINCIPAL_ID` to your own object ID so the `index` stage may
+create the index. The database bootstrap (below) runs once, between the
+`infrastructure` and `applications` stages, from a VNet-connected machine.
+
+The workflow's full evaluation runs on the VNet runner: the evaluation principal's
+scopes are read from the private database. Set `AZURE_EVALUATION_PRINCIPAL_ID` to
+that runner identity's object ID (it receives Search Index Data Reader and Foundry
+project access), and `EVALUATION_PRINCIPAL_OBJECT_ID` to the principal whose scope
+memberships bound the evaluated turns.
+
 ## Database boundary
 
 PostgreSQL public access is disabled. Its delegated subnet and private DNS zone

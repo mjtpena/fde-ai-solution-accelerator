@@ -122,6 +122,9 @@ param deploymentPrincipalId string = ''
 ])
 param deploymentPrincipalType string = 'ServicePrincipal'
 
+@description('Object ID of the principal that runs the full evaluation (the VNet runner\'s OIDC identity); granted Search Index Data Reader and Foundry project access. Empty skips the grants.')
+param evaluationPrincipalId string = ''
+
 @description('Azure Key Vault SKU.')
 param keyVaultSkuName string
 
@@ -462,6 +465,26 @@ module migratorTelemetryAccess './modules/monitoring-publisher-role-assignment.b
   params: {
     applicationInsightsName: monitoring.outputs.applicationInsightsName
     principalId: migratorIdentity.outputs.principalId
+  }
+}
+
+module evaluationSearchAccess './modules/search-index-role-assignment.bicep' = if (!empty(evaluationPrincipalId)) {
+  name: 'evaluation-search-reader-${take(suffix, 8)}'
+  scope: environmentResourceGroup
+  params: {
+    searchServiceName: search.outputs.searchServiceName
+    principalId: evaluationPrincipalId
+    accessLevel: 'reader'
+  }
+}
+
+module evaluationFoundryAccess './modules/foundry-agent-consumer-role-assignment.bicep' = if (!empty(evaluationPrincipalId)) {
+  name: 'evaluation-foundry-consumer-${take(suffix, 8)}'
+  scope: environmentResourceGroup
+  params: {
+    foundryAccountName: foundry.outputs.accountName
+    foundryProjectName: foundry.outputs.projectName
+    principalId: evaluationPrincipalId
   }
 }
 

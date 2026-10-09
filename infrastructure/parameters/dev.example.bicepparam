@@ -40,6 +40,7 @@ param embeddingModelVersion = readEnvironmentVariable('AZURE_EMBEDDING_MODEL_VER
 param embeddingSkuName = 'GlobalStandard'
 param embeddingCapacity = 1
 param deploymentPrincipalId = readEnvironmentVariable('AZURE_DEPLOYMENT_PRINCIPAL_ID', '')
+param evaluationPrincipalId = readEnvironmentVariable('AZURE_EVALUATION_PRINCIPAL_ID', '')
 
 param keyVaultSkuName = 'standard'
 param containerRegistrySkuName = 'Basic'
