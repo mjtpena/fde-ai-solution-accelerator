@@ -69,7 +69,7 @@ make setup
 make check
 ```
 
-This parses Python source files, runs the scaffold's standard-library regression tests, and runs any npm workspace check scripts. Lint/type-check tooling and the web application are delivered in later issues. The smoke-evaluation target is a placeholder until the evaluation milestone is implemented:
+This runs ruff, strict mypy and the Python test suites, then the web workspace's checks (see [docs/getting-started.md](docs/getting-started.md)). The smoke evaluation runs the product's grounded-answer workflow, tool policy and approvals offline over a fixture corpus and fails on any hard-gate failure or regression against `evaluations/baselines/accepted.json`:
 
 ```sh
 make eval-smoke

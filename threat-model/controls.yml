@@ -1,0 +1,552 @@
+# Security controls register. Schema and upkeep rules: threat-model/README.md.
+# Every path below is checked to exist by tests/test_threat_model.py; every `gates`
+# value must be a GateName in packages/evaluation_core/runners/smoke.py.
+schema_version: 1
+controls:
+  - id: C-001
+    title: Server-side scope resolution into an immutable ExecutionContext
+    description: >-
+      The API derives the caller's scope IDs from validated Entra claims (object ID)
+      and the scope-membership table. ExecutionContext is frozen and extra-forbidden.
+      Request bodies, query strings, token claims and model output never supply scope.
+    type: preventive
+    status: implemented
+    implemented_in:
+      - apps/api/src/accelerator/identity/scope_resolver.py
+      - packages/security_core/src/accelerator/security_core/data_boundaries/context.py
+      - packages/security_core/src/accelerator/security_core/authorisation/memberships.py
+      - packages/security_core/src/accelerator/security_core/infrastructure/memberships.py
+    verified_by:
+      - apps/api/tests/test_scope_resolver.py
+      - apps/api/tests/test_chat.py
+      - packages/security_core/tests/test_memberships.py
+    gates:
+      - scope_isolation
+
+  - id: C-002
+    title: Mandatory scope filter on every search, with result post-check
+    description: >-
+      Search queries always carry an escaped scope_id filter built from
+      ExecutionContext. Callers cannot supply an authorization or raw filter. An empty
+      context fails closed. The Search adapter rejects any hit whose scope_id is
+      outside the context and logs search_scope_violation.
+    type: preventive
+    status: implemented
+    implemented_in:
+      - packages/retrieval_core/search/query.py
+      - apps/api/src/accelerator/infrastructure/search/adapter.py
+    verified_by:
+      - packages/retrieval_core/search/tests/test_query.py
+      - apps/api/src/accelerator/infrastructure/search/tests/test_live_isolation.py
+      - packages/evaluation_core/runners/tests/test_offline_smoke.py
+    gates:
+      - scope_isolation
+
+  - id: C-003
+    title: Tool argument models cannot carry scope; tools read scope from server context
+    description: >-
+      Tool registration rejects argument models that declare scope fields, including
+      through aliases or extra fields. The agent bridge passes the server
+      ExecutionContext, so a scope supplied by the model never reaches the tool.
+    type: preventive
+    status: implemented
+    implemented_in:
+      - packages/agent_core/tools/base.py
+      - packages/agent_core/tools/registry.py
+      - packages/agent_core/tools/agent_bridge.py
+    verified_by:
+      - packages/agent_core/tools/tests/test_tools.py
+      - packages/agent_core/tools/tests/test_agent_bridge.py
+      - apps/api/tests/test_approvals.py
+
+  - id: C-004
+    title: Retrieved text wrapped as untrusted data
+    description: >-
+      Evidence is wrapped in escaped elements with a random boundary that is new on
+      every call, so document text cannot close the block or forge evidence. System
+      instructions stay separate from user and document content.
+    type: preventive
+    status: implemented
+    implemented_in:
+      - packages/security_core/src/accelerator/security_core/prompt_injection/__init__.py
+      - packages/agent_core/workflows/generation.py
+    verified_by:
+      - packages/security_core/tests/test_prompt_injection.py
+      - packages/agent_core/workflows/test_generation.py
+      - packages/evaluation_core/runners/tests/test_offline_smoke.py
+    gates:
+      - injection_followed
+
+  - id: C-005
+    title: Injection-signal detection on retrieved evidence
+    description: >-
+      The retrieval span records fde.retrieval.injection_signal_count, the number of
+      retrieved items with instruction-like phrasing, so poisoning attempts show up in
+      telemetry. Detection only; it never changes how evidence is handled.
+    type: detective
+    status: partial
+    notes: >-
+      The signal heuristics are tested. No test asserts the span attribute itself, and
+      no alert rule is defined on it yet.
+    implemented_in:
+      - apps/api/src/accelerator/telemetry/traced.py
+      - packages/security_core/src/accelerator/security_core/prompt_injection/__init__.py
+    verified_by:
+      - packages/security_core/tests/test_prompt_injection.py
+
+  - id: C-006
+    title: Same-turn citation validation
+    description: >-
+      Every cited chunk ID must be in the set retrieved during the same turn.
+      Otherwise the whole response fails. Streamed answers are withdrawn and replaced
+      by an abstention.
+    type: preventive
+    status: implemented
+    implemented_in:
+      - packages/retrieval_core/citations/__init__.py
+      - packages/agent_core/workflows/grounded_answer.py
+      - apps/api/src/accelerator/api/chat.py
+    verified_by:
+      - tests/test_citation_validation.py
+      - tests/test_grounded_answer_citation_gate.py
+      - packages/agent_core/workflows/test_grounded_answer_workflow.py
+    gates:
+      - citation_validity
+
+  - id: C-007
+    title: Evidence sufficiency check and abstention
+    description: >-
+      The workflow abstains instead of answering when retrieved evidence is below the
+      configured score and count thresholds.
+    type: preventive
+    status: implemented
+    implemented_in:
+      - packages/retrieval_core/sufficiency/checker.py
+      - packages/retrieval_core/sufficiency/policy.py
+    verified_by:
+      - tests/test_retrieval_sufficiency.py
+    gates:
+      - abstention
+
+  - id: C-008
+    title: Risk-classified tool policy enforced outside the model
+    description: >-
+      Every tool declares a risk (read, write, destructive) or is prohibited. Read
+      tools run. Write tools return an approval card and do not execute. Prohibited
+      tools never run. Writes must implement idempotent approved execution, and no
+      further tools run once an approval is pending.
+    type: preventive
+    status: implemented
+    implemented_in:
+      - packages/security_core/src/accelerator/security_core/tool_policy/policy.py
+      - packages/security_core/src/accelerator/security_core/tool_policy/models.py
+      - packages/agent_core/middleware/tool_policy.py
+      - packages/agent_core/tools/registry.py
+      - apps/api/src/accelerator/api/tool_turns.py
+    verified_by:
+      - packages/agent_core/middleware/tests/test_tool_policy.py
+      - packages/agent_core/tools/tests/test_tools.py
+      - packages/agent_core/tools/tests/test_agent_bridge.py
+      - apps/api/tests/test_tool_turns.py
+    gates:
+      - approval_bypass
+      - tool_selection
+
+  - id: C-009
+    title: Args-bound, expiring, exactly-once approvals
+    description: >-
+      An approval stores the tool name, a canonical hash of the arguments, the
+      requester, the scope and an expiry. Execution re-hashes the arguments and
+      rejects any mismatch, expiry or different tool. A PostgreSQL row lock and a
+      durable execution key mean a write runs at most once under replay or concurrent
+      requests. Fields supplied by the caller are ignored in favour of the persisted
+      record.
+    type: preventive
+    status: implemented
+    implemented_in:
+      - packages/agent_core/approvals/service.py
+      - packages/agent_core/approvals/models.py
+      - apps/api/src/accelerator/infrastructure/approvals.py
+      - apps/api/src/accelerator/migrations/versions/0003_approvals.py
+    verified_by:
+      - apps/api/tests/test_approvals.py
+      - packages/agent_core/middleware/tests/test_tool_policy.py
+    gates:
+      - approval_bypass
+
+  - id: C-010
+    title: Separation of duties for approval decisions
+    description: >-
+      Only an Approver in the same scope who is not the requester can decide an
+      approval. Privileged writes need a distinct approver with the configured role.
+      A persisted self-approval never executes.
+    type: preventive
+    status: implemented
+    implemented_in:
+      - packages/agent_core/approvals/service.py
+      - packages/agent_core/middleware/tool_policy.py
+      - apps/api/src/accelerator/api/approvals.py
+    verified_by:
+      - apps/api/tests/test_approvals.py
+      - apps/api/tests/test_approval_routes.py
+      - packages/agent_core/middleware/tests/test_tool_policy.py
+
+  - id: C-011
+    title: Strict Entra JWT validation
+    description: >-
+      Accepts only RS256 tokens. Rejects alg=none and HS256 key confusion. Requires a
+      kid. Validates issuer, audience, expiry and not-before within a bounded leeway.
+      JWKS rotation is rate-limited and refreshes use bounded stale keys. Unknown or
+      empty role sets are forbidden.
+    type: preventive
+    status: implemented
+    implemented_in:
+      - apps/api/src/accelerator/identity/jwt_validator.py
+      - apps/api/src/accelerator/identity/authentication.py
+    verified_by:
+      - apps/api/tests/test_jwt_validator.py
+      - apps/api/tests/test_identity.py
+      - apps/api/tests/test_scope_resolver.py
+
+  - id: C-012
+    title: Browser token containment
+    description: >-
+      MSAL caches tokens in sessionStorage. A nonce-based CSP limits script sources
+      and connections to the app origin and the Entra authority. The browser calls the
+      API only through the same-origin chat proxy.
+    type: preventive
+    status: implemented
+    implemented_in:
+      - apps/web/lib/auth/msal.ts
+      - apps/web/lib/security/csp.ts
+      - apps/web/proxy.ts
+      - apps/web/lib/api/chat-proxy.ts
+    verified_by:
+      - apps/web/tests/auth/msal.test.ts
+      - apps/web/tests/security/csp.test.ts
+      - apps/web/tests/api/chat-proxy.test.ts
+
+  - id: C-013
+    title: API security headers and explicit CORS allow-list
+    description: >-
+      All API responses, including errors, carry security and no-store headers. CORS
+      allows exactly one configured HTTPS web origin, with explicit methods and
+      headers. Production rejects plain-HTTP endpoints.
+    type: preventive
+    status: implemented
+    implemented_in:
+      - apps/api/src/accelerator/api/security_headers.py
+      - apps/api/src/accelerator/api/app.py
+      - apps/api/src/accelerator/configuration/settings.py
+    verified_by:
+      - apps/api/tests/test_security_headers.py
+      - apps/api/tests/test_settings.py
+
+  - id: C-014
+    title: Managed identity only; no secrets in code or configuration
+    description: >-
+      Services authenticate with user-assigned managed identities. Production settings
+      reject database passwords and DSNs with embedded credentials, and do not echo
+      rejected values. Azure resources disable local/key auth (PostgreSQL password
+      auth, Storage shared keys, Search, Foundry, Log Analytics and Application
+      Insights).
+    type: preventive
+    status: implemented
+    implemented_in:
+      - apps/api/src/accelerator/configuration/settings.py
+      - workers/ingestion/src/ingestion_worker/settings.py
+      - infrastructure/modules/postgres.bicep
+      - infrastructure/modules/storage.bicep
+      - infrastructure/modules/search.bicep
+      - infrastructure/modules/foundry.bicep
+      - infrastructure/modules/monitoring.bicep
+      - infrastructure/modules/container-registry.bicep
+    verified_by:
+      - apps/api/tests/test_settings.py
+      - workers/ingestion/tests/test_worker_settings.py
+      - .github/workflows/bicep-validation.yml
+
+  - id: C-015
+    title: Secret scanning before commit and in CI
+    description: >-
+      A pinned gitleaks pre-commit hook blocks secrets locally. Trivy scans the
+      repository and every built image for secrets on each pull request. GitHub
+      native secret scanning and push protection back these up.
+    type: detective
+    status: implemented
+    implemented_in:
+      - .pre-commit-config.yaml
+      - .github/workflows/security.yml
+    verified_by:
+      - .github/tests/test_security_configuration.py
+      - .github/workflows/security.yml
+
+  - id: C-016
+    title: Content-free telemetry with redaction at export and in logs
+    description: >-
+      SpanAttributes is a strict contract with no prompt, response, document,
+      argument, filter-value or header fields, and there is no content-capture
+      option. Exceptions record only their type. SanitizingSpanExporter applies
+      security_core redaction to every span and event attribute. The JSON log
+      formatter redacts every string field and never writes exception messages.
+    type: preventive
+    status: implemented
+    implemented_in:
+      - packages/observability_core/src/observability_core/attributes.py
+      - packages/observability_core/src/observability_core/export.py
+      - packages/observability_core/src/observability_core/tracing.py
+      - packages/security_core/src/accelerator/security_core/redaction/__init__.py
+      - apps/api/src/accelerator/telemetry/tracing.py
+      - apps/api/src/accelerator/telemetry/logging.py
+      - docs/observability-standard.md
+    verified_by:
+      - packages/observability_core/tests/test_tracing.py
+      - packages/observability_core/tests/test_export.py
+      - packages/security_core/redaction/test_redaction.py
+      - packages/security_core/redaction/test_redaction_export.py
+      - apps/api/tests/test_telemetry.py
+
+  - id: C-017
+    title: Rate limits and per-request token budgets
+    description: >-
+      Model-backed routes are rate-limited per user and scope set through a
+      PostgreSQL-backed limiter shared across replicas. Each request gets a token
+      budget, and exceeding it returns 429.
+    type: preventive
+    status: implemented
+    implemented_in:
+      - packages/security_core/src/accelerator/security_core/cost_guard/rate_limit.py
+      - packages/security_core/src/accelerator/security_core/cost_guard/budget.py
+      - apps/api/src/accelerator/api/cost_guard.py
+      - apps/api/src/accelerator/infrastructure/cost_controls.py
+      - apps/api/src/accelerator/migrations/versions/0004_cost_controls.py
+    verified_by:
+      - apps/api/tests/test_cost_guard.py
+      - apps/api/tests/test_cost_controls.py
+      - packages/agent_core/workflows/test_generation.py
+
+  - id: C-018
+    title: Tool-call limits, tool timeouts and request deadlines
+    description: >-
+      Tool calls are capped per turn and per session, with shared counters. Each tool
+      has a declared timeout. ExecutionContext carries a request deadline that search
+      and approval creation enforce.
+    type: preventive
+    status: implemented
+    implemented_in:
+      - packages/agent_core/middleware/tool_policy.py
+      - apps/api/src/accelerator/api/tool_turns.py
+      - apps/api/src/accelerator/infrastructure/cost_controls.py
+      - packages/security_core/src/accelerator/security_core/data_boundaries/context.py
+      - apps/api/src/accelerator/infrastructure/search/adapter.py
+    verified_by:
+      - packages/agent_core/middleware/tests/test_tool_policy.py
+      - apps/api/tests/test_tool_turns.py
+      - apps/api/tests/test_cost_controls.py
+
+  - id: C-019
+    title: Append-only audit log
+    description: >-
+      Approval, tool and authentication/authorization-failure events go to an
+      audit_event table. Database triggers reject UPDATE, DELETE and TRUNCATE. The
+      audit API has no mutation routes and is readable only by Admin. Event payloads
+      are typed and safe-field only.
+    type: detective
+    status: implemented
+    implemented_in:
+      - apps/api/src/accelerator/migrations/versions/0001_audit_event.py
+      - apps/api/src/accelerator/migrations/versions/0006_authorization_failure_audit.py
+      - apps/api/src/accelerator/domain/audit.py
+      - apps/api/src/accelerator/application/audit.py
+      - apps/api/src/accelerator/infrastructure/audit.py
+      - apps/api/src/accelerator/api/audit.py
+    verified_by:
+      - apps/api/tests/test_postgres_audit.py
+      - apps/api/tests/test_audit.py
+
+  - id: C-020
+    title: Least-privilege database grants for runtime roles
+    description: >-
+      Migrations grant each runtime role only the privileges its code uses. Runtime
+      roles cannot change the schema, and audit tables never get UPDATE or DELETE.
+    type: preventive
+    status: implemented
+    implemented_in:
+      - apps/api/src/accelerator/migrations/grants.py
+      - infrastructure/scripts/grant-postgres-schema.sql
+    verified_by:
+      - apps/api/tests/test_migrations.py
+
+  - id: C-021
+    title: Verified TLS and Entra-only auth to PostgreSQL on a private network
+    description: >-
+      The API, migrations and worker connect with a TLS context that requires a
+      verified certificate and hostname, and send the Entra access token only over
+      that channel. The server has password auth disabled and public network access
+      disabled.
+    type: preventive
+    status: implemented
+    notes: >-
+      Server-side require_secure_transport is not pinned in Bicep. It relies on the
+      Azure Flexible Server default (on). The client-side checks are enforced and
+      tested.
+    implemented_in:
+      - apps/api/src/accelerator/infrastructure/database.py
+      - apps/api/src/accelerator/migrations/env.py
+      - workers/ingestion/src/ingestion_worker/infrastructure/database.py
+      - infrastructure/modules/postgres.bicep
+    verified_by:
+      - apps/api/tests/test_migrations.py
+      - workers/ingestion/tests/test_database.py
+
+  - id: C-022
+    title: Least-privilege RBAC per managed identity
+    description: >-
+      Each container app has its own user-assigned identity. Each role assignment is
+      scoped to a single resource: AcrPull on the registry, Search reader or index
+      contributor, one blob container, one queue, Foundry agent consumer at project
+      scope, and Monitoring Metrics Publisher on Application Insights. The API has no
+      Storage access.
+    type: preventive
+    status: implemented
+    implemented_in:
+      - infrastructure/main.bicep
+      - infrastructure/modules/user-assigned-identity.bicep
+      - infrastructure/modules/acr-pull-role-assignment.bicep
+      - infrastructure/modules/search-index-role-assignment.bicep
+      - infrastructure/modules/storage-container-role-assignment.bicep
+      - infrastructure/modules/storage-queue-role-assignment.bicep
+      - infrastructure/modules/foundry-agent-consumer-role-assignment.bicep
+      - infrastructure/modules/monitoring-publisher-role-assignment.bicep
+    verified_by:
+      - infrastructure/tests/test_identity_rbac.py
+      - .github/workflows/bicep-validation.yml
+
+  - id: C-023
+    title: Dependency, code and image vulnerability scanning
+    description: >-
+      CodeQL (extended suite) covers Python, TypeScript and Actions. Trivy fails on
+      HIGH or CRITICAL findings in the repository and in every runtime image.
+      Dependency review blocks newly introduced vulnerable dependencies. Dependabot
+      updates the uv and npm workspaces, Actions and Dockerfiles weekly, and lockfiles
+      are committed.
+    type: detective
+    status: partial
+    notes: >-
+      Per .github/SECURITY_SCANNING.md, no repository ruleset or branch protection
+      makes these checks required yet, so a failing scan does not block a manual
+      merge.
+    implemented_in:
+      - .github/workflows/security.yml
+      - .github/dependabot.yml
+      - uv.lock
+      - package-lock.json
+    verified_by:
+      - .github/tests/test_security_configuration.py
+      - .github/workflows/security.yml
+
+  - id: C-024
+    title: Pinned build inputs and keyless deployment
+    description: >-
+      Workflow actions are pinned to full commit SHAs. Deployment uses GitHub OIDC
+      (azure/login) with no stored cloud credentials. Applications deploy by
+      immutable image digest. CODEOWNERS review is configured.
+    type: preventive
+    status: partial
+    notes: >-
+      The api and ingestion Dockerfiles pin base images by digest. The web and
+      hosted_agent Dockerfiles use tags only (node:22-alpine, python:3.12-slim,
+      uv:0.11.10).
+    implemented_in:
+      - .github/workflows/deploy-dev.yml
+      - .github/workflows/pull-request.yml
+      - .github/CODEOWNERS
+      - infrastructure/scripts/deploy-dev.sh
+      - apps/api/Dockerfile
+      - workers/ingestion/Dockerfile
+    verified_by:
+      - .github/tests/test_security_configuration.py
+      - infrastructure/tests/test_deploy_dev_script.py
+
+  - id: C-025
+    title: Ingestion content-type allow-list, size limit and poison handling
+    description: >-
+      Ingestion messages must declare text/plain, text/markdown or application/pdf.
+      Documents above max_document_bytes (25 MiB by default) or that fail parsing
+      are rejected permanently and moved to a poison queue. Parsing runs in the
+      separate ingestion worker container, not in the API.
+    type: preventive
+    status: partial
+    notes: >-
+      Parser isolation is only process and container separation. Parsers have no
+      dedicated sandbox and no per-document CPU or memory limits.
+    implemented_in:
+      - workers/ingestion/src/ingestion_worker/pipeline.py
+      - workers/ingestion/src/ingestion_worker/handler.py
+      - workers/ingestion/src/ingestion_worker/consumer.py
+      - workers/ingestion/src/ingestion_worker/settings.py
+      - packages/retrieval_core/parsing/pdf.py
+    verified_by:
+      - workers/ingestion/tests/test_pipeline.py
+      - workers/ingestion/tests/test_consumer.py
+      - tests/test_ingestion_worker.py
+
+  - id: C-026
+    title: Explicit tool allow-list and network egress restriction
+    description: >-
+      Agents can call only tools registered in ToolRegistry, with typed argument
+      models and audited names. Duplicate or unknown tools fail. Outbound network
+      access from tool code should also be restricted to approved destinations.
+    type: preventive
+    status: partial
+    notes: >-
+      The registry allow-list is implemented. Network egress restriction for tool
+      code (firewall rules or an outbound allow-list) is planned and not in
+      infrastructure/modules/network.bicep.
+    implemented_in:
+      - packages/agent_core/tools/registry.py
+      - packages/agent_core/tools/base.py
+    verified_by:
+      - packages/agent_core/tools/tests/test_tools.py
+
+  - id: C-027
+    title: Evaluation hard gates in CI
+    description: >-
+      make eval-smoke runs the offline smoke dataset. Any failure of a hard gate
+      (citation validity, scope isolation, approval bypass, injection followed) fails
+      the pull-request and evaluation workflows.
+    type: detective
+    status: implemented
+    implemented_in:
+      - packages/evaluation_core/runners/smoke.py
+      - packages/evaluation_core/reporting/smoke.py
+      - evaluations/example-datasets/smoke.jsonl
+      - Makefile
+    verified_by:
+      - packages/evaluation_core/runners/tests/test_offline_smoke.py
+      - packages/evaluation_core/reporting/tests/test_smoke.py
+      - .github/workflows/pull-request.yml
+      - .github/workflows/evaluation.yml
+    gates:
+      - citation_validity
+      - scope_isolation
+      - approval_bypass
+      - injection_followed
+
+  - id: C-028
+    title: End-to-end correlation IDs and audited authentication failures
+    description: >-
+      Every request gets a validated UUID correlation ID. It appears on the response,
+      on all spans, on structured logs, in audit events and in approval records.
+      Authentication and authorization failures are audited, with throttling, and
+      without request secrets.
+    type: detective
+    status: implemented
+    implemented_in:
+      - apps/api/src/accelerator/identity/scope_resolver.py
+      - packages/observability_core/src/observability_core/middleware.py
+      - apps/api/src/accelerator/api/audit.py
+    verified_by:
+      - apps/api/tests/test_telemetry.py
+      - apps/api/tests/test_scope_resolver.py
+      - apps/api/tests/test_audit.py

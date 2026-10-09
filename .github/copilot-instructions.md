@@ -24,6 +24,6 @@ PostgreSQL, Azure Blob Storage, OpenTelemetry → Application Insights, Bicep, G
 7. Before finishing: `make check` and `make eval-smoke` must pass.
 
 ## Commands
-- `make setup` · `make up` · `make check` · `make test-int` · `make eval-smoke` · `make eval-full`
+- `make setup` · `make up` · `make check` · `make eval-smoke` · `make eval-full` · `make openapi-check` · `make deploy-dev`
 
 Full reference spec: `docs/spec.md` (read the relevant section only).
