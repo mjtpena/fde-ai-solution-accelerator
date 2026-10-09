@@ -8,7 +8,8 @@ CodeQL uses the extended security suite for Python, JavaScript/TypeScript, and
 GitHub Actions, and uploads results to code scanning. Trivy rejects HIGH and
 CRITICAL vulnerabilities (including unfixed ones), misconfigurations, and
 secrets in the repository (including development dependencies), and
-vulnerabilities and secrets in both built runtime images. Trivy exits nonzero
+vulnerabilities and secrets in every built runtime image (api, web, ingestion,
+hosted agent). Trivy exits nonzero
 for findings at those thresholds; scanner errors also fail their jobs.
 Dependency review rejects newly introduced HIGH/CRITICAL vulnerable
 dependencies in pull requests. A successful CodeQL workflow means analysis
@@ -16,7 +17,9 @@ completed, not that no alerts were found. Required status checks block failed
 workflow jobs only when configured in an active ruleset or branch-protection
 rule; CodeQL alerts additionally require the **Require code scanning results**
 rule in a ruleset. Dependabot updates the root uv and npm workspaces, GitHub
-Actions, and both Dockerfiles weekly. There are no vulnerability suppressions
+Actions, and every Dockerfile weekly. A gitleaks pre-commit hook
+(`.pre-commit-config.yaml`, installed by `make setup`) blocks secrets before a
+commit exists; native secret scanning and push protection back it up on GitHub. There are no vulnerability suppressions
 or automatic merges.
 
 ## GitHub administrator setup (required)
@@ -25,9 +28,12 @@ Repository files cannot enable native security features or enforce merge rules.
 After the workflow first reports its checks, an administrator must configure
 an active `main` ruleset or branch protection without removing existing checks:
 
-1. Require **Quality checks**, **Security configuration**, **CodeQL (python)**,
+1. Require **Quality checks**, **Generated project**, **Playwright end-to-end**,
+   **Docker build** (api, web, ingestion, hosted-agent), **smoke** (Evaluation),
+   **Security configuration**, **CodeQL (python)**,
    **CodeQL (javascript-typescript)**, **CodeQL (actions)**, **Dependency review**,
-   **Trivy repository**, **Trivy image (web)**, and **Trivy image (ingestion)**.
+   **Trivy repository**, and **Trivy image** (api, web, ingestion, hosted-agent).
+   Also enable **Require review from Code Owners** (`.github/CODEOWNERS`).
    Bind status checks to the GitHub Actions app and require branches to be up
    to date. Require pull requests, and do not grant scanner bypasses.
 2. Add **Require code scanning results** with tool **CodeQL**, security alert

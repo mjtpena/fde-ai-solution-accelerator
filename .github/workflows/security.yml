@@ -99,10 +99,14 @@ jobs:
       fail-fast: false
       matrix:
         include:
+          - image: api
+            dockerfile: apps/api/Dockerfile
           - image: web
             dockerfile: apps/web/Dockerfile
           - image: ingestion
             dockerfile: workers/ingestion/Dockerfile
+          - image: hosted-agent
+            dockerfile: infrastructure/hosted_agent/Dockerfile
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
         with:

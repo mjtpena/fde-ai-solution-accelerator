@@ -38,3 +38,8 @@ repos:
         language: system
         types_or: [javascript, jsx, ts, tsx]
         pass_filenames: false
+  # Secret scanning before a commit exists. Pinned to the v8.28.0 commit.
+  - repo: https://github.com/gitleaks/gitleaks
+    rev: 39fdb480a06768cc41a84ef86959c07ff33091c4 # v8.28.0
+    hooks:
+      - id: gitleaks

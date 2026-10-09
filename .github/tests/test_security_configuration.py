@@ -70,9 +70,19 @@ def test_trivy_findings_fail_without_ignoring_unfixed_issues(
         assert step["env"]["TRIVY_INCLUDE_DEV_DEPS"] == "true"
     else:
         assert job["strategy"]["matrix"]["include"] == [
+            {"image": "api", "dockerfile": "apps/api/Dockerfile"},
             {"image": "web", "dockerfile": "apps/web/Dockerfile"},
             {"image": "ingestion", "dockerfile": "workers/ingestion/Dockerfile"},
+            {"image": "hosted-agent", "dockerfile": "infrastructure/hosted_agent/Dockerfile"},
         ]
+        dockerfiles = {
+            path.relative_to(GITHUB.parent).as_posix()
+            for path in GITHUB.parent.glob("**/Dockerfile")
+            if "node_modules" not in path.parts
+        }
+        assert {entry["dockerfile"] for entry in job["strategy"]["matrix"]["include"]} == (
+            dockerfiles
+        )
         assert any("docker build" in step.get("run", "") for step in job["steps"])
 
 
@@ -104,6 +114,24 @@ def test_dependabot_covers_locked_workspaces_actions_and_images() -> None:
     assert set(updates) == {"uv", "npm", "github-actions", "docker"}
     for ecosystem in ["uv", "npm", "github-actions"]:
         assert updates[ecosystem]["directory"] == "/"
-    assert set(updates["docker"]["directories"]) == {"/apps/web", "/workers/ingestion"}
+    assert set(updates["docker"]["directories"]) == {
+        "/apps/api", "/apps/web", "/workers/ingestion", "/infrastructure/hosted_agent"
+    }
     assert all(update["schedule"]["interval"] == "weekly" for update in updates.values())
     assert all(int(update["open-pull-requests-limit"]) > 0 for update in updates.values())
+
+
+def test_commits_are_scanned_for_secrets_by_a_pinned_hook() -> None:
+    config = load_config(GITHUB.parent / ".pre-commit-config.yaml")
+    [gitleaks] = [repo for repo in config["repos"] if repo["repo"].endswith("/gitleaks")]
+    assert re.fullmatch(r"[0-9a-f]{40}", gitleaks["rev"])
+    assert [hook["id"] for hook in gitleaks["hooks"]] == ["gitleaks"]
+
+
+def test_ownership_and_disclosure_policy_exist() -> None:
+    owners = (GITHUB / "CODEOWNERS").read_text(encoding="utf-8")
+    assert re.search(r"^\*\s+@\S+", owners, re.MULTILINE)
+    for sensitive in ("/.github/", "/packages/security_core/", "/infrastructure/"):
+        assert re.search(rf"^{re.escape(sensitive)}\s+@\S+", owners, re.MULTILINE), sensitive
+    policy = (GITHUB.parent / "SECURITY.md").read_text(encoding="utf-8")
+    assert "private vulnerability reporting" in policy.lower()
