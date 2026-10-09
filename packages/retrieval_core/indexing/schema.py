@@ -3,7 +3,9 @@
 from dataclasses import dataclass
 from typing import Literal
 
-from pydantic import BaseModel, ConfigDict, Field
+from typing import Annotated
+
+from pydantic import AfterValidator, BaseModel, ConfigDict, Field
 
 VECTOR_FIELD = "embedding"
 VECTOR_PROFILE = "chunk-vectors"
@@ -36,8 +38,23 @@ CHUNK_FIELDS = (
 RESULT_FIELDS = tuple(field.name for field in CHUNK_FIELDS if field.kind != "vector")
 
 
+def validate_index_name(name: str) -> str:
+    """Azure AI Search index names: lowercase letters, digits and single dashes,
+    starting and ending with a letter or digit, at most 128 characters."""
+    if "--" in name:
+        raise ValueError("index names cannot contain consecutive dashes")
+    return name
+
+
+IndexName = Annotated[
+    str,
+    Field(pattern=r"^[a-z0-9][a-z0-9-]{0,126}[a-z0-9]$"),
+    AfterValidator(validate_index_name),
+]
+
+
 class IndexDefinition(BaseModel):
     model_config = ConfigDict(frozen=True, extra="forbid")
 
-    name: str = Field(pattern=r"^[a-z0-9][a-z0-9-]{0,126}[a-z0-9]$")
+    name: IndexName
     vector_dimensions: int = Field(ge=2, le=4096)

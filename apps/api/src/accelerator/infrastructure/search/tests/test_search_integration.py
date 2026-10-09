@@ -159,6 +159,10 @@ async def test_all_context_scopes_are_allowed_but_metadata_filter_only_narrows()
         assert payload["filter"] == (
             "(search.in(scope_id, 'tenant-a|tenant-b', '|')) and (version eq 'v1')"
         )
+        # Semantic-only parameters are omitted when semantic ranking is off.
+        assert payload["queryType"] == "simple"
+        assert "semanticErrorHandling" not in payload
+        assert "semanticConfiguration" not in payload
         return Response(request, {"value": [hit("tenant-a", "a"), hit("tenant-b", "b")]})
 
     transport.send.side_effect = send
@@ -422,3 +426,11 @@ async def test_oversized_scope_filter_never_embeds_or_calls_search() -> None:
             )
     assert embedder.calls == []
     transport.send.assert_not_called()
+
+
+@pytest.mark.parametrize("name", ["chunks--v2", "-chunks", "chunks-", "Chunks", "chunks_v2"])
+def test_invalid_index_names_fail_locally(name: str) -> None:
+    with pytest.raises(ValidationError):
+        settings(index_name=name)
+    with pytest.raises(ValidationError):
+        IndexDefinition(name=name, vector_dimensions=3)

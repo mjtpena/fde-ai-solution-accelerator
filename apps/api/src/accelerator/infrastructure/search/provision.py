@@ -20,7 +20,7 @@ from pydantic import Field, HttpUrl, UrlConstraints
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 from accelerator.infrastructure.search.index import ensure_index
-from accelerator.retrieval_core.indexing.schema import IndexDefinition
+from accelerator.retrieval_core.indexing.schema import IndexDefinition, IndexName
 
 logger = logging.getLogger(__name__)
 
@@ -29,7 +29,7 @@ class ProvisionSettings(BaseSettings):
     model_config = SettingsConfigDict(env_prefix="AZURE_SEARCH_", extra="ignore", frozen=True)
 
     endpoint: Annotated[HttpUrl, UrlConstraints(allowed_schemes=["https"])]
-    index_name: str = Field(pattern=r"^[a-z0-9][a-z0-9-]{0,126}[a-z0-9]$")
+    index_name: IndexName
     vector_dimensions: int = Field(ge=2, le=4096)
 
 

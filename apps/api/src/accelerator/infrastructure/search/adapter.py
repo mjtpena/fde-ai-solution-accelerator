@@ -88,7 +88,8 @@ class AzureSearchRetriever:
             semantic_configuration_name=(
                 SEMANTIC_CONFIGURATION if self._settings.semantic_ranking else None
             ),
-            semantic_error_mode="fail",
+            # Only valid for semantic queries; the service rejects it otherwise.
+            semantic_error_mode="fail" if self._settings.semantic_ranking else None,
         )
         self._remaining_seconds(ctx)
         evidence = []
