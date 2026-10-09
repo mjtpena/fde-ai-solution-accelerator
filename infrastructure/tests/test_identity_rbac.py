@@ -1,3 +1,4 @@
+import re
 from pathlib import Path
 
 import pytest
@@ -8,6 +9,17 @@ MAIN = MODULES.parent / "main.bicep"
 
 def read_module(name: str) -> str:
     return (MODULES / name).read_text(encoding="utf-8")
+
+
+def main_modules_granting(principal: str) -> dict[str, str]:
+    """main.bicep module declarations whose principalId is `principal`, by symbolic name."""
+    main = MAIN.read_text(encoding="utf-8")
+    declarations = re.split(r"^module ", main, flags=re.MULTILINE)[1:]
+    return {
+        declaration.split(" ", 1)[0]: declaration
+        for declaration in declarations
+        if f"principalId: {principal}\n" in declaration
+    }
 
 
 def test_user_assigned_identity_exposes_runtime_and_rbac_ids() -> None:
@@ -113,3 +125,33 @@ def test_api_has_no_storage_access_and_worker_storage_access_is_split() -> None:
 )
 def test_role_assignment_modules_expose_resource_ids(module_name: str) -> None:
     assert "output roleAssignmentId string = " in read_module(module_name)
+
+
+def test_evaluation_principal_gets_only_search_reader_and_project_foundry_user() -> None:
+    granted = main_modules_granting("evaluationPrincipalId")
+
+    assert set(granted) == {"evaluationSearchAccess", "evaluationFoundryAccess"}
+    search = granted["evaluationSearchAccess"]
+    assert "'./modules/search-index-role-assignment.bicep'" in search.splitlines()[0]
+    assert "accessLevel: 'reader'" in search
+    foundry = granted["evaluationFoundryAccess"]
+    assert "'./modules/foundry-user-role-assignment.bicep'" in foundry.splitlines()[0]
+    assert "foundryProjectName: foundry.outputs.projectName" in foundry
+
+
+def test_evaluation_grants_are_skipped_when_no_principal_is_configured() -> None:
+    granted = main_modules_granting("evaluationPrincipalId")
+    main = MAIN.read_text(encoding="utf-8")
+
+    assert "param evaluationPrincipalId string = ''" in main
+    assert granted
+    for declaration in granted.values():
+        assert declaration.splitlines()[0].endswith("= if (!empty(evaluationPrincipalId)) {")
+
+
+def test_runtime_identity_grants_are_unconditional() -> None:
+    # Guards the helper itself: it finds the API grants and they carry no condition.
+    granted = main_modules_granting("apiIdentity.outputs.principalId")
+
+    assert "apiFoundryAccess" in granted
+    assert "= if (" not in granted["apiFoundryAccess"].splitlines()[0]
