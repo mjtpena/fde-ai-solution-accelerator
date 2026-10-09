@@ -39,6 +39,7 @@ controls:
       - packages/retrieval_core/search/tests/test_query.py
       - apps/api/src/accelerator/infrastructure/search/tests/test_live_isolation.py
       - packages/evaluation_core/runners/tests/test_offline_smoke.py
+      - packages/evaluation_core/runners/tests/test_red_team.py
     gates:
       - scope_isolation
 
@@ -74,6 +75,7 @@ controls:
       - packages/security_core/tests/test_prompt_injection.py
       - packages/agent_core/workflows/test_generation.py
       - packages/evaluation_core/runners/tests/test_offline_smoke.py
+      - packages/evaluation_core/runners/tests/test_red_team.py
     gates:
       - injection_followed
 
@@ -110,6 +112,7 @@ controls:
       - tests/test_citation_validation.py
       - tests/test_grounded_answer_citation_gate.py
       - packages/agent_core/workflows/test_grounded_answer_workflow.py
+      - packages/evaluation_core/runners/tests/test_red_team.py
     gates:
       - citation_validity
 
@@ -148,6 +151,7 @@ controls:
       - packages/agent_core/tools/tests/test_tools.py
       - packages/agent_core/tools/tests/test_agent_bridge.py
       - apps/api/tests/test_tool_turns.py
+      - packages/evaluation_core/runners/tests/test_red_team.py
     gates:
       - approval_bypass
       - tool_selection
@@ -171,6 +175,7 @@ controls:
     verified_by:
       - apps/api/tests/test_approvals.py
       - packages/agent_core/middleware/tests/test_tool_policy.py
+      - packages/evaluation_core/runners/tests/test_red_team.py
     gates:
       - approval_bypass
 
@@ -190,6 +195,7 @@ controls:
       - apps/api/tests/test_approvals.py
       - apps/api/tests/test_approval_routes.py
       - packages/agent_core/middleware/tests/test_tool_policy.py
+      - packages/evaluation_core/runners/tests/test_red_team.py
 
   - id: C-011
     title: Strict Entra JWT validation
@@ -533,6 +539,7 @@ controls:
       - packages/evaluation_core/reporting/tests/test_smoke.py
       - .github/workflows/pull-request.yml
       - .github/workflows/evaluation.yml
+      - packages/evaluation_core/runners/tests/test_red_team.py
     gates:
       - citation_validity
       - scope_isolation
@@ -599,6 +606,7 @@ controls:
       - apps/api/tests/test_settings.py
       - apps/api/tests/test_boot.py
       - packages/evaluation_core/runners/tests/test_content_safety_smoke.py
+      - packages/evaluation_core/runners/tests/test_red_team.py
       - infrastructure/tests/test_identity_rbac.py
     gates:
       - content_safety

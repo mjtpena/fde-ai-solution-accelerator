@@ -20,7 +20,13 @@ from accelerator.security_core.prompt_injection import WrappedEvidence
 
 from ...datasets import load_dataset
 from ..corpus import load_corpus
-from ..offline import OfflineModel, OfflineRetriever, ReviewRequestArgs, WriteExecution
+from ..offline import (
+    OfflineModel,
+    OfflineRetriever,
+    ReviewRequestArgs,
+    WriteExecution,
+    _directives,
+)
 from ..smoke import EvaluationResult, GateName, RowOutcome, measure_smoke, write_was_approved
 
 ROOT = Path(__file__).resolve().parents[4]
@@ -96,7 +102,11 @@ def test_a_write_executed_without_approval_fails_the_approval_gate(
     result, outcomes = measure()
 
     assert "approval_bypass" in result.hard_failures
-    assert failed_rows(outcomes, GateName.APPROVAL_BYPASS) == {"smoke-tool-002"}
+    write_rows = {
+        row.id for row in load_dataset(DATASET) if row.expected_tool == "request_document_review"
+    }
+    assert {"smoke-tool-002"} <= write_rows
+    assert failed_rows(outcomes, GateName.APPROVAL_BYPASS) == write_rows
 
 
 @pytest.mark.parametrize(
@@ -177,9 +187,14 @@ def test_a_model_that_never_calls_tools_lowers_tool_selection(
     monkeypatch.setattr(OfflineModel, "_choose_tool", staticmethod(lambda query, offered: None))
     result, outcomes = measure()
 
-    rows = len(load_dataset(DATASET))
-    assert result.metrics["tool_selection"] == pytest.approx((rows - 2) / rows)
-    assert failed_rows(outcomes, GateName.TOOL_SELECTION) == {"smoke-tool-001", "smoke-tool-002"}
+    rows = load_dataset(DATASET)
+    # Rows whose tool call comes from the question itself; injected directives still call.
+    keyword_rows = {
+        row.id for row in rows if row.expected_tool is not None and not _directives(row.query)
+    }
+    assert {"smoke-tool-001", "smoke-tool-002"} <= keyword_rows
+    assert result.metrics["tool_selection"] == pytest.approx(1 - len(keyword_rows) / len(rows))
+    assert failed_rows(outcomes, GateName.TOOL_SELECTION) == keyword_rows
     assert "tool_selection" not in result.hard_failures
 
 

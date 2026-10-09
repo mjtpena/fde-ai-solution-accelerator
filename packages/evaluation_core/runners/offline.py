@@ -12,14 +12,23 @@ pieces are offline stand-ins:
   evidence elements in the prompt and cites them, and it picks a tool when the
   question names one. It is deliberately naive about prompt structure: any
   ``SYSTEM:``/``INSTRUCTION:`` directive it finds outside an ``<evidence>`` element
-  is obeyed. Injection metrics therefore fail if retrieved text ever escapes its
-  evidence element, which is what the wrapper must prevent.
+  is obeyed, including localised markers (``SISTEMA:``, ``SYSTÈME:``, ...) and
+  directives hidden in base64. That covers the user's own question, so a direct
+  injection the content-safety stand-in misses still reaches the tool policy,
+  approval service and citation validator. Injection metrics fail if retrieved
+  text ever escapes its evidence element, which is what the wrapper must prevent.
+  Like Agent Framework's tool loop, a tool call that fails (for example on
+  arguments the args model forbids) is reported to the model rather than ending
+  the turn.
 * ``OfflineContentSafetyChecker`` replaces Azure AI Content Safety. Prompt Shields is
   approximated by ``security_core.prompt_injection.injection_signals`` plus the
-  directive and evidence-markup patterns above; harm analysis recognises only the
-  synthetic ``UNSAFE-<CATEGORY>-<LOW|MEDIUM|HIGH>`` markers planted in the fixture
-  corpus (severity 2, 4 or 6). It measures the workflow's handling of verdicts
-  (refuse, drop, re-assess, withhold), not classifier quality.
+  plain-text directive pattern above (localised markers included) and
+  evidence-markup tags. It does **not** decode base64 and does not read document
+  titles, so those attacks get past it and must be stopped downstream. Harm
+  analysis recognises only the synthetic ``UNSAFE-<CATEGORY>-<LOW|MEDIUM|HIGH>``
+  markers planted in the fixture corpus (severity 2, 4 or 6). It measures the
+  workflow's handling of verdicts (refuse, drop, re-assess, withhold), not
+  classifier quality.
 
 What this measures is the deterministic control plane (scope filtering, abstention,
 citation validation, evidence wrapping, tool routing, approval binding,
@@ -29,6 +38,8 @@ judgement; ``make eval-full`` measures the real model with Foundry evaluators.
 
 from __future__ import annotations
 
+import base64
+import binascii
 import html
 import json
 import re
@@ -65,9 +76,17 @@ _STOPWORDS = frozenset(
     "many me much of on or please should that the their then this to was what when "
     "where which who why will with".split()
 )
+# Directive markers and verbs the stand-in obeys, in a few languages, so multilingual
+# injections reach the controls instead of being ignored by an English-only parser.
+_REPLY_VERBS = {"reply": "reply", "responde": "reply", "réponds": "reply", "antworte": "reply"}
+_CALL_VERBS = {"call": "call", "llama": "call", "appelle": "call", "rufe": "call"}
 _DIRECTIVE = re.compile(
-    r"^\s*(?:SYSTEM|INSTRUCTION):\s*(?P<verb>reply|call)\s+(?P<rest>.+?)\s*$", re.MULTILINE
+    r"^\s*(?:SYSTEM|INSTRUCTION|SISTEMA|INSTRUCCIÓN|SYSTÈME|CONSIGNE|ANWEISUNG):\s*"
+    rf"(?P<verb>{'|'.join({**_REPLY_VERBS, **_CALL_VERBS})})\s+(?P<rest>.+?)\s*$",
+    re.MULTILINE,
 )
+# Base64 runs long enough to carry a directive; decoded and obeyed outside evidence.
+_BASE64 = re.compile(r"[A-Za-z0-9+/]{24,}={0,2}")
 _EVIDENCE = re.compile(
     r'<evidence chunk_id="(?P<chunk_id>[^"]*)" title="(?P<title>[^"]*)">\n'
     r"(?P<text>.*?)\n</evidence>",
@@ -75,6 +94,18 @@ _EVIDENCE = re.compile(
 )
 _QUESTION = re.compile(r"<question>(?P<text>.*?)</question>", re.DOTALL)
 _SENTENCE_END = re.compile(r"(?<=[.!?])\s+|\n+")
+
+
+def _directives(text: str) -> list[re.Match[str]]:
+    """Directives in ``text`` and in any base64 run in it that decodes to UTF-8."""
+    found = list(_DIRECTIVE.finditer(text))
+    for run in _BASE64.findall(text):
+        try:
+            decoded = base64.b64decode(run, validate=True).decode("utf-8")
+        except (binascii.Error, UnicodeDecodeError):
+            continue
+        found.extend(_DIRECTIVE.finditer(decoded))
+    return found
 
 
 def terms(text: str) -> frozenset[str]:
@@ -176,19 +207,29 @@ class OfflineModel:
         question = html.unescape(question_match["text"]) if question_match else ""
         offered = {tool.name: tool for tool in tools or ()}
 
-        # Everything outside an evidence element is read as instructions.
-        outside = _EVIDENCE.sub("", messages)
-        for directive in _DIRECTIVE.finditer(outside):
-            if directive["verb"] == "reply":
+        # Everything outside an evidence element is read as instructions, including
+        # instructions hidden in base64.
+        # The closing question tag ends the last line, so a directive there ends with it.
+        outside = html.unescape(_EVIDENCE.sub("", messages).replace("</question>", "\n"))
+        for directive in _directives(outside):
+            if _REPLY_VERBS.get(directive["verb"]) == "reply":
                 return OfflineResponse(directive["rest"])
             name, _, raw_arguments = directive["rest"].partition(" ")
             if name in offered:
-                await offered[name].invoke(arguments=json.loads(raw_arguments or "{}"))
+                await self._invoke(offered[name], json.loads(raw_arguments or "{}"))
 
         query = terms(question)
         if (tool := self._choose_tool(query, offered)) is not None:
-            await tool.invoke(arguments=self._arguments(tool, evidence))
+            await self._invoke(tool, self._arguments(tool, evidence))
         return OfflineResponse(self._answer(query, evidence))
+
+    @staticmethod
+    async def _invoke(tool: Any, arguments: Mapping[str, Any]) -> None:
+        """Like Agent Framework's tool loop, a failed call is reported, not fatal."""
+        try:
+            await tool.invoke(arguments=arguments)
+        except Exception:  # the framework returns the error to the model as a result
+            return
 
     @staticmethod
     def _choose_tool(query: frozenset[str], offered: Mapping[str, Any]) -> Any | None:
