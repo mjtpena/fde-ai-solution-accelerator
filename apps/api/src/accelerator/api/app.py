@@ -39,8 +39,15 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
             app.state.http_client = client
             yield
     finally:
+        # Release every resource even if one release fails, then report all failures.
+        failures: list[Exception] = []
         for callback in reversed(app.state.shutdown_callbacks):
-            await callback()
+            try:
+                await callback()
+            except Exception as error:  # collected and re-raised below
+                failures.append(error)
+        if failures:
+            raise ExceptionGroup("API shutdown callbacks failed", failures)
 
 
 def create_app(

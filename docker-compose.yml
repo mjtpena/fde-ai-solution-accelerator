@@ -49,7 +49,7 @@ services:
         && cp -a /workspace/packages/agent_core /tmp/accelerator-agent-core
         && cp -a /workspace/packages/security_core /tmp/accelerator-security-core
         && python -m pip install --no-cache-dir /tmp/accelerator-agent-core /tmp/accelerator-security-core /tmp/accelerator-api 'uvicorn[standard]>=0.30,<1'
-        && python -m uvicorn accelerator.api.main:app --host 0.0.0.0 --port 8000
+        && python -m uvicorn --factory accelerator.api.main:create_application --host 0.0.0.0 --port 8000
     environment:
       API_ENVIRONMENT: ${API_ENVIRONMENT:-development}
       API_ENTRA_TENANT_ID: ${ENTRA_TENANT_ID:?Set ENTRA_TENANT_ID in .env}

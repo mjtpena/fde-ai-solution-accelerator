@@ -159,3 +159,55 @@ async def test_approval_service_binds_a_request_scoped_session() -> None:
     service = await anext(dependency)
     assert isinstance(service, ApprovalService)
     await dependency.aclose()
+
+
+def test_managed_identity_connections_verify_the_server_certificate() -> None:
+    import ssl
+
+    from accelerator.infrastructure.database import verified_tls_context
+
+    context = verified_tls_context()
+
+    assert context.verify_mode is ssl.CERT_REQUIRED
+    assert context.check_hostname is True
+
+
+@pytest.mark.parametrize(
+    "scheme", ["postgresql+psycopg2", "postgresql+psycopg", "postgresql+pg8000"]
+)
+def test_non_asyncpg_drivers_are_rejected(scheme: str) -> None:
+    from pydantic import ValidationError
+
+    with pytest.raises(ValidationError, match="asyncpg"):
+        settings(database_url=f"{scheme}://u:p@localhost/db")
+
+
+async def test_every_shutdown_callback_runs_even_when_one_fails() -> None:
+    app = build_application(settings())
+    calls: list[str] = []
+
+    async def failing() -> None:
+        calls.append("failing")
+        raise RuntimeError("dispose failed")
+
+    async def closing() -> None:
+        calls.append("closing")
+
+    app.state.shutdown_callbacks = (closing, failing)
+    with pytest.raises(ExceptionGroup) as raised:
+        async with app.router.lifespan_context(app):
+            pass
+
+    assert calls == ["failing", "closing"]
+    assert [str(error) for error in raised.value.exceptions] == ["dispose failed"]
+
+
+def test_importing_the_entry_point_builds_nothing() -> None:
+    import importlib
+    import sys
+
+    sys.modules.pop("accelerator.api.main", None)
+    main = importlib.import_module("accelerator.api.main")
+
+    assert callable(main.create_application)
+    assert not hasattr(main, "app")

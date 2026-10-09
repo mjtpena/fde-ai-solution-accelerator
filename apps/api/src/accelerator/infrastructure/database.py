@@ -1,5 +1,6 @@
 """PostgreSQL engine construction for the API host."""
 
+import ssl
 from collections.abc import Awaitable, Callable
 
 from azure.core.credentials_async import AsyncTokenCredential
@@ -21,6 +22,19 @@ def entra_password_provider(
         return token.token
 
     return password
+
+
+def verified_tls_context(ca_file: str | None = None) -> ssl.SSLContext:
+    """TLS that verifies the server certificate and hostname.
+
+    The Entra token is sent as the password, so an unverified connection would hand
+    it to anyone able to impersonate the server. ``ca_file`` adds a private CA; by
+    default the system trust store (which covers Azure Database for PostgreSQL) is used.
+    """
+    context = ssl.create_default_context(cafile=ca_file)
+    context.check_hostname = True
+    context.verify_mode = ssl.CERT_REQUIRED
+    return context
 
 
 def asyncpg_url(url: str) -> str:
@@ -49,7 +63,7 @@ def create_database_engine(
         if credential is None:
             raise ValueError("Managed-identity database auth requires an Azure credential.")
         connect_args["password"] = entra_password_provider(credential)
-        connect_args["ssl"] = "require"
+        connect_args["ssl"] = verified_tls_context(settings.database_tls_ca_file)
     return create_async_engine(
         asyncpg_url(str(settings.database_url)),
         pool_size=settings.database_pool_size,

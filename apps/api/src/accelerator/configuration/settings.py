@@ -8,6 +8,7 @@ from pydantic import (
     HttpUrl,
     PostgresDsn,
     SecretStr,
+    field_validator,
     model_validator,
 )
 from pydantic_settings import BaseSettings, SettingsConfigDict
@@ -46,6 +47,8 @@ class Settings(BaseSettings):
     database_pool_timeout_seconds: float = Field(default=10.0, gt=0, allow_inf_nan=False)
     database_pool_recycle_seconds: int = Field(default=1800, gt=0)
     database_connect_timeout_seconds: float = Field(default=5.0, gt=0, allow_inf_nan=False)
+    # Extra CA bundle for verifying the server certificate (private CAs, test servers).
+    database_tls_ca_file: str | None = Field(default=None, min_length=1)
 
     # Microsoft Foundry project and chat-model deployment.
     foundry_project_endpoint: HttpUrl | None = None
@@ -66,6 +69,13 @@ class Settings(BaseSettings):
             "applicationinsights_connection_string",
         ),
     )
+
+    @field_validator("database_url")
+    @classmethod
+    def require_asyncpg_driver(cls, url: PostgresDsn | None) -> PostgresDsn | None:
+        if url is not None and url.scheme not in {"postgres", "postgresql", "postgresql+asyncpg"}:
+            raise ValueError("API_DATABASE_URL must use the asyncpg driver (postgresql+asyncpg).")
+        return url
 
     @property
     def allows_fakes(self) -> bool:
