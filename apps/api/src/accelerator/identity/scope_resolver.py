@@ -6,12 +6,12 @@ from uuid import UUID, uuid4
 from fastapi import Depends, FastAPI, HTTPException, Request
 from pydantic import Field
 from pydantic_settings import BaseSettings, SettingsConfigDict
-from sqlalchemy.exc import SQLAlchemyError
 from starlette.responses import JSONResponse
 from starlette.types import ASGIApp, Message, Receive, Scope, Send
 
 from accelerator.api.security_headers import json_error_headers
 from accelerator.identity.authentication import Principal, get_current_principal
+from accelerator.infrastructure.database import DATABASE_UNAVAILABLE_ERRORS
 from accelerator.security_core.authorisation.memberships import ScopeMembershipRepository
 from accelerator.security_core.data_boundaries.context import ExecutionContext
 
@@ -105,7 +105,7 @@ async def get_execution_context(
         raise HTTPException(status_code=503, detail="Scope resolver is unavailable.")
     try:
         context = await resolver.resolve(principal, correlation_id)
-    except SQLAlchemyError as exc:
+    except DATABASE_UNAVAILABLE_ERRORS as exc:
         logger.error("scope_resolution_failed", extra={"correlation_id": correlation_id})
         raise HTTPException(status_code=503, detail="Scope resolver is unavailable.") from exc
     request.state.execution_context = context

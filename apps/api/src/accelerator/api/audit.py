@@ -4,7 +4,6 @@ from threading import Lock
 from typing import Annotated, cast
 
 from fastapi import APIRouter, Depends, FastAPI, HTTPException, Query, Request
-from sqlalchemy.exc import SQLAlchemyError
 from starlette.responses import JSONResponse
 from starlette.types import ASGIApp, Message, Receive, Scope, Send
 
@@ -12,6 +11,7 @@ from accelerator.application.audit import AuditRecorder
 from accelerator.domain.audit import AuditPage, AuditRepository, EventType
 from accelerator.identity.scope_resolver import get_execution_context
 from accelerator.infrastructure.audit import PostgresAuditRepository
+from accelerator.infrastructure.database import DATABASE_UNAVAILABLE_ERRORS
 from accelerator.security_core.cost_guard import RateLimitExceeded, SlidingWindowRateLimiter
 from accelerator.security_core.data_boundaries.context import ExecutionContext
 from accelerator.security_core.infrastructure.database import SessionFactory
@@ -59,7 +59,7 @@ async def query_audit_events(
 ) -> AuditPage:
     try:
         return await repository.query(limit=limit, offset=offset, event_type=event_type)
-    except SQLAlchemyError as exc:
+    except DATABASE_UNAVAILABLE_ERRORS as exc:
         logger.error(
             "audit_query_failed",
             extra={"correlation_id": context.correlation_id},
@@ -159,7 +159,7 @@ class AuthFailureAuditMiddleware:
                     response = JSONResponse({"detail": exc.detail}, status_code=exc.status_code)
                     await response(scope, receive, send)
                     return
-                except SQLAlchemyError:
+                except DATABASE_UNAVAILABLE_ERRORS:
                     response_replaced = True
                     logger.error(
                         "auth_failure_audit_failed",

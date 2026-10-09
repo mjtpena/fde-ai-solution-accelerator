@@ -278,12 +278,22 @@ async def test_missing_persistence_is_an_explicit_configuration_error() -> None:
     assert response.json() == {"detail": "Audit persistence is unavailable."}
 
 
+# asyncpg reports an unreachable server (refused, unresolvable, connect timeout) as
+# OSError before any DBAPI connection exists; SQLAlchemy does not wrap it.
+DATABASE_OUTAGES = [
+    pytest.param(SQLAlchemyError, id="sqlalchemy"),
+    pytest.param(ConnectionRefusedError, id="connection-refused"),
+    pytest.param(TimeoutError, id="connect-timeout"),
+]
+
+
+@pytest.mark.parametrize("failure", DATABASE_OUTAGES)
 async def test_database_failure_replaces_401_with_correlated_503(
-    caplog: pytest.LogCaptureFixture,
+    caplog: pytest.LogCaptureFixture, failure: type[Exception]
 ) -> None:
     class FailingRepository(MemoryRepository):
         async def append(self, event: AuditEvent) -> None:
-            raise SQLAlchemyError("secret-driver-detail")
+            raise failure("secret-driver-detail")
 
     app = make_app(FailingRepository())
     async with httpx.AsyncClient(
@@ -300,14 +310,15 @@ async def test_database_failure_replaces_401_with_correlated_503(
     assert "secret-driver-detail" not in caplog.text
 
 
+@pytest.mark.parametrize("failure", DATABASE_OUTAGES)
 async def test_query_database_failure_returns_correlated_503(
-    caplog: pytest.LogCaptureFixture,
+    caplog: pytest.LogCaptureFixture, failure: type[Exception]
 ) -> None:
     class FailingRepository(MemoryRepository):
         async def query(
             self, *, limit: int, offset: int, event_type: EventType | None = None
         ) -> AuditPage:
-            raise SQLAlchemyError("secret-driver-detail")
+            raise failure("secret-driver-detail")
 
     app = app_with_context(FailingRepository(), Context())
     async with httpx.AsyncClient(

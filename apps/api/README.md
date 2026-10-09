@@ -69,7 +69,8 @@ The HTTP middleware records 401 responses before sending headers; request
 headers, paths, bodies, and query strings are never stored. Correlation IDs for
 unauthenticated requests come from #10's UUID-validating correlation boundary,
 and match the response header. Missing IDs are server-generated. SQLAlchemy
-failures and unconfigured persistence return 503 with a correlated, structured
+failures, an unreachable database server (which asyncpg reports as `OSError`,
+see `DATABASE_UNAVAILABLE_ERRORS`) and unconfigured persistence return 503 with a correlated, structured
 error log; raw database errors are never returned or logged. Unexpected errors
 propagate rather than returning an apparently successful audit operation.
 

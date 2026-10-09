@@ -223,6 +223,41 @@ async def test_unavailable_repository_fails_closed_with_correlated_log(
     )
 
 
+async def test_unreachable_database_fails_closed_with_503_not_500() -> None:
+    """asyncpg raises OSError (not a SQLAlchemyError) when it cannot reach the server."""
+
+    class UnreachableRepository:
+        async def scope_ids_for(self, object_id: str) -> frozenset[str]:
+            raise ConnectionRefusedError("connection refused by secret-host:5432")
+
+    app = create_app(
+        Settings(environment="test", entra_tenant_id=TENANT, entra_audience="api://test")
+    )
+
+    @app.get("/identity/context")
+    async def context_test(
+        context: ExecutionContext = Depends(get_execution_context),
+    ) -> ExecutionContext:
+        return context
+
+    async def principal() -> Principal:
+        return Principal(subject="subject", object_id=CALLER, roles=frozenset({AppRole.READER}))
+
+    app.dependency_overrides[get_current_principal] = principal
+    configure_scope_resolver(app, UnreachableRepository())
+    async with httpx.AsyncClient(
+        transport=httpx.ASGITransport(app=app, raise_app_exceptions=False),
+        base_url="http://test",
+    ) as test_client:
+        response = await test_client.get(
+            "/identity/context", headers={"X-Correlation-ID": CORRELATION}
+        )
+
+    assert response.status_code == 503
+    assert response.json() == {"detail": "Scope resolver is unavailable."}
+    assert "secret-host" not in response.text
+
+
 def test_scope_context_is_not_exposed_as_a_production_route() -> None:
     app = create_app(
         Settings(environment="test", entra_tenant_id=TENANT, entra_audience="api://test")

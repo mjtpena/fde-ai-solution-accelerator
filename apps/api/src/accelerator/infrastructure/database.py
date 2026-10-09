@@ -4,9 +4,16 @@ import ssl
 from collections.abc import Awaitable, Callable
 
 from azure.core.credentials_async import AsyncTokenCredential
+from sqlalchemy.exc import SQLAlchemyError
 from sqlalchemy.ext.asyncio import AsyncEngine, create_async_engine
 
 from accelerator.configuration.settings import Settings
+
+# Exceptions that mean "the database is unavailable". SQLAlchemy wraps what the
+# driver raises on an open connection, but asyncpg reports a server it cannot reach
+# (connection refused, unresolvable host, connect timeout) with plain OSError
+# subclasses before any DBAPI connection exists, and SQLAlchemy passes them through.
+DATABASE_UNAVAILABLE_ERRORS: tuple[type[Exception], ...] = (SQLAlchemyError, OSError)
 
 # Microsoft Entra resource for Azure Database for PostgreSQL Flexible Server.
 POSTGRES_ENTRA_SCOPE = "https://ossrdbms-aad.database.windows.net/.default"
