@@ -61,7 +61,8 @@
   yet by a recorded end-to-end run against a live subscription.
 - Retrieval recall@k has not been measured against a live index.
 - `make eval-full` needs a Foundry project and a deployed environment.
-- No code calls Azure AI Content Safety; see `docs/testing-strategy.md`.
+- Azure AI Content Safety is verified by contract tests and the offline smoke
+  gate; live classifier behaviour needs a deployed account (`make eval-full`).
 - The **Trivy repository** check fails on two HIGH findings with no upstream
   fix: `braces` 3.0.3 (CVE-2026-93687, web dev tooling) and `nltk` 3.10.3
   (CVE-2026-81726, via `azure-ai-evaluation` in the optional `evaluation`

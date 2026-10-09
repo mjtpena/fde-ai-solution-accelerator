@@ -169,8 +169,10 @@ in `docs/deployment-guide.md`. None of them run in pull-request CI.
 | The deployed web app and API answer | `make deploy-dev STAGE=smoke` | A `deploy-dev` environment |
 | Ingestion with real embeddings and indexing | Run the worker with every `INGESTION_SEARCH_*`, `INGESTION_VECTOR_DIMENSIONS` and `INGESTION_FOUNDRY_*` setting and without `INGESTION_SKIP_SEARCH_INDEXING`. Enqueue the same messages as `tests/e2e_local`. Documents must end as `ready` | Search Index Data Contributor and Foundry project access |
 
-**Content Safety.** No code in this repository calls Azure AI Content Safety.
-The content-safety step in `docs/spec.md` §6.2 currently relies on the content
-filters of the Foundry model deployment, and no test exercises it. Verifying it
-needs a deployed environment and a dataset of adversarial prompts run through
-`make eval-full`. A dedicated adapter and its tests are still to be built.
+**Content Safety.** `apps/api/src/accelerator/infrastructure/content_safety.py`
+calls Azure AI Content Safety (Prompt Shields and text analysis); see ADR-0007.
+Its request shapes, fail-closed behaviour and severity mapping are covered by
+contract tests, and the hard `content_safety` smoke gate drives the real
+workflow with a deterministic offline checker. Live classifier behaviour and
+latency need a deployed Content Safety account: set `API_CONTENT_SAFETY_ENDPOINT`
+and run `make eval-full`.
