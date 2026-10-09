@@ -1,5 +1,8 @@
 """Append-only audit_event table (formerly schema/001_audit_event.sql).
 
+Idempotent so databases provisioned with the old SQL file (which have the table
+and triggers but no alembic_version) adopt Alembic by running ``upgrade head``.
+
 Revision ID: 0001_audit_event
 Revises:
 Create Date: 2026-10-09
@@ -18,7 +21,7 @@ depends_on: str | Sequence[str] | None = None
 def upgrade() -> None:
     op.execute(
         """
-        CREATE TABLE audit_event (
+        CREATE TABLE IF NOT EXISTS audit_event (
             event_id uuid PRIMARY KEY,
             occurred_at timestamptz NOT NULL,
             event_type varchar(32) NOT NULL,
@@ -43,14 +46,17 @@ def upgrade() -> None:
         )
         """
     )
-    op.execute("CREATE INDEX ix_audit_event_order ON audit_event (occurred_at DESC, event_id DESC)")
     op.execute(
-        "CREATE INDEX ix_audit_event_type_order "
+        "CREATE INDEX IF NOT EXISTS ix_audit_event_order "
+        "ON audit_event (occurred_at DESC, event_id DESC)"
+    )
+    op.execute(
+        "CREATE INDEX IF NOT EXISTS ix_audit_event_type_order "
         "ON audit_event (event_type, occurred_at DESC, event_id DESC)"
     )
     op.execute(
         """
-        CREATE FUNCTION reject_audit_event_mutation() RETURNS trigger
+        CREATE OR REPLACE FUNCTION reject_audit_event_mutation() RETURNS trigger
         LANGUAGE plpgsql AS $$
         BEGIN
             RAISE EXCEPTION 'audit_event is append-only' USING ERRCODE = '42501';
@@ -59,11 +65,11 @@ def upgrade() -> None:
         """
     )
     op.execute(
-        "CREATE TRIGGER audit_event_append_only BEFORE UPDATE OR DELETE ON audit_event "
+        "CREATE OR REPLACE TRIGGER audit_event_append_only BEFORE UPDATE OR DELETE ON audit_event "
         "FOR EACH STATEMENT EXECUTE FUNCTION reject_audit_event_mutation()"
     )
     op.execute(
-        "CREATE TRIGGER audit_event_no_truncate BEFORE TRUNCATE ON audit_event "
+        "CREATE OR REPLACE TRIGGER audit_event_no_truncate BEFORE TRUNCATE ON audit_event "
         "FOR EACH STATEMENT EXECUTE FUNCTION reject_audit_event_mutation()"
     )
 

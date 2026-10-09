@@ -8,6 +8,7 @@ import asyncio
 import os
 from collections.abc import Iterator
 from importlib.resources import files
+from pathlib import Path
 from unittest.mock import patch
 from uuid import uuid4
 
@@ -118,3 +119,27 @@ def test_upgrade_matches_orm_metadata_and_downgrade_is_clean(migration_database:
         command.downgrade(config, "base")
 
     assert asyncio.run(_table_names(migration_database)) == {"alembic_version"}
+
+
+async def _apply_legacy_schema(url: str) -> None:
+    sql = (Path(__file__).parent / "fixtures" / "legacy_001_audit_event.sql").read_text()
+    engine = create_async_engine(url, isolation_level="AUTOCOMMIT")
+    try:
+        async with engine.connect() as connection:
+            driver = await connection.get_raw_connection()
+            await driver.driver_connection.execute(sql)  # type: ignore[union-attr]
+    finally:
+        await engine.dispose()
+
+
+@requires_postgres
+def test_databases_built_from_the_legacy_sql_file_adopt_alembic(migration_database: str) -> None:
+    asyncio.run(_apply_legacy_schema(migration_database))
+    with patch.dict(
+        os.environ,
+        {"API_DATABASE_URL": migration_database, "API_DATABASE_AUTH_MODE": "password"},
+    ):
+        command.upgrade(alembic_config(), "head")
+
+    assert asyncio.run(_schema_drift(migration_database)) == []
+    asyncio.run(_append_only_rejects_update(migration_database))
