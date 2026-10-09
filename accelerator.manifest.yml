@@ -3,7 +3,7 @@
   "version_file": "pyproject.toml",
   "copy": [
     ".github", ".vscode", ".dockerignore", ".env.example", ".gitignore", ".pre-commit-config.yaml",
-    "AGENTS.md", "CONTRIBUTING.md", "LICENSE", "Makefile", "apps", "contracts",
+    "AGENTS.md", "CONTRIBUTING.md", "LICENSE", "Makefile", "apps", "conftest.py", "contracts",
     "docs", "engagement", "evaluations", "packages", "scripts", "tests",
     "threat-model", "workers", "docker-compose.yml", "package.json",
     "package-lock.json", "pyproject.toml", "uv.lock"
