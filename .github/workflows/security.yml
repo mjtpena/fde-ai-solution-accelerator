@@ -30,7 +30,7 @@ jobs:
         run: >-
           uv run --no-project --python 3.12
           --with pytest==8.4.2 --with pyyaml==6.0.3
-          pytest .github/tests -q
+          pytest .github/tests -q --noconftest
 
   codeql:
     name: CodeQL (${{ matrix.language }})

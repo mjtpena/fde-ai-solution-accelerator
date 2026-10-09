@@ -75,7 +75,7 @@ Run the regression tests using isolated test-only tools (no runtime dependency
 changes):
 
 ```sh
-uv run --no-project --python 3.12 --with pytest==8.4.2 --with pyyaml==6.0.3 pytest .github/tests -q
+uv run --no-project --python 3.12 --with pytest==8.4.2 --with pyyaml==6.0.3 pytest .github/tests -q --noconftest
 actionlint .github/workflows/security.yml
 make check
 make eval-smoke

@@ -2,7 +2,7 @@
 # Build from the repository root: docker build -f workers/ingestion/Dockerfile .
 FROM ghcr.io/astral-sh/uv:0.11.10@sha256:bca7f6959666f3524e0c42129f9d8bbcfb0c180d847f5187846b98ff06125ead AS uv
 
-FROM python:3.12-slim@sha256:05cda9777409a9c3ffddd94a4c476b79f0769a0b4857f0c7ed9226b6800b0d6f AS builder
+FROM python:3.12-alpine@sha256:1b668429b3511ab407d8e00648891631b0b1a4d7e15e3ca70f38ab5b91ad4ab4 AS builder
 COPY --from=uv /uv /usr/local/bin/uv
 WORKDIR /workspace
 ENV UV_PROJECT_ENVIRONMENT=/opt/venv \
@@ -24,12 +24,12 @@ COPY packages ./packages
 COPY workers/ingestion ./workers/ingestion
 RUN uv sync --frozen --no-dev --package fde-ingestion-worker --no-editable
 
-FROM python:3.12-slim@sha256:05cda9777409a9c3ffddd94a4c476b79f0769a0b4857f0c7ed9226b6800b0d6f
+FROM python:3.12-alpine@sha256:1b668429b3511ab407d8e00648891631b0b1a4d7e15e3ca70f38ab5b91ad4ab4
 ENV PATH="/opt/venv/bin:$PATH" \
     PYTHONUNBUFFERED=1 \
     PYTHONDONTWRITEBYTECODE=1 \
     INGESTION_HEARTBEAT_FILE=/tmp/ingestion-heartbeat
-RUN groupadd --gid 10001 worker && useradd --uid 10001 --gid worker --no-create-home worker
+RUN addgroup -g 10001 worker && adduser -u 10001 -G worker -D -H worker
 COPY --from=builder /opt/venv /opt/venv
 USER 10001:10001
 # Fails when the worker's event loop stops refreshing its heartbeat file.

@@ -115,7 +115,7 @@ PostgreSQL session factory.
 `apps/api/Dockerfile` builds from the repository root
 (`docker build -f apps/api/Dockerfile .`). It installs the locked dependencies
 with `uv sync --frozen --no-dev` into a virtual environment, copies only that
-environment into a digest-pinned `python:3.12-slim` runtime, runs as UID 10001,
+environment into a digest-pinned `python:3.12-alpine` runtime, runs as UID 10001,
 and health-checks `GET /healthz` over HTTP. The same image runs migrations
 (`python -m accelerator.migrations upgrade head`); `docker compose up` does this
 in the one-shot `migrate` service before the API starts.
