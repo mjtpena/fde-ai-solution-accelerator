@@ -191,3 +191,24 @@ def test_reranker_gate_rule_applies_outside_production_too() -> None:
                 "search_semantic_ranking": False,
             }
         )
+
+
+@pytest.mark.parametrize(
+    "origin",
+    [
+        None,
+        "http://app.example.test",
+        "https://localhost:3000",
+        "https://*.example.test",
+        "https://app.example.test/path",
+    ],
+)
+def test_production_requires_one_explicit_public_https_web_origin(origin: str | None) -> None:
+    values = production_values()
+    if origin is None:
+        del values["web_origin"]
+    else:
+        values["web_origin"] = origin
+
+    with pytest.raises(ValidationError, match="API_WEB_ORIGIN"):
+        Settings.model_validate(values)

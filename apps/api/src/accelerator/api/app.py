@@ -19,6 +19,7 @@ from accelerator.api.cost_guard import (
     handle_token_budget_exceeded,
 )
 from accelerator.api.health import router as health_router
+from accelerator.api.security_headers import SecurityHeadersMiddleware
 from accelerator.api.retrieval_diagnostics import (
     InMemoryRetrievalDiagnosticsStore,
     RetrievalDiagnosticsStore,
@@ -123,9 +124,12 @@ def create_app(
     app.add_middleware(
         CORSMiddleware,
         allow_origins=[settings.web_origin],
-        allow_methods=["*"],
-        allow_headers=["*"],
+        allow_methods=["GET", "POST", "OPTIONS"],
+        allow_headers=["Authorization", "Content-Type", "Accept", "X-Correlation-ID"],
+        expose_headers=["X-Correlation-ID", "Retry-After"],
+        max_age=600,
     )
+    app.add_middleware(SecurityHeadersMiddleware)
     app.include_router(health_router)
     app.include_router(retrieval_diagnostics_router, **cost_guarded)
     app.include_router(audit_router, **AUTHENTICATED)

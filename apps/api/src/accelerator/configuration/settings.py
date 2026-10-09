@@ -1,4 +1,5 @@
 from functools import lru_cache
+from urllib.parse import urlsplit
 from typing import Literal, Self
 from uuid import UUID
 
@@ -177,6 +178,17 @@ class Settings(BaseSettings):
             raise ValueError(f"Production requires these settings: {variables}.")
         if self.database_auth_mode != "managed_identity":
             raise ValueError("Production requires API_DATABASE_AUTH_MODE=managed_identity.")
+        if "web_origin" not in self.model_fields_set:
+            raise ValueError("Production requires API_WEB_ORIGIN to be set explicitly.")
+        origin = urlsplit(self.web_origin)
+        if (
+            origin.scheme != "https"
+            or not origin.hostname
+            or origin.hostname in {"localhost", "127.0.0.1"}
+            or origin.path not in {"", "/"}
+            or "*" in self.web_origin
+        ):
+            raise ValueError("API_WEB_ORIGIN must be one public https origin in production.")
         if self.database_url is not None and self.database_url.hosts()[0].get("password"):
             raise ValueError("Production database URLs must not embed a password.")
         for name in (
