@@ -242,6 +242,16 @@ def test_make_and_the_workflow_share_the_script() -> None:
     # Same order as `all`: the schema and index exist before a new revision serves.
     positions = [
         workflow.index(f"infrastructure/scripts/deploy-dev.sh {stage}\n")
-        for stage in ("migrate", "index", "applications", "smoke")
+        for stage in ("infrastructure", "images", "migrate", "index", "applications", "smoke")
     ]
     assert positions == sorted(positions)
+
+
+def test_the_workflow_builds_images_only_through_acr_tasks() -> None:
+    workflow = (ROOT / ".github" / "workflows" / "deploy-dev.yml").read_text(encoding="utf-8")
+
+    assert "docker " not in workflow
+    assert "az acr login" not in workflow
+    # The application images come from the shared stage's digests.
+    assert 'source "$DEPLOY_STATE_DIR/images.env"' in workflow
+    assert "IMAGE_TAG: ${{ github.sha }}" in workflow

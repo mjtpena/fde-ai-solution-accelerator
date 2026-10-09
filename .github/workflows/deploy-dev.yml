@@ -5,8 +5,9 @@ name: Deploy dev
 # Add Entra federated credentials for
 # repo:mjtpena/fde-ai-solution-accelerator:environment:dev and audience
 # api://AzureADTokenExchange. Do not store Azure credentials as GitHub secrets.
-# Grant the OIDC principal least-privilege subscription deployment and ACR push
-# rights; app UAMIs receive registry pull rights from the Bicep deployment.
+# Grant the OIDC principal least-privilege subscription deployment rights and
+# the right to run ACR Tasks builds (`az acr build`; AcrPush alone is not
+# enough); app UAMIs receive registry pull rights from the Bicep deployment.
 # Configure the `production` environment with required reviewers before opting
 # into its promotion job, and federate
 # repo:mjtpena/fde-ai-solution-accelerator:environment:production.
@@ -238,17 +239,12 @@ jobs:
       - name: Deploy dev infrastructure
         id: infrastructure
         shell: bash
+        env:
+          DEPLOYMENT_NAME: fde-dev-${{ github.sha }}
         run: |
           set -euo pipefail
-          deployment_name="fde-dev-$GITHUB_SHA"
-          az deployment sub create \
-            --subscription "$AZURE_SUBSCRIPTION_ID" \
-            --name "$deployment_name" \
-            --location "$AZURE_LOCATION" \
-            --template-file infrastructure/main.bicep \
-            --parameters infrastructure/parameters/dev.example.bicepparam \
-            --output none
-          echo "name=$deployment_name" >> "$GITHUB_OUTPUT"
+          infrastructure/scripts/deploy-dev.sh infrastructure
+          echo "name=$DEPLOYMENT_NAME" >> "$GITHUB_OUTPUT"
 
       - name: Read deployment outputs
         id: outputs
@@ -291,51 +287,31 @@ jobs:
             echo "embedding_deployment_name=$(jq -er '.embeddingDeploymentName.value' <<< "$outputs")"
           } >> "$GITHUB_OUTPUT"
 
+      # The same images stage as `make deploy-dev` (ACR Tasks, no local Docker). The
+      # hosted agent is not part of that stage, so it is built the same way here.
       - name: Build and push application images
         id: images
         shell: bash
         env:
+          DEPLOYMENT_NAME: ${{ steps.infrastructure.outputs.name }}
+          IMAGE_TAG: ${{ github.sha }}
+          DEPLOY_STATE_DIR: ${{ runner.temp }}/deploy-dev
           REGISTRY_NAME: ${{ steps.outputs.outputs.registry_name }}
           REGISTRY_LOGIN_SERVER: ${{ steps.outputs.outputs.registry_login_server }}
         run: |
           set -euo pipefail
-          tag="$GITHUB_SHA"
-          api_image="$REGISTRY_LOGIN_SERVER/api:$tag"
-          web_image="$REGISTRY_LOGIN_SERVER/web:$tag"
-          worker_image="$REGISTRY_LOGIN_SERVER/worker:$tag"
-          agent_image="$REGISTRY_LOGIN_SERVER/fde-agent:$tag"
-
-          az acr login --name "$REGISTRY_NAME"
-          docker buildx build --platform linux/amd64 \
-            --file apps/api/Dockerfile \
-            --tag "$api_image" \
-            --metadata-file "$RUNNER_TEMP/api-image.json" \
-            --push .
-          # NEXT_PUBLIC_* values are compiled into the browser bundle; not secrets.
-          docker buildx build --platform linux/amd64 \
-            --file apps/web/Dockerfile \
-            --build-arg "NEXT_PUBLIC_ENTRA_TENANT_ID=$API_ENTRA_TENANT_ID" \
-            --build-arg "NEXT_PUBLIC_ENTRA_CLIENT_ID=$WEB_ENTRA_CLIENT_ID" \
-            --build-arg "NEXT_PUBLIC_ENTRA_API_SCOPE=$WEB_ENTRA_API_SCOPE" \
-            --tag "$web_image" \
-            --metadata-file "$RUNNER_TEMP/web-image.json" \
-            --push .
-          docker buildx build --platform linux/amd64 \
-            --file workers/ingestion/Dockerfile \
-            --tag "$worker_image" \
-            --metadata-file "$RUNNER_TEMP/worker-image.json" \
-            --push .
-          docker buildx build --platform linux/amd64 \
-            --file infrastructure/hosted_agent/Dockerfile \
-            --tag "$agent_image" \
-            --metadata-file "$RUNNER_TEMP/agent-image.json" \
-            --push .
-
+          infrastructure/scripts/deploy-dev.sh images
+          az acr build --registry "$REGISTRY_NAME" --image "fde-agent:$IMAGE_TAG" \
+            --platform linux/amd64 --file infrastructure/hosted_agent/Dockerfile . --output none
+          agent_digest="$(az acr repository show --name "$REGISTRY_NAME" \
+            --image "fde-agent:$IMAGE_TAG" --query digest --output tsv)"
+          # shellcheck disable=SC1091  # written by the images stage
+          source "$DEPLOY_STATE_DIR/images.env"
           {
-            echo "api_image=$REGISTRY_LOGIN_SERVER/api@$(jq -er '.["containerimage.digest"]' "$RUNNER_TEMP/api-image.json")"
-            echo "web_image=$REGISTRY_LOGIN_SERVER/web@$(jq -er '.["containerimage.digest"]' "$RUNNER_TEMP/web-image.json")"
-            echo "worker_image=$REGISTRY_LOGIN_SERVER/worker@$(jq -er '.["containerimage.digest"]' "$RUNNER_TEMP/worker-image.json")"
-            echo "agent_image=$REGISTRY_LOGIN_SERVER/fde-agent@$(jq -er '.["containerimage.digest"]' "$RUNNER_TEMP/agent-image.json")"
+            echo "api_image=$API_IMAGE"
+            echo "web_image=$WEB_IMAGE"
+            echo "worker_image=$WORKER_IMAGE"
+            echo "agent_image=$REGISTRY_LOGIN_SERVER/fde-agent@$agent_digest"
           } >> "$GITHUB_OUTPUT"
 
       - name: Smoke test deployed Azure infrastructure

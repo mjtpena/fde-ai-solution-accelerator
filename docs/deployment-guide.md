@@ -313,7 +313,8 @@ repo:<owner>/<repo>:environment:production
 
 The workflow header names `mjtpena/fde-ai-solution-accelerator`; use your own
 repository. Grant the `dev` principal least-privilege subscription deployment
-rights and ACR push; the app identities get pull rights from Bicep.
+rights and the right to run ACR Tasks builds (`az acr build`; AcrPush alone is not
+enough); the app identities get pull rights from Bicep.
 
 ### Self-hosted VNet runner
 
@@ -330,7 +331,7 @@ On push to `main` (or `workflow_dispatch` on `main`):
 | Job | Runner | Does |
 | --- | --- | --- |
 | `quality` | GitHub-hosted | `make check SKIP_GENERATOR=1`, credential-free Bicep validation, `make eval-smoke` (report uploaded) |
-| `deploy_dev` (`dev`) | GitHub-hosted | Checks variables, OIDC sign-in, what-if (artifact uploaded), infrastructure deployment `fde-dev-<sha>`, builds and pushes api, web, worker and hosted-agent images with `docker buildx` and records their digests, checks provisioning states |
+| `deploy_dev` (`dev`) | GitHub-hosted | Checks variables, OIDC sign-in, what-if (artifact uploaded), `deploy-dev.sh infrastructure` (`fde-dev-<sha>`), `deploy-dev.sh images` plus the hosted-agent image, all built with ACR Tasks and recorded by digest, checks provisioning states |
 | `verify_database` (`dev-database`) | VNet runner | `bootstrap-postgres.ps1 -VerifyOnly`: verifies, never creates, the database roles |
 | `deploy_applications` (`dev`) | GitHub-hosted | What-if, then `deploy-dev.sh migrate` and `index`, then `deploy-dev.sh applications`, provisioning check, `smoke`, then hosted-agent `deploy` and `smoke` |
 | `full_evaluation` (`dev-database`) | VNet runner | `make eval-full` against the deployed services |
