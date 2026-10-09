@@ -66,7 +66,7 @@ overall `passed`, and `fixture`. Configuration errors produce `passed: false`
 and an `error` class instead of a success-shaped comparison.
 
 The Evaluation workflow uploads artifacts and adds a job summary even when
-gates fail. A separate `workflow_run` job, using the default-branch workflow
+gates fail. The separate `Evaluation report` workflow (`workflow_run`), from the default branch
 without checking out or executing PR/artifact code, updates one bot comment
 on the matching open PR. Fork evaluation receives no write token. Publication
 starts after this workflow is present on the default branch; the first PR

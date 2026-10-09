@@ -17,7 +17,14 @@ def test_workflow_separates_pr_execution_from_privileged_commenting() -> None:
         step.get("uses") == "actions/upload-artifact@v4" and step.get("if") == "always()"
         for step in smoke["steps"]
     )
-    publish = workflow["jobs"]["publish"]
+    assert set(workflow[True]) == {"pull_request"}
+    report = yaml.safe_load(
+        (root / ".github" / "workflows" / "evaluation-report.yml").read_text(encoding="utf-8")
+    )
+    # PyYAML reads the bare `on` key as True.
+    assert report[True] == {"workflow_run": {"workflows": ["Evaluation"], "types": ["completed"]}}
+    assert report["permissions"] == {"contents": "read"}
+    publish = report["jobs"]["publish"]
     assert "github.event_name == 'workflow_run'" in publish["if"]
     assert "github.event.workflow_run.event == 'pull_request'" in publish["if"]
     assert publish["permissions"] == {"actions": "read", "pull-requests": "write"}
