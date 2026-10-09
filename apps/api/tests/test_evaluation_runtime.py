@@ -10,6 +10,7 @@ from sqlalchemy.ext.asyncio import create_async_engine
 
 from accelerator.configuration.settings import Settings
 from accelerator.evaluation_core.evaluators.full import FullEvaluationRuntime
+from accelerator.infrastructure import evaluation
 from accelerator.infrastructure.evaluation import (
     EvaluationPrincipalSettings,
     create_full_evaluation_runtime,
@@ -99,6 +100,31 @@ def test_runtime_uses_the_principals_memberships_and_captures_evidence(
     assert runtime.close is not None
     asyncio.run(runtime.close())
     assert all(credential.closed for credential in FakeCredential.instances)
+
+
+def test_a_composition_failure_closes_allocated_clients_and_the_credential(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    closed: list[str] = []
+
+    async def scopes(*args: Any) -> frozenset[str]:
+        return frozenset({"scope-a"})
+
+    def failing_build(settings: Any, credential: Any, shutdown: list[Any], **kw: Any) -> Any:
+        async def close_client() -> None:
+            closed.append("client")
+
+        shutdown.append(close_client)
+        raise FileNotFoundError("grounded_answer.md")
+
+    monkeypatch.setattr(evaluation, "resolve_evaluation_scopes", scopes)
+    monkeypatch.setattr(evaluation, "build_azure_grounded_answer", failing_build)
+
+    with pytest.raises(FileNotFoundError):
+        factory("postgresql+asyncpg://unused/db")
+
+    assert closed == ["client"]
+    assert FakeCredential.instances and all(c.closed for c in FakeCredential.instances)
 
 
 def test_a_principal_without_memberships_cannot_be_evaluated(migrated_database_url: str) -> None:

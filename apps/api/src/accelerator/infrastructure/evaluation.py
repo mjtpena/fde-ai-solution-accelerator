@@ -89,15 +89,21 @@ def create_full_evaluation_runtime(
         raise ValueError("The evaluation principal has no scope memberships.")
 
     credential = credential_factory(settings)
-    shutdown: list[Callable[[], Awaitable[None]]] = []
-    workflow = build_azure_grounded_answer(
-        settings, credential, shutdown, capture_evaluation_context=True
-    )
-    shutdown.append(credential.close)
+    # The credential closes last; clients registered after it close first.
+    shutdown: list[Callable[[], Awaitable[None]]] = [credential.close]
 
     async def close() -> None:
         for callback in reversed(shutdown):
             await callback()
+
+    try:
+        workflow = build_azure_grounded_answer(
+            settings, credential, shutdown, capture_evaluation_context=True
+        )
+    except BaseException:
+        # Composition failed after allocating some clients: release them before raising.
+        asyncio.run(close())
+        raise
 
     started = datetime.now(UTC)
     return FullEvaluationRuntime(
