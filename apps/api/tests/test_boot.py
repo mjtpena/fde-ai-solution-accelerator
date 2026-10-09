@@ -173,9 +173,29 @@ class FakeEmbeddingClient:
 
 
 class FakeAgent:
-    async def run(self, messages: str, *, options: Any, tools: Any = None) -> Any:
+    """Mirrors agent_framework.Agent.run: an awaitable, or a stream with stream=True."""
+
+    chunks = ("Backups run ", "nightly. [cite:", "chunk-a]")
+
+    def run(self, messages: str, *, options: Any, tools: Any = None, stream: bool = False) -> Any:
         assert 'chunk_id="chunk-a"' in messages
-        return type("Response", (), {"text": "Backups run nightly. [cite:chunk-a]"})()
+        final = type("Response", (), {"text": "".join(self.chunks)})()
+        if not stream:
+
+            async def complete() -> Any:
+                return final
+
+            return complete()
+
+        class Stream:
+            async def __aiter__(inner) -> AsyncIterator[Any]:  # noqa: N805
+                for chunk in self.chunks:
+                    yield type("Update", (), {"text": chunk})()
+
+            async def get_final_response(inner) -> Any:  # noqa: N805
+                return final
+
+        return Stream()
 
 
 def fake_create_agent(self: object, **kwargs: object) -> FakeAgent:

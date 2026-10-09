@@ -1,3 +1,5 @@
+import asyncio
+import logging
 from collections.abc import AsyncIterator
 from typing import Annotated, Literal, Protocol, runtime_checkable
 
@@ -5,7 +7,7 @@ from fastapi import APIRouter, Depends, HTTPException, Request, status
 from fastapi.responses import StreamingResponse
 from pydantic import BaseModel, ConfigDict, Field, field_validator
 
-from accelerator.agent_core.workflows.generation import current_token_budget
+from accelerator.agent_core.workflows.generation import current_token_budget, current_token_sink
 from accelerator.agent_core.workflows.grounded_answer import GroundedAnswerResult
 from accelerator.identity.scope_resolver import get_execution_context
 from accelerator.security_core.cost_guard import TokenBudget
@@ -68,6 +70,12 @@ class ChatTurnPort(Protocol):
 
 
 router = APIRouter(prefix="/chat", tags=["chat"])
+logger = logging.getLogger(__name__)
+
+WITHDRAWN_REASON = (
+    "The generated answer could not be verified against its sources and was withdrawn."
+)
+TurnResult = GroundedAnswerResult | ApprovalRequired[BaseModel]
 
 
 def get_chat_turn(request: Request) -> ChatTurnPort:
@@ -176,9 +184,12 @@ async def _stream_result(
         200: {
             "description": (
                 "Server-sent events. Each frame has an event name and JSON data. "
-                "Answered turns emit token frames followed by citations and done; "
-                "insufficient evidence emits abstention and done; policy handoffs "
-                "emit approval and done."
+                "Answered turns emit token frames as the model produces them, then "
+                "citations (only after they validate against this turn's retrieval) "
+                "and done; insufficient evidence emits abstention and done; policy "
+                "handoffs emit approval and done. An abstention after token frames "
+                "withdraws the streamed text, and clients must discard it. Clients "
+                "must ignore event names they do not recognise."
             ),
             "content": {
                 "text/event-stream": {
@@ -202,22 +213,95 @@ async def stream_chat(
     workflow: Annotated[ChatTurnPort, Depends(get_chat_turn)],
     token_budget: Annotated[TokenBudget | None, Depends(get_request_token_budget)] = None,
 ) -> StreamingResponse:
-    # The per-request token budget from the cost guard bounds every model call.
-    budget_token = current_token_budget.set(token_budget)
-    try:
-        result = await workflow.run(payload.message, context)
-    finally:
-        current_token_budget.reset(budget_token)
-    if isinstance(result, ApprovalRequired):
-        citations: list[CitationItem] = []
+    tokens: asyncio.Queue[str] = asyncio.Queue()
+
+    async def sink(text: str) -> None:
+        await tokens.put(text)
+
+    async def run_turn() -> TurnResult:
+        # Per-turn context: streamed tokens go to the sink, and the cost guard's
+        # token budget bounds every model call.
+        current_token_sink.set(sink)
+        current_token_budget.set(token_budget)
+        return await workflow.run(payload.message, context)
+
+    turn = asyncio.create_task(run_turn())
+    first_token = await _next_token(tokens, turn)
+    if first_token is None:
+        # Nothing was streamed: failures and invalid results surface as errors
+        # (500, or 429 for an exhausted budget) before any response bytes are sent.
+        result = await turn
+        citations: list[CitationItem] = (
+            [] if isinstance(result, ApprovalRequired) else _validate_result(result)
+        )
+        frames = _stream_result(result, citations)
     else:
-        citations = _validate_result(result)
+        frames = _stream_live(first_token, tokens, turn, context.correlation_id)
 
     return StreamingResponse(
-        _stream_result(result, citations),
+        frames,
         media_type="text/event-stream",
         headers={
             "Cache-Control": "no-cache",
             "X-Accel-Buffering": "no",
         },
     )
+
+
+async def _next_token(tokens: asyncio.Queue[str], turn: asyncio.Task[TurnResult]) -> str | None:
+    """The next streamed token, or ``None`` once the turn has finished and drained."""
+    if not tokens.empty():
+        return tokens.get_nowait()
+    if turn.done():
+        return None
+    getter = asyncio.ensure_future(tokens.get())
+    try:
+        await asyncio.wait({getter, turn}, return_when=asyncio.FIRST_COMPLETED)
+    finally:
+        if not getter.done():
+            getter.cancel()
+    if getter.done() and not getter.cancelled():
+        return getter.result()
+    return tokens.get_nowait() if not tokens.empty() else None
+
+
+async def _stream_live(
+    first_token: str,
+    tokens: asyncio.Queue[str],
+    turn: asyncio.Task[TurnResult],
+    correlation_id: str,
+) -> AsyncIterator[str]:
+    """Forward model tokens as they arrive; emit citations only after validation.
+
+    If the turn fails or its citations do not validate after text was streamed,
+    an ``abstention`` frame withdraws the answer; clients must discard the
+    streamed text when they receive it.
+    """
+    try:
+        token: str | None = first_token
+        while token is not None:
+            yield _frame("token", TokenEvent(text=token))
+            token = await _next_token(tokens, turn)
+        try:
+            result = await turn
+            citations = (
+                [] if isinstance(result, ApprovalRequired) else _validate_result(result)
+            )
+        except Exception as error:  # the answer is withdrawn, never silently kept
+            logger.error(
+                "streamed_answer_withdrawn",
+                extra={"correlation_id": correlation_id, "exception_type": type(error).__name__},
+            )
+            yield _frame("abstention", AbstentionEvent(reason=WITHDRAWN_REASON, evidence_ids=[]))
+            yield _frame("done", DoneEvent())
+            return
+        if isinstance(result, ApprovalRequired) or result.status == "abstained":
+            async for frame in _stream_result(result, citations):
+                yield frame
+            return
+        if citations:
+            yield _frame("citations", CitationsEvent(citations=citations))
+        yield _frame("done", DoneEvent())
+    finally:
+        if not turn.done():
+            turn.cancel()

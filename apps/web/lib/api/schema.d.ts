@@ -668,7 +668,7 @@ export interface operations {
             };
         };
         responses: {
-            /** @description Server-sent events. Each frame has an event name and JSON data. Answered turns emit token frames followed by citations and done; insufficient evidence emits abstention and done; policy handoffs emit approval and done. */
+            /** @description Server-sent events. Each frame has an event name and JSON data. Answered turns emit token frames as the model produces them, then citations (only after they validate against this turn's retrieval) and done; insufficient evidence emits abstention and done; policy handoffs emit approval and done. An abstention after token frames withdraws the streamed text, and clients must discard it. Clients must ignore event names they do not recognise. */
             200: {
                 headers: {
                     [name: string]: unknown;

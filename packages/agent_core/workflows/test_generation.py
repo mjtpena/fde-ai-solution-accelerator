@@ -4,7 +4,13 @@ from typing import Any
 
 import pytest
 
-from .generation import AgentAnswerGenerator, build_prompt, extract_citations
+from .generation import (
+    AgentAnswerGenerator,
+    CitationMarkerFilter,
+    build_prompt,
+    current_token_sink,
+    extract_citations,
+)
 
 
 @dataclass(frozen=True)
@@ -26,7 +32,7 @@ class RecordingAgent:
         self.options: list[Mapping[str, Any]] = []
 
     async def run(
-        self, messages: str, *, options: Mapping[str, Any], tools: Any = None
+        self, messages: str, *, options: Mapping[str, Any], tools: Any = None, stream: bool = False
     ) -> Result:
         self.prompts.append(messages)
         self.options.append(options)
@@ -119,3 +125,58 @@ async def test_over_budget_requests_are_refused_before_the_model_is_called() -> 
         current_token_budget.reset(token)
 
     assert agent.prompts == []
+
+
+class StreamingAgent:
+    def __init__(self, chunks: list[str]) -> None:
+        self.chunks = chunks
+
+    def run(
+        self, messages: str, *, options: Mapping[str, Any], tools: Any = None, stream: bool = False
+    ) -> "StreamingAgent":
+        assert stream is True
+        return self
+
+    async def __aiter__(self) -> Any:
+        for chunk in self.chunks:
+            yield Result(chunk)
+
+    async def get_final_response(self) -> Result:
+        return Result("".join(self.chunks))
+
+
+@pytest.mark.parametrize(
+    "chunks",
+    [
+        ["Retention is 30 days. [cite:c-1]", " Backups run nightly. [cite:c-2]"],
+        ["Retention is 30 days. [ci", "te:c", "-1] Backups", " run nightly. [cite:c-2", "]"],
+        ["Retention [is] 30 days. [", "cite:c-1] Backups run nightly. [cite:c-2]"],
+    ],
+)
+async def test_streamed_tokens_never_contain_citation_markers(chunks: list[str]) -> None:
+    streamed: list[str] = []
+
+    async def sink(text: str) -> None:
+        streamed.append(text)
+
+    token = current_token_sink.set(sink)
+    try:
+        generated = await AgentAnswerGenerator(
+            StreamingAgent(chunks), max_output_tokens=64
+        ).generate("q", [Item("c-1", "x")])
+    finally:
+        current_token_sink.reset(token)
+
+    assert "[cite" not in "".join(streamed)
+    assert "Backups run nightly." in "".join(streamed)
+    assert generated.citations == ("c-1", "c-2")
+
+
+def test_marker_filter_releases_brackets_that_are_not_markers() -> None:
+    markers = CitationMarkerFilter()
+
+    assert markers.feed("see [note") == "see [note"
+    assert markers.feed(" [ci") == " "
+    assert markers.feed("ty]") == "[city]"
+    assert markers.feed(" end [") == " end "
+    assert markers.flush() == "["

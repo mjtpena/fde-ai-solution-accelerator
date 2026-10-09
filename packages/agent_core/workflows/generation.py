@@ -1,7 +1,7 @@
 """Answer generation over same-turn evidence with an Agent Framework agent."""
 
 import re
-from collections.abc import Mapping, Sequence
+from collections.abc import Awaitable, Callable, Mapping, Sequence
 from contextvars import ContextVar
 from dataclasses import dataclass
 from typing import Any, Protocol
@@ -9,6 +9,12 @@ from typing import Any, Protocol
 from ..tools.agent_bridge import tools_for_current_turn
 
 CITATION_MARKER = re.compile(r"\[cite:([^\[\]\s]{1,256})\]")
+_MARKER_PREFIX = "[cite:"
+_MAX_MARKER_LENGTH = len(_MARKER_PREFIX) + 256 + 1
+
+TokenSink = Callable[[str], Awaitable[None]]
+# Set by a streaming host for one turn; the generator then streams model output to it.
+current_token_sink: ContextVar[TokenSink | None] = ContextVar("current_token_sink", default=None)
 
 
 class TokenReservation(Protocol):
@@ -62,11 +68,51 @@ class AgentRunResult(Protocol):
 
 
 class ChatAgent(Protocol):
-    """The subset of ``agent_framework.Agent`` the generator uses."""
+    """The subset of ``agent_framework.Agent`` the generator uses.
 
-    async def run(
-        self, messages: str, *, options: Mapping[str, Any], tools: Sequence[Any] | None = None
-    ) -> AgentRunResult: ...
+    ``run(..., stream=False)`` returns an awaitable ``AgentRunResult``; with
+    ``stream=True`` it returns an async iterable of updates (each with ``text``)
+    whose ``get_final_response()`` resolves to the complete result.
+    """
+
+    def run(
+        self,
+        messages: str,
+        *,
+        options: Mapping[str, Any],
+        tools: Sequence[Any] | None = None,
+        stream: bool = False,
+    ) -> Any: ...
+
+
+class CitationMarkerFilter:
+    """Remove ``[cite:...]`` markers from streamed text, even when split across chunks."""
+
+    def __init__(self) -> None:
+        self._pending = ""
+
+    def feed(self, text: str) -> str:
+        data = CITATION_MARKER.sub("", self._pending + text)
+        start = data.rfind("[")
+        if start != -1 and self._could_become_marker(data[start:]):
+            self._pending = data[start:]
+            return data[:start]
+        self._pending = ""
+        return data
+
+    def flush(self) -> str:
+        pending, self._pending = self._pending, ""
+        return pending
+
+    @staticmethod
+    def _could_become_marker(tail: str) -> bool:
+        if len(tail) <= len(_MARKER_PREFIX):
+            return _MARKER_PREFIX.startswith(tail)
+        return (
+            tail.startswith(_MARKER_PREFIX)
+            and len(tail) < _MAX_MARKER_LENGTH
+            and not any(char in tail[1:] for char in "[] \t\r\n")
+        )
 
 
 @dataclass(frozen=True, slots=True)
@@ -127,14 +173,18 @@ class AgentAnswerGenerator:
     ) -> GeneratedGroundedAnswer:
         prompt = build_prompt(query, evidence)
         # Registered tools reach the model only through the policy bridge for this turn.
-        tools = tools_for_current_turn()
+        tools = tools_for_current_turn() or None
+        sink = current_token_sink.get()
         budget = current_token_budget.get()
         # Reserve the worst case (prompt plus every allowed output token) before the call,
         # so an over-budget request is refused instead of billed.
         estimate = estimate_tokens(prompt) + int(self._options["max_tokens"])
         reservation = budget.reserve(estimate) if budget is not None else None
         try:
-            response = await self._agent.run(prompt, options=self._options, tools=tools or None)
+            if sink is None:
+                response = await self._agent.run(prompt, options=self._options, tools=tools)
+            else:
+                response = await self._stream(prompt, tools, sink)
         except BaseException:
             if reservation is not None:
                 reservation.cancel()
@@ -143,3 +193,16 @@ class AgentAnswerGenerator:
             reservation.settle(min(used_tokens(response) or estimate, estimate))
         answer, citations = extract_citations(response.text)
         return GeneratedGroundedAnswer(answer=answer, citations=citations)
+
+    async def _stream(
+        self, prompt: str, tools: Sequence[Any] | None, sink: TokenSink
+    ) -> AgentRunResult:
+        markers = CitationMarkerFilter()
+        stream = self._agent.run(prompt, options=self._options, tools=tools, stream=True)
+        async for update in stream:
+            if update.text and (visible := markers.feed(update.text)):
+                await sink(visible)
+        if tail := markers.flush():
+            await sink(tail)
+        final: AgentRunResult = await stream.get_final_response()
+        return final

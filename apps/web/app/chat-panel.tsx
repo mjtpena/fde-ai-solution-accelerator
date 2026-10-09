@@ -55,6 +55,9 @@ export function ChatPanel({ accessToken }: { accessToken: string | null }) {
               setApproval(streamEvent.approval);
               break;
             case "abstention":
+              // An abstention after streamed tokens withdraws that text.
+              setAnswer("");
+              setCitations([]);
               setAbstention({
                 reason: streamEvent.reason,
                 evidenceIds: streamEvent.evidence_ids,
