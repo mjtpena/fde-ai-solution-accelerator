@@ -212,3 +212,28 @@ def test_production_requires_one_explicit_public_https_web_origin(origin: str | 
 
     with pytest.raises(ValidationError, match="API_WEB_ORIGIN"):
         Settings.model_validate(values)
+
+
+@pytest.mark.parametrize(
+    "origin",
+    [
+        "https://app.example.test/",
+        "https://app.example.test?x=1",
+        "https://app.example.test#top",
+        "https://user@app.example.test",
+        "https://App.Example.test",
+        "app.example.test",
+        "https://app.example.test:notaport",
+    ],
+)
+def test_web_origin_must_be_a_serialized_origin(origin: str) -> None:
+    with pytest.raises(ValidationError, match="API_WEB_ORIGIN"):
+        Settings.model_validate(production_values(web_origin=origin))
+    with pytest.raises(ValidationError, match="API_WEB_ORIGIN"):
+        Settings.model_validate(production_values(environment="test", web_origin=origin))
+
+
+def test_web_origin_may_carry_a_port() -> None:
+    settings = Settings.model_validate(production_values(web_origin="https://app.example.test:8443"))
+
+    assert settings.web_origin == "https://app.example.test:8443"

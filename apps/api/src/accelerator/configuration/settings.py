@@ -147,6 +147,20 @@ class Settings(BaseSettings):
         return self
 
     @model_validator(mode="after")
+    def require_serialized_web_origin(self) -> Self:
+        # CORS compares this string with the browser's Origin header, which is only
+        # scheme://host[:port]; anything else would silently reject every request.
+        try:
+            origin = urlsplit(self.web_origin)
+            port = origin.port
+        except ValueError as exc:
+            raise ValueError("API_WEB_ORIGIN must be scheme://host[:port].") from exc
+        serialized = f"{origin.scheme}://{origin.hostname}" + (f":{port}" if port else "")
+        if origin.scheme not in {"http", "https"} or not origin.hostname or self.web_origin != serialized:
+            raise ValueError("API_WEB_ORIGIN must be scheme://host[:port], with nothing else.")
+        return self
+
+    @model_validator(mode="after")
     def require_consistent_jwks_cache(self) -> Self:
         # Keys past the stale limit are unusable; a cache that outlives them would
         # refuse every token until the cache timer finally triggers a refresh.
@@ -185,7 +199,6 @@ class Settings(BaseSettings):
             origin.scheme != "https"
             or not origin.hostname
             or origin.hostname in {"localhost", "127.0.0.1"}
-            or origin.path not in {"", "/"}
             or "*" in self.web_origin
         ):
             raise ValueError("API_WEB_ORIGIN must be one public https origin in production.")

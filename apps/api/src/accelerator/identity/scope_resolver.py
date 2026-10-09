@@ -10,6 +10,7 @@ from sqlalchemy.exc import SQLAlchemyError
 from starlette.responses import JSONResponse
 from starlette.types import ASGIApp, Message, Receive, Scope, Send
 
+from accelerator.api.security_headers import json_error_headers
 from accelerator.identity.authentication import Principal, get_current_principal
 from accelerator.security_core.authorisation.memberships import ScopeMembershipRepository
 from accelerator.security_core.data_boundaries.context import ExecutionContext
@@ -72,7 +73,8 @@ class CorrelationIdMiddleware:
                 response = JSONResponse(
                     {"detail": "X-Correlation-ID must be a UUID."},
                     status_code=400,
-                    headers={"X-Correlation-ID": correlation_id},
+                    # Returned before the inner security-header middleware runs.
+                    headers=json_error_headers(**{"X-Correlation-ID": correlation_id}),
                 )
                 await response(scope, receive, send)
                 return
@@ -119,7 +121,8 @@ async def correlated_server_error(request: Request, exc: Exception) -> JSONRespo
     return JSONResponse(
         {"detail": "Internal server error."},
         status_code=500,
-        headers={"X-Correlation-ID": correlation_id},
+        # Starlette calls this outside every user middleware.
+        headers=json_error_headers(**{"X-Correlation-ID": correlation_id}),
     )
 
 

@@ -13,6 +13,11 @@ API_SECURITY_HEADERS = {
 }
 
 
+def json_error_headers(**extra: str) -> dict[str, str]:
+    """Headers for JSON responses produced outside ``SecurityHeadersMiddleware``."""
+    return {**API_SECURITY_HEADERS, "Cache-Control": "no-store", **extra}
+
+
 class SecurityHeadersMiddleware:
     """Add security headers to every response; JSON is never cached."""
 

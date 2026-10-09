@@ -82,3 +82,33 @@ async def test_cors_allows_only_explicit_methods_and_headers() -> None:
     assert wrong_method.status_code == 400
     assert wrong_header.status_code == 400
     assert other_origin.status_code == 400
+
+
+async def test_invalid_correlation_id_rejection_carries_security_headers() -> None:
+    response = await request("GET", "/healthz", headers={"X-Correlation-ID": "not-a-uuid"})
+
+    assert response.status_code == 400
+    assert response.headers["x-content-type-options"] == "nosniff"
+    assert response.headers["cache-control"] == "no-store"
+
+
+async def test_unhandled_server_errors_carry_security_headers() -> None:
+    app = create_app(app_settings(), audit_repository=AsyncMock(spec=AuditRepository))
+
+    @app.get("/boom")
+    async def boom() -> None:
+        raise RuntimeError("unexpected")
+
+    async with httpx.AsyncClient(
+        transport=httpx.ASGITransport(app=app, raise_app_exceptions=False),
+        base_url="https://api.test",
+    ) as client:
+        response = await client.get("/boom")
+
+    assert response.status_code == 500
+    assert response.headers["x-content-type-options"] == "nosniff"
+    assert response.headers["content-security-policy"] == (
+        "default-src 'none'; frame-ancestors 'none'"
+    )
+    assert response.headers["cache-control"] == "no-store"
+    assert "x-correlation-id" in response.headers
