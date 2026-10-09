@@ -13,7 +13,7 @@
     ".ruff_cache", ".next", ".env", "build", "dist"
   ],
   "remove": [
-    "engagement/examples", "evaluations/example-datasets",
+    "engagement/examples",
     "scripts/new_project.py", "scripts/.gitkeep"
   ],
   "renames": {

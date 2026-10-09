@@ -202,6 +202,14 @@ def replace_text(text: str, replacements: Mapping[str, str]) -> str:
     return re.sub(pattern, lambda match: replacements[match.group()], text)
 
 
+def renamed_path(relative: Path, renames: Mapping[str, str]) -> Path:
+    """Apply manifest renames whose keys are paths (contain ``/``) to a copied path."""
+    for old, new in sorted(renames.items(), key=lambda item: len(item[0]), reverse=True):
+        if "/" in old and relative.is_relative_to(old):
+            return Path(new) / relative.relative_to(old)
+    return relative
+
+
 def generated_makefile(text: str) -> str:
     if text.count(BEGIN_GENERATOR) != 1 or text.count(END_GENERATOR) != 1:
         raise ValueError("Makefile must contain exactly one project generator block")
@@ -291,7 +299,8 @@ def generate(source: Path, destination: Path, name: str, display: str) -> None:
                 break
             if is_link(component):
                 raise ValueError(f"Source contains a link: {relative}")
-        target = Path(*(module if part == "accelerator" else part for part in relative.parts))
+        target = renamed_path(relative, manifest.renames)
+        target = Path(*(module if part == "accelerator" else part for part in target.parts))
         if target in targets:
             raise ValueError(f"Overlapping copy paths or rename collision: {target}")
         targets.add(target)
@@ -532,6 +541,12 @@ class GeneratorTests(unittest.TestCase):
         )
         row = json.loads((self.destination / "evaluations/datasets/starter.jsonl").read_text())
         self.assertEqual(row, self.manifest["starter_row"])
+        # Kept example datasets move with their path rename, like the text that names them.
+        self.assertEqual(
+            (self.destination / "evaluations/datasets/example.jsonl").read_text(),
+            '{"example": true}',
+        )
+        self.assertFalse((self.destination / "evaluations/example-datasets").exists())
         self.assertEqual(
             before,
             {
