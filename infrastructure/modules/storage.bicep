@@ -84,6 +84,27 @@ resource diagnostics 'Microsoft.Insights/diagnosticSettings@2021-05-01-preview' 
   }
 }
 
+// Ingestion requests and poison messages: reads, writes, deletes and transactions.
+resource queueDiagnostics 'Microsoft.Insights/diagnosticSettings@2021-05-01-preview' = {
+  name: 'storage-queue-to-log-analytics'
+  scope: queueService
+  properties: {
+    workspaceId: logAnalyticsWorkspaceId
+    logs: [
+      {
+        categoryGroup: 'allLogs'
+        enabled: true
+      }
+    ]
+    metrics: [
+      {
+        category: 'Transaction'
+        enabled: true
+      }
+    ]
+  }
+}
+
 output storageAccountName string = storage.name
 output blobEndpoint string = storage.properties.primaryEndpoints.blob
 output queueEndpoint string = storage.properties.primaryEndpoints.queue
