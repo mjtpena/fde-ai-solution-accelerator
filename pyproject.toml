@@ -73,7 +73,7 @@ extend-immutable-calls = [
 [tool.mypy]
 python_version = "3.12"
 strict = true
-mypy_path = ["packages/security_core/src", "apps/api/src"]
+mypy_path = ["packages/security_core/src", "apps/api/src", "tests/e2e_local"]
 explicit_package_bases = true
 # Workspace packages are checked under their import names (accelerator.*), the
 # same names every caller uses, so types match across packages.

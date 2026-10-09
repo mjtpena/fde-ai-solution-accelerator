@@ -1,0 +1,18 @@
+Weekly coordination meeting - notes
+
+Attendees: three team leads and the facilitator.
+
+1. Release calendar. The next release window opens on the first Tuesday of the
+month. Changes must be merged two days before the window. Anything later moves
+to the following window unless the facilitator approves an exception.
+
+2. Shared drive clean-up. Each team lead will archive folders that have not
+changed in the last year and report the number of archived folders next week.
+
+3. Training. A one-hour session on writing clear decision records is scheduled
+for the third Thursday. Attendance is optional; the recording will be shared.
+
+Actions:
+- Team leads: archive stale folders and report counts.
+- Facilitator: publish the release calendar on the team page.
+- Everyone: review the draft decision-record template before Thursday.
