@@ -35,6 +35,13 @@ class WorkerSettings(BaseSettings):
     foundry_embedding_deployment: str | None = None
     managed_identity_client_id: str | None = None
 
+    # Local and CI end-to-end runs without Azure: validate, parse, chunk, store the
+    # canonical blob and record chunk lineage, but embed and index nothing. Documents
+    # then finish as ``indexing_skipped``, never ``ready``. Refused in production and
+    # whenever any Search or Foundry setting is present, so it cannot silently turn
+    # off configured indexing.
+    skip_search_indexing: bool = False
+
     max_document_bytes: int = Field(default=25 * 1024 * 1024, ge=1)
     chunk_size: int = Field(default=1200, ge=100)
     chunk_overlap: int = Field(default=150, ge=0)
@@ -43,21 +50,56 @@ class WorkerSettings(BaseSettings):
     visibility_timeout_seconds: int = Field(default=300, ge=30, le=7 * 24 * 3600)
 
     @property
-    def indexing_configured(self) -> bool:
-        return all(
-            value is not None
-            for value in (
-                self.database_url,
-                self.search_endpoint,
-                self.search_index_name,
-                self.vector_dimensions,
-                self.foundry_project_endpoint,
-                self.foundry_embedding_deployment,
-            )
-        ) and (
-            self.storage_connection_string is not None
-            or (self.blob_account_url is not None and self.queue_account_url is not None)
+    def storage_configured(self) -> bool:
+        return self.storage_connection_string is not None or (
+            self.blob_account_url is not None and self.queue_account_url is not None
         )
+
+    @property
+    def indexing_configured(self) -> bool:
+        return (
+            all(
+                value is not None
+                for value in (
+                    self.database_url,
+                    self.search_endpoint,
+                    self.search_index_name,
+                    self.vector_dimensions,
+                    self.foundry_project_endpoint,
+                    self.foundry_embedding_deployment,
+                )
+            )
+            and self.storage_configured
+        )
+
+    @property
+    def local_pipeline_configured(self) -> bool:
+        """Everything but Search and Foundry, with indexing explicitly skipped."""
+        return (
+            self.skip_search_indexing
+            and self.database_url is not None
+            and self.storage_configured
+        )
+
+    @model_validator(mode="after")
+    def skipped_indexing_is_local_only(self) -> Self:
+        if not self.skip_search_indexing:
+            return self
+        if self.environment == "production":
+            raise ValueError("INGESTION_SKIP_SEARCH_INDEXING is not allowed in production.")
+        indexing = (
+            self.search_endpoint,
+            self.search_index_name,
+            self.vector_dimensions,
+            self.foundry_project_endpoint,
+            self.foundry_embedding_deployment,
+        )
+        if any(value is not None for value in indexing):
+            raise ValueError(
+                "INGESTION_SKIP_SEARCH_INDEXING cannot be combined with Search or "
+                "Foundry settings."
+            )
+        return self
 
     @model_validator(mode="after")
     def queues_are_distinct(self) -> Self:

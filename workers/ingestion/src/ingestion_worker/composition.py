@@ -19,7 +19,8 @@ from .infrastructure.blob_store import AzureBlobStore, AzureSourceReader
 from .infrastructure.database import create_engine
 from .infrastructure.repository import PostgresIngestionRepository
 from .infrastructure.search_index import AzureSearchChunkIndex
-from .service import IngestionService
+from .infrastructure.skipped_index import SkippedSearchIndex
+from .service import ChunkIndex, IngestionService, IngestionStatus
 from .settings import WorkerSettings
 
 logger = logging.getLogger("ingestion_worker")
@@ -27,19 +28,19 @@ logger = logging.getLogger("ingestion_worker")
 
 @asynccontextmanager
 async def compose_consumer(settings: WorkerSettings) -> AsyncIterator[QueueConsumer | None]:
-    """Yield a ready consumer, or ``None`` outside production when indexing is unconfigured."""
-    if not settings.indexing_configured:
+    """Yield a ready consumer, or ``None`` outside production when indexing is unconfigured.
+
+    With ``INGESTION_SKIP_SEARCH_INDEXING`` (development and test only) the consumer
+    runs every stage except embedding and Search writes; see ``SkippedSearchIndex``.
+    """
+    if not (settings.indexing_configured or settings.local_pipeline_configured):
         logger.warning("ingestion_disabled", extra={"reason": "indexing settings incomplete"})
         yield None
         return
-    if (
-        settings.database_url is None
-        or settings.search_endpoint is None
-        or settings.search_index_name is None
-        or settings.vector_dimensions is None
-        or settings.foundry_project_endpoint is None
-    ):
-        raise ValueError("indexing_configured implies these settings are present")
+    if settings.database_url is None:
+        raise ValueError("a configured pipeline implies a database URL")
+    if settings.local_pipeline_configured:
+        logger.warning("ingestion_search_indexing_skipped", extra={"reason": "local setting"})
 
     async with AsyncExitStack() as stack:
         credential = await stack.enter_async_context(
@@ -52,7 +53,7 @@ async def compose_consumer(settings: WorkerSettings) -> AsyncIterator[QueueConsu
             poison = QueueClient.from_connection_string(secret, settings.poison_queue_name)
         else:
             if settings.blob_account_url is None or settings.queue_account_url is None:
-                raise ValueError("indexing_configured implies both account URLs are present")
+                raise ValueError("storage_configured implies both account URLs are present")
             blobs = BlobServiceClient(str(settings.blob_account_url), credential=credential)
             queue = QueueClient(
                 str(settings.queue_account_url), settings.queue_name, credential=credential
@@ -73,26 +74,43 @@ async def compose_consumer(settings: WorkerSettings) -> AsyncIterator[QueueConsu
             tls_ca_file=settings.database_tls_ca_file,
         )
         stack.push_async_callback(engine.dispose)
-        search = await stack.enter_async_context(
-            SearchClient(str(settings.search_endpoint), settings.search_index_name, credential)
-        )
-        embeddings = FoundryEmbeddingClient(
-            project_endpoint=str(settings.foundry_project_endpoint),
-            model=settings.foundry_embedding_deployment,
-            credential=credential,
-        )
-        stack.push_async_callback(embeddings.close)
-
-        repository = PostgresIngestionRepository(async_sessionmaker(engine, expire_on_commit=False))
-        service = IngestionService(
-            AzureBlobStore(blobs.get_container_client(settings.documents_container)),
-            AzureSearchChunkIndex(
+        chunk_index: ChunkIndex
+        if settings.skip_search_indexing:
+            chunk_index = SkippedSearchIndex()
+            completed = IngestionStatus.INDEXING_SKIPPED
+        else:
+            if (
+                settings.search_endpoint is None
+                or settings.search_index_name is None
+                or settings.vector_dimensions is None
+                or settings.foundry_project_endpoint is None
+            ):
+                raise ValueError("indexing_configured implies these settings are present")
+            search = await stack.enter_async_context(
+                SearchClient(
+                    str(settings.search_endpoint), settings.search_index_name, credential
+                )
+            )
+            embeddings = FoundryEmbeddingClient(
+                project_endpoint=str(settings.foundry_project_endpoint),
+                model=settings.foundry_embedding_deployment,
+                credential=credential,
+            )
+            stack.push_async_callback(embeddings.close)
+            chunk_index = AzureSearchChunkIndex(
                 search,
                 embeddings,
                 dimensions=settings.vector_dimensions,
                 batch_size=settings.embedding_batch_size,
-            ),
+            )
+            completed = IngestionStatus.READY
+
+        repository = PostgresIngestionRepository(async_sessionmaker(engine, expire_on_commit=False))
+        service = IngestionService(
+            AzureBlobStore(blobs.get_container_client(settings.documents_container)),
+            chunk_index,
             repository,
+            completed_status=completed,
         )
         handler = IngestionHandler(
             service,

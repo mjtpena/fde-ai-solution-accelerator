@@ -62,6 +62,9 @@ class IngestionStatus(StrEnum):
     PROCESSING = "processing"
     READY = "ready"
     FAILED = "failed"
+    # Local runs with INGESTION_SKIP_SEARCH_INDEXING: stored and chunked, not indexed.
+    # Never treated as ``ready``, so a worker with indexing re-processes the document.
+    INDEXING_SKIPPED = "indexing_skipped"
 
 
 @dataclass(frozen=True, slots=True)
@@ -138,10 +141,16 @@ class IngestionService:
         blob_store: BlobStore,
         chunk_index: ChunkIndex,
         repository: IngestionRepository,
+        *,
+        completed_status: IngestionStatus = IngestionStatus.READY,
     ) -> None:
+        if completed_status not in (IngestionStatus.READY, IngestionStatus.INDEXING_SKIPPED):
+            raise ValueError("completed_status must be ready or indexing_skipped")
         self._blob_store = blob_store
         self._chunk_index = chunk_index
         self._repository = repository
+        # The state a successful run ends in, and the only state that dedupes a rerun.
+        self._completed_status = completed_status
 
     async def ingest(self, job: IngestionJob) -> IngestionResult:
         async with self._repository.lock_document(job.document.document_id):
@@ -156,7 +165,7 @@ class IngestionService:
             existing = await self._repository.get_document(job.document.document_id)
             if (
                 existing is not None
-                and existing.status is IngestionStatus.READY
+                and existing.status is self._completed_status
                 and existing.content_hash == content_hash
                 and existing.version == job.document.version
                 and existing.scope_id == job.document.scope_id
@@ -196,7 +205,7 @@ class IngestionService:
 
             stage = "ready_state"
             await self._repository.upsert_document(
-                self._record(job, content_hash, IngestionStatus.READY)
+                self._record(job, content_hash, self._completed_status)
             )
             return IngestionResult(content_hash, skipped=False, reindexed=reindexed)
         except Exception as error:

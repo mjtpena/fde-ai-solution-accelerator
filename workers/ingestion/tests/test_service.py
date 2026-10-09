@@ -183,6 +183,36 @@ class IngestionServiceTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(self.index.upsert_calls, 1)
         self.assertEqual(self.repository.documents["doc-1"].status, IngestionStatus.READY)
 
+    async def test_skipped_indexing_never_counts_as_ready_for_an_indexing_worker(self) -> None:
+        local = IngestionService(
+            self.blobs,
+            self.index,
+            self.repository,
+            completed_status=IngestionStatus.INDEXING_SKIPPED,
+        )
+        job = self.make_job()
+
+        self.assertFalse((await local.ingest(job)).skipped)
+        self.assertTrue((await local.ingest(job)).skipped)  # dedupes within its own mode
+        self.assertEqual(
+            self.repository.documents["doc-1"].status, IngestionStatus.INDEXING_SKIPPED
+        )
+
+        # The same unchanged document is indexed once a Search-backed worker sees it.
+        result = await self.service.ingest(job)
+
+        self.assertFalse(result.skipped)
+        self.assertEqual(self.repository.documents["doc-1"].status, IngestionStatus.READY)
+
+    def test_completed_status_must_be_a_terminal_success_state(self) -> None:
+        with self.assertRaises(ValueError):
+            IngestionService(
+                self.blobs,
+                self.index,
+                self.repository,
+                completed_status=IngestionStatus.FAILED,
+            )
+
     async def test_version_change_reindexes_even_when_content_hash_is_unchanged(self) -> None:
         await self.service.ingest(self.make_job())
         result = await self.service.ingest(self.make_job(version="v2"))

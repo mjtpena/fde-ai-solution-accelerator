@@ -5,6 +5,7 @@ import pytest
 from pydantic import ValidationError
 
 from accelerator.ingestion.composition import compose_consumer
+from accelerator.ingestion.infrastructure.skipped_index import SkippedSearchIndex
 from accelerator.ingestion.settings import WorkerSettings
 
 
@@ -89,3 +90,62 @@ def test_rejected_settings_do_not_echo_the_dsn() -> None:
         )
 
     assert "secret-value" not in str(raised.value)
+
+
+LOCAL_PIPELINE: dict[str, object] = {
+    "environment": "test",
+    "storage_connection_string": "UseDevelopmentStorage=true",
+    "database_url": "postgresql://worker:local@127.0.0.1/accelerator",
+    "skip_search_indexing": True,
+}
+
+
+def test_skipped_indexing_runs_the_local_pipeline_without_search_or_foundry() -> None:
+    settings = WorkerSettings.model_validate(LOCAL_PIPELINE)
+
+    assert settings.local_pipeline_configured
+    assert not settings.indexing_configured
+
+
+def test_without_the_skip_setting_the_same_values_leave_ingestion_disabled() -> None:
+    settings = WorkerSettings.model_validate({**LOCAL_PIPELINE, "skip_search_indexing": False})
+
+    assert not settings.local_pipeline_configured
+    assert not settings.indexing_configured
+
+
+@pytest.mark.parametrize(
+    ("overrides", "message"),
+    [
+        ({"environment": "production"}, "not allowed in production"),
+        ({"search_endpoint": "https://search.example.test"}, "cannot be combined"),
+        ({"search_index_name": "chunks"}, "cannot be combined"),
+        ({"vector_dimensions": 1536}, "cannot be combined"),
+        ({"foundry_project_endpoint": "https://foundry.example.test/p"}, "cannot be combined"),
+        ({"foundry_embedding_deployment": "embeddings"}, "cannot be combined"),
+    ],
+)
+def test_skipped_indexing_is_refused_in_production_and_next_to_azure_settings(
+    overrides: dict[str, object], message: str
+) -> None:
+    with pytest.raises(ValidationError, match=message):
+        WorkerSettings.model_validate({**LOCAL_PIPELINE, **overrides})
+
+
+async def test_skipped_index_writes_nothing_and_logs_every_call(
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    index = SkippedSearchIndex()
+    with caplog.at_level("WARNING", logger="ingestion_worker"):
+        await index.upsert_chunks(["a", "b"])
+        await index.delete_chunks("doc-1", ["a"])
+        await index.delete_document("doc-1")
+
+    assert [record.getMessage() for record in caplog.records] == [
+        "search_indexing_skipped"
+    ] * 3
+    assert [getattr(record, "operation") for record in caplog.records] == [  # noqa: B009
+        "upsert",
+        "delete_chunks",
+        "delete_document",
+    ]

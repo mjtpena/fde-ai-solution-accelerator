@@ -53,3 +53,16 @@ and Foundry. Outside production, a storage connection string is accepted for
 Azurite, and the worker creates its queues and containers. When the indexing
 settings are incomplete, the worker logs `ingestion_disabled` and idles, still
 healthy, so `docker compose up` works without Azure.
+
+### Running without Azure AI Search (local and CI only)
+
+`INGESTION_SKIP_SEARCH_INDEXING=true` runs every stage except embedding and the
+Search writes: queue handling, the size and type allow-list, parsing, chunking,
+the canonical blob, chunk lineage and document state in PostgreSQL. It needs
+only storage (Azurite) and `INGESTION_DATABASE_URL`. Successful documents end as
+`indexing_skipped`, never `ready`, and only `indexing_skipped` dedupes a rerun in
+this mode, so a worker with Search configured re-processes them. Each skipped
+index call logs `search_indexing_skipped`. Settings validation refuses the flag
+in production and next to any Search or Foundry setting. No embeddings are
+invented. The real-process suite in `tests/e2e_local` uses it; see
+`docs/testing-strategy.md`.
