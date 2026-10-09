@@ -22,22 +22,8 @@
                 }
               }
             }
-          },
-          "401": {
-            "description": "Missing or invalid bearer token."
-          },
-          "403": {
-            "description": "Insufficient app role."
-          },
-          "503": {
-            "description": "Identity, scope, or audit persistence is unavailable."
           }
-        },
-        "security": [
-          {
-            "HTTPBearer": []
-          }
-        ]
+        }
       }
     },
     "/readyz": {
@@ -53,26 +39,22 @@
             "content": {
               "application/json": {
                 "schema": {
-                  "$ref": "#/components/schemas/HealthResponse"
+                  "$ref": "#/components/schemas/ReadinessResponse"
                 }
               }
             }
           },
-          "401": {
-            "description": "Missing or invalid bearer token."
-          },
-          "403": {
-            "description": "Insufficient app role."
-          },
           "503": {
-            "description": "Identity, scope, or audit persistence is unavailable."
+            "description": "A dependency is not ready.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ReadinessResponse"
+                }
+              }
+            }
           }
-        },
-        "security": [
-          {
-            "HTTPBearer": []
-          }
-        ]
+        }
       }
     },
     "/diagnostics/retrieval/{correlation_id}": {
@@ -542,10 +524,7 @@
         "properties": {
           "status": {
             "type": "string",
-            "enum": [
-              "ok",
-              "ready"
-            ],
+            "const": "ok",
             "title": "Status"
           }
         },
@@ -554,6 +533,60 @@
           "status"
         ],
         "title": "HealthResponse"
+      },
+      "ReadinessCheck": {
+        "properties": {
+          "status": {
+            "type": "string",
+            "enum": [
+              "ok",
+              "failed",
+              "not_configured"
+            ],
+            "title": "Status"
+          },
+          "reason": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Reason"
+          }
+        },
+        "type": "object",
+        "required": [
+          "status"
+        ],
+        "title": "ReadinessCheck"
+      },
+      "ReadinessResponse": {
+        "properties": {
+          "status": {
+            "type": "string",
+            "enum": [
+              "ready",
+              "not_ready"
+            ],
+            "title": "Status"
+          },
+          "checks": {
+            "additionalProperties": {
+              "$ref": "#/components/schemas/ReadinessCheck"
+            },
+            "type": "object",
+            "title": "Checks"
+          }
+        },
+        "type": "object",
+        "required": [
+          "status",
+          "checks"
+        ],
+        "title": "ReadinessResponse"
       },
       "RetrievalDiagnosticResult": {
         "properties": {

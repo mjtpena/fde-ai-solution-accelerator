@@ -8,10 +8,10 @@ import httpx
 import jwt
 import pytest
 from cryptography.hazmat.primitives.asymmetric import rsa
-from fastapi import Depends, FastAPI
+from fastapi import APIRouter, Depends, FastAPI
 from fastapi.testclient import TestClient
 
-from accelerator.api.app import create_app
+from accelerator.api.app import AUTHENTICATED, create_app
 from accelerator.configuration.settings import Settings
 from accelerator.domain.audit import AuditRepository
 from accelerator.identity.authentication import (
@@ -36,16 +36,43 @@ def make_settings() -> Settings:
     )
 
 
+def protected_app(**kwargs: Any) -> FastAPI:
+    """The real app plus one route behind the same dependency every product router uses."""
+    app = create_app(make_settings(), **kwargs)
+    router = APIRouter()
+
+    @router.get("/protected")
+    async def protected() -> dict[str, str]:
+        return {"status": "ok"}
+
+    app.include_router(router, **AUTHENTICATED)
+    return app
+
+
 def test_missing_token_returns_401() -> None:
-    with TestClient(
-        create_app(make_settings(), audit_repository=AsyncMock(spec=AuditRepository))
-    ) as client:
+    with TestClient(protected_app(audit_repository=AsyncMock(spec=AuditRepository))) as client:
+        response = client.get("/protected")
+
+    assert response.status_code == 401
+    assert response.headers["www-authenticate"] == "Bearer"
+
+
+def test_health_probes_do_not_require_a_token() -> None:
+    app = create_app(make_settings())
+
+    class OfflineValidator:
+        async def ensure_signing_keys(self, client: httpx.AsyncClient) -> None:
+            raise AuthProviderUnavailable
+
+    app.state.token_validator = OfflineValidator()
+    with TestClient(app) as client:
         health_response = client.get("/healthz")
         ready_response = client.get("/readyz")
 
-    assert health_response.status_code == 401
-    assert health_response.headers["www-authenticate"] == "Bearer"
-    assert ready_response.status_code == 401
+    assert health_response.status_code == 200
+    assert health_response.json() == {"status": "ok"}
+    # Not ready (no database or workflow in this app), but never an auth failure.
+    assert ready_response.status_code == 503
 
 
 def test_public_api_documentation_routes_are_disabled() -> None:
@@ -59,37 +86,37 @@ def test_public_api_documentation_routes_are_disabled() -> None:
     assert [response.status_code for response in responses] == [404, 404, 404]
 
 
-def test_reader_role_can_access_real_health_routes() -> None:
-    app = create_app(make_settings())
+def test_reader_role_can_access_protected_routes() -> None:
+    app = protected_app()
 
     async def reader() -> Principal:
         return Principal(subject="reader", roles=frozenset({AppRole.READER}))
 
     app.dependency_overrides[get_current_principal] = reader
     with TestClient(app) as client:
-        response = client.get("/healthz")
+        response = client.get("/protected")
 
     assert response.status_code == 200
     assert response.json() == {"status": "ok"}
 
 
-def test_empty_role_set_is_forbidden_on_real_health_routes() -> None:
-    app = create_app(make_settings())
+def test_empty_role_set_is_forbidden_on_protected_routes() -> None:
+    app = protected_app()
 
     async def unassigned() -> Principal:
         return Principal(subject="unassigned")
 
     app.dependency_overrides[get_current_principal] = unassigned
     with TestClient(app) as client:
-        response = client.get("/healthz")
+        response = client.get("/protected")
 
     assert response.status_code == 403
 
 
 def test_configured_web_origin_can_preflight_authenticated_requests() -> None:
-    with TestClient(create_app(make_settings())) as client:
+    with TestClient(protected_app()) as client:
         response = client.options(
-            "/healthz",
+            "/protected",
             headers={
                 "Origin": "http://localhost:3000",
                 "Access-Control-Request-Method": "GET",
@@ -102,7 +129,7 @@ def test_configured_web_origin_can_preflight_authenticated_requests() -> None:
 
 
 def test_invalid_token_returns_401() -> None:
-    app = create_app(make_settings(), audit_repository=AsyncMock(spec=AuditRepository))
+    app = protected_app(audit_repository=AsyncMock(spec=AuditRepository))
 
     class RejectingValidator:
         async def validate(self, token: str, client: httpx.AsyncClient) -> Principal:
@@ -110,14 +137,14 @@ def test_invalid_token_returns_401() -> None:
 
     app.state.token_validator = RejectingValidator()
     with TestClient(app) as client:
-        response = client.get("/healthz", headers={"Authorization": "Bearer invalid"})
+        response = client.get("/protected", headers={"Authorization": "Bearer invalid"})
 
     assert response.status_code == 401
     assert response.headers["www-authenticate"] == "Bearer"
 
 
 def test_identity_provider_unavailable_returns_503() -> None:
-    app = create_app(make_settings())
+    app = protected_app()
 
     class UnavailableValidator:
         async def validate(self, token: str, client: httpx.AsyncClient) -> Principal:
@@ -125,7 +152,7 @@ def test_identity_provider_unavailable_returns_503() -> None:
 
     app.state.token_validator = UnavailableValidator()
     with TestClient(app) as client:
-        response = client.get("/healthz", headers={"Authorization": "Bearer token"})
+        response = client.get("/protected", headers={"Authorization": "Bearer token"})
 
     assert response.status_code == 503
 

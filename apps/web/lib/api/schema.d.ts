@@ -145,9 +145,31 @@ export interface components {
         HealthResponse: {
             /**
              * Status
+             * @constant
+             */
+            status: "ok";
+        };
+        /** ReadinessCheck */
+        ReadinessCheck: {
+            /**
+             * Status
              * @enum {string}
              */
-            status: "ok" | "ready";
+            status: "ok" | "failed" | "not_configured";
+            /** Reason */
+            reason?: string | null;
+        };
+        /** ReadinessResponse */
+        ReadinessResponse: {
+            /**
+             * Status
+             * @enum {string}
+             */
+            status: "ready" | "not_ready";
+            /** Checks */
+            checks: {
+                [key: string]: components["schemas"]["ReadinessCheck"];
+            };
         };
         /** RetrievalDiagnosticResult */
         RetrievalDiagnosticResult: {
@@ -219,27 +241,6 @@ export interface operations {
                     "application/json": components["schemas"]["HealthResponse"];
                 };
             };
-            /** @description Missing or invalid bearer token. */
-            401: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content?: never;
-            };
-            /** @description Insufficient app role. */
-            403: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content?: never;
-            };
-            /** @description Identity, scope, or audit persistence is unavailable. */
-            503: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content?: never;
-            };
         };
     };
     readyz_readyz_get: {
@@ -257,29 +258,17 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": components["schemas"]["HealthResponse"];
+                    "application/json": components["schemas"]["ReadinessResponse"];
                 };
             };
-            /** @description Missing or invalid bearer token. */
-            401: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content?: never;
-            };
-            /** @description Insufficient app role. */
-            403: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content?: never;
-            };
-            /** @description Identity, scope, or audit persistence is unavailable. */
+            /** @description A dependency is not ready. */
             503: {
                 headers: {
                     [name: string]: unknown;
                 };
-                content?: never;
+                content: {
+                    "application/json": components["schemas"]["ReadinessResponse"];
+                };
             };
         };
     };

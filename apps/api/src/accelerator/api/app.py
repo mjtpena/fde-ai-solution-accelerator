@@ -1,6 +1,6 @@
 from collections.abc import Awaitable, Callable, Sequence
 from contextlib import asynccontextmanager
-from typing import AsyncIterator
+from typing import Any, AsyncIterator
 
 import httpx
 from fastapi import Depends, FastAPI
@@ -30,6 +30,19 @@ from accelerator.identity.scope_resolver import (
 from accelerator.security_core.authorisation.memberships import ScopeMembershipRepository
 from accelerator.security_core.cost_guard import RateLimiter, TokenBudgetExceeded
 from accelerator.security_core.infrastructure.database import SessionFactory
+
+
+require_app_role = require_any_role(*AppRole)
+
+# Every router except the health probes requires a validated token with an app role.
+AUTHENTICATED: dict[str, Any] = {
+    "dependencies": [Depends(require_app_role)],
+    "responses": {
+        401: {"description": "Missing or invalid bearer token."},
+        403: {"description": "Insufficient app role."},
+        503: {"description": "Identity, scope, or audit persistence is unavailable."},
+    },
+}
 
 
 @asynccontextmanager
@@ -69,12 +82,6 @@ def create_app(
         redoc_url=None,
         openapi_url=None,
         lifespan=lifespan,
-        dependencies=[Depends(require_any_role(*AppRole))],
-        responses={
-            401: {"description": "Missing or invalid bearer token."},
-            403: {"description": "Insufficient app role."},
-            503: {"description": "Identity, scope, or audit persistence is unavailable."},
-        },
     )
     app.state.settings = settings
     app.state.session_factory = session_factory
@@ -101,12 +108,12 @@ def create_app(
         allow_headers=["*"],
     )
     app.include_router(health_router)
-    app.include_router(retrieval_diagnostics_router)
-    app.include_router(audit_router)
+    app.include_router(retrieval_diagnostics_router, **AUTHENTICATED)
+    app.include_router(audit_router, **AUTHENTICATED)
     if chat_turn is not None:
         app.state.chat_turn = chat_turn
     if scope_repository is not None:
         configure_scope_resolver(app, scope_repository)
-    app.include_router(chat_router)
+    app.include_router(chat_router, **AUTHENTICATED)
     install_scope_boundary(app)
     return app

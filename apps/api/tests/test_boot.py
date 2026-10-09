@@ -176,28 +176,32 @@ async def test_production_app_boots_and_serves_authenticated_routes(
     async with running(production_app) as client:
         unauthenticated = await client.get("/audit-events")
         audit_page = await client.get("/audit-events?limit=10", headers=bearer("Admin"))
-        ready = await client.get("/readyz", headers=bearer("Reader"))
+        ready = await client.get("/readyz")
 
     # A missing token is a 401 that was audited, not a 503 from missing persistence.
     assert unauthenticated.status_code == 401
     assert audit_page.status_code == 200, audit_page.text
     recorded = [item["correlation_id"] for item in audit_page.json()["items"]]
     assert unauthenticated.headers["x-correlation-id"] in recorded
-    assert ready.status_code == 200, ready.text
+    checks = ready.json()["checks"]
+    assert checks["database"]["status"] == "ok", ready.text
+    assert checks["identity_provider"]["status"] == "ok", ready.text
 
 
 @pytest.mark.xfail(
     strict=True,
     reason="The production grounded-answer workflow is wired with retrieval in Phase 2.",
 )
-async def test_production_chat_stream_is_configured(
+async def test_production_chat_stream_is_configured_and_ready(
     production_app: FastAPI, migrated_database_url: str
 ) -> None:
     await grant_scope(migrated_database_url)
 
     async with running(production_app) as client:
+        ready = await client.get("/readyz")
         response = await client.post(
             "/chat/stream", json={"message": "What is supported?"}, headers=bearer("Reader")
         )
 
+    assert ready.status_code == 200, ready.text
     assert response.status_code != 503, response.text

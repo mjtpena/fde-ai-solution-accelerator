@@ -79,6 +79,13 @@ class EntraTokenValidator:
             roles=mapped_roles,
         )
 
+    async def ensure_signing_keys(self, client: httpx.AsyncClient) -> None:
+        """Raise ``AuthProviderUnavailable`` unless usable signing keys are cached or fetchable."""
+        if time.monotonic() >= self._keys_expire_at:
+            await self._refresh_keys(client)
+        if not self._keys:
+            raise AuthProviderUnavailable
+
     async def _get_key(
         self,
         key_id: str,

@@ -309,8 +309,9 @@ def test_public_surface_has_no_mutation_routes_or_repository_methods() -> None:
 
 def test_openapi_declares_audit_outages_for_all_authenticated_routes() -> None:
     schema = make_app(MemoryRepository()).openapi()
-    for path in ("/healthz", "/readyz", "/audit-events"):
-        assert "503" in schema["paths"][path]["get"]["responses"]
+    assert "503" in schema["paths"]["/audit-events"]["get"]["responses"]
+    assert "401" in schema["paths"]["/audit-events"]["get"]["responses"]
+    assert "401" not in schema["paths"]["/healthz"]["get"]["responses"]
 
 
 def test_response_schema_requires_always_serialized_event_fields() -> None:
