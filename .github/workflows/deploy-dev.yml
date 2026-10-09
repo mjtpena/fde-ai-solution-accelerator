@@ -10,9 +10,17 @@ name: Deploy dev
 # Configure the `production` environment with required reviewers before opting
 # into its promotion job, and federate
 # repo:mjtpena/fde-ai-solution-accelerator:environment:production.
-# Production resources are pre-provisioned separately. No API Dockerfile exists:
-# configure API_IMAGE as a trusted digest reference in the bootstrap ACR.
+# Production resources are pre-provisioned separately. All images (api, web,
+# worker, hosted agent) are built from this repository and deployed by digest.
 # Bicep owns all dev apps; DEPLOY_APPLICATIONS selects bootstrap/app deployment.
+# Also configure WEB_ENTRA_CLIENT_ID and WEB_ENTRA_API_SCOPE (compiled into the web
+# bundle; not secrets) and, optionally, AZURE_DEPLOYMENT_PRINCIPAL_ID (this OIDC
+# principal's object ID, granted Search Service Contributor to create the index).
+# The full evaluation runs on the VNet runner (dev-database environment, which
+# also needs EVALUATION_PRINCIPAL_OBJECT_ID and the EVALUATION_JUDGE_* variables);
+# set AZURE_EVALUATION_PRINCIPAL_ID in dev to that runner identity's object ID.
+# Every stage after the infrastructure deployment is
+# infrastructure/scripts/deploy-dev.sh, the same script `make deploy-dev` runs.
 # The protected `dev-database` environment needs DB-admin OIDC variables,
 # AZURE_POSTGRES_ADMIN_NAME and POSTGRES_CA_CERTIFICATE_PATH. Use an ephemeral
 # Linux runner labelled by repository-level POSTGRES_RUNNER_LABEL with Azure CLI,
@@ -75,7 +83,7 @@ jobs:
           npm ci
 
       - name: Check
-        run: make check
+        run: make check SKIP_GENERATOR=1
 
       - name: Validate Bicep without credentials
         shell: pwsh
@@ -120,6 +128,10 @@ jobs:
       worker_container_app_name: ${{ steps.outputs.outputs.worker_container_app_name }}
       api_identity_id: ${{ steps.outputs.outputs.api_identity_id }}
       api_identity_principal_id: ${{ steps.outputs.outputs.api_identity_principal_id }}
+      search_endpoint: ${{ steps.outputs.outputs.search_endpoint }}
+      search_index_name: ${{ steps.outputs.outputs.search_index_name }}
+      search_vector_dimensions: ${{ steps.outputs.outputs.search_vector_dimensions }}
+      embedding_deployment_name: ${{ steps.outputs.outputs.embedding_deployment_name }}
       web_identity_id: ${{ steps.outputs.outputs.web_identity_id }}
       web_identity_principal_id: ${{ steps.outputs.outputs.web_identity_principal_id }}
       worker_identity_id: ${{ steps.outputs.outputs.worker_identity_id }}
@@ -129,6 +141,7 @@ jobs:
       foundry_project_id: ${{ steps.outputs.outputs.foundry_project_id }}
       foundry_project_name: ${{ steps.outputs.outputs.foundry_project_name }}
       model_deployment_name: ${{ steps.outputs.outputs.model_deployment_name }}
+      api_image: ${{ steps.images.outputs.api_image }}
       web_image: ${{ steps.images.outputs.web_image }}
       worker_image: ${{ steps.images.outputs.worker_image }}
       agent_image: ${{ steps.images.outputs.agent_image }}
@@ -148,9 +161,12 @@ jobs:
       EVALUATION_JUDGE_AZURE_DEPLOYMENT: ${{ vars.EVALUATION_JUDGE_AZURE_DEPLOYMENT }}
       EVALUATION_DATASET: ${{ vars.EVALUATION_DATASET }}
       DEPLOY_APPLICATIONS: "false"
-      API_IMAGE: ${{ vars.API_IMAGE }}
       API_ENTRA_TENANT_ID: ${{ vars.API_ENTRA_TENANT_ID }}
       API_ENTRA_AUDIENCE: ${{ vars.API_ENTRA_AUDIENCE }}
+      WEB_ENTRA_CLIENT_ID: ${{ vars.WEB_ENTRA_CLIENT_ID }}
+      WEB_ENTRA_API_SCOPE: ${{ vars.WEB_ENTRA_API_SCOPE }}
+      AZURE_DEPLOYMENT_PRINCIPAL_ID: ${{ vars.AZURE_DEPLOYMENT_PRINCIPAL_ID }}
+      AZURE_EVALUATION_PRINCIPAL_ID: ${{ vars.AZURE_EVALUATION_PRINCIPAL_ID }}
       POSTGRES_RUNNER_LABEL: ${{ vars.POSTGRES_RUNNER_LABEL }}
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
@@ -178,24 +194,20 @@ jobs:
             AZURE_POSTGRES_ADMIN_OBJECT_ID \
             AZURE_POSTGRES_ADMIN_NAME \
             AZURE_POSTGRES_ADMIN_PRINCIPAL_TYPE \
-            API_IMAGE \
             API_ENTRA_TENANT_ID \
             API_ENTRA_AUDIENCE \
+            WEB_ENTRA_CLIENT_ID \
+            WEB_ENTRA_API_SCOPE \
             POSTGRES_RUNNER_LABEL \
             HOSTED_AGENT_NAME \
             HOSTED_APPLICATION_FACTORY \
             EVALUATION_JUDGE_AZURE_ENDPOINT \
-            EVALUATION_JUDGE_AZURE_DEPLOYMENT \
-            EVALUATION_DATASET; do
+            EVALUATION_JUDGE_AZURE_DEPLOYMENT; do
             if [[ -z "${!name}" ]]; then
               echo "::error::Configure the $name variable in the dev environment."
               exit 1
             fi
           done
-          if [[ ! "$API_IMAGE" =~ ^[^[:space:]]+/[^[:space:]]+@sha256:[a-fA-F0-9]{64}$ ]]; then
-            echo "::error::API_IMAGE must be a trusted registry/repository@sha256 digest."
-            exit 1
-          fi
 
       - name: Sign in to Azure with OIDC
         uses: azure/login@7184910d9eb2b1c5e48f7073824a90609bb9b6d6 # v2
@@ -273,6 +285,10 @@ jobs:
             echo "model_deployment_name=$(jq -er '.modelDeploymentName.value' <<< "$outputs")"
             echo "postgres_fqdn=$(jq -er '.postgresFqdn.value' <<< "$outputs")"
             echo "postgres_database_name=$(jq -er '.postgresDatabaseName.value' <<< "$outputs")"
+            echo "search_endpoint=$(jq -er '.searchEndpoint.value' <<< "$outputs")"
+            echo "search_index_name=$(jq -er '.searchIndexName.value' <<< "$outputs")"
+            echo "search_vector_dimensions=$(jq -er '.searchVectorDimensions.value' <<< "$outputs")"
+            echo "embedding_deployment_name=$(jq -er '.embeddingDeploymentName.value' <<< "$outputs")"
           } >> "$GITHUB_OUTPUT"
 
       - name: Build and push application images
@@ -284,17 +300,23 @@ jobs:
         run: |
           set -euo pipefail
           tag="$GITHUB_SHA"
+          api_image="$REGISTRY_LOGIN_SERVER/api:$tag"
           web_image="$REGISTRY_LOGIN_SERVER/web:$tag"
           worker_image="$REGISTRY_LOGIN_SERVER/worker:$tag"
           agent_image="$REGISTRY_LOGIN_SERVER/fde-agent:$tag"
-          if [[ "$API_IMAGE" != "$REGISTRY_LOGIN_SERVER/"* ]]; then
-            echo "::error::API_IMAGE must be hosted in the Bicep registry with configured UAMI pull access."
-            exit 1
-          fi
 
           az acr login --name "$REGISTRY_NAME"
           docker buildx build --platform linux/amd64 \
+            --file apps/api/Dockerfile \
+            --tag "$api_image" \
+            --metadata-file "$RUNNER_TEMP/api-image.json" \
+            --push .
+          # NEXT_PUBLIC_* values are compiled into the browser bundle; not secrets.
+          docker buildx build --platform linux/amd64 \
             --file apps/web/Dockerfile \
+            --build-arg "NEXT_PUBLIC_ENTRA_TENANT_ID=$API_ENTRA_TENANT_ID" \
+            --build-arg "NEXT_PUBLIC_ENTRA_CLIENT_ID=$WEB_ENTRA_CLIENT_ID" \
+            --build-arg "NEXT_PUBLIC_ENTRA_API_SCOPE=$WEB_ENTRA_API_SCOPE" \
             --tag "$web_image" \
             --metadata-file "$RUNNER_TEMP/web-image.json" \
             --push .
@@ -310,6 +332,7 @@ jobs:
             --push .
 
           {
+            echo "api_image=$REGISTRY_LOGIN_SERVER/api@$(jq -er '.["containerimage.digest"]' "$RUNNER_TEMP/api-image.json")"
             echo "web_image=$REGISTRY_LOGIN_SERVER/web@$(jq -er '.["containerimage.digest"]' "$RUNNER_TEMP/web-image.json")"
             echo "worker_image=$REGISTRY_LOGIN_SERVER/worker@$(jq -er '.["containerimage.digest"]' "$RUNNER_TEMP/worker-image.json")"
             echo "agent_image=$REGISTRY_LOGIN_SERVER/fde-agent@$(jq -er '.["containerimage.digest"]' "$RUNNER_TEMP/agent-image.json")"
@@ -414,7 +437,10 @@ jobs:
       AZURE_POSTGRES_ADMIN_NAME: ${{ vars.AZURE_POSTGRES_ADMIN_NAME }}
       AZURE_POSTGRES_ADMIN_PRINCIPAL_TYPE: ${{ vars.AZURE_POSTGRES_ADMIN_PRINCIPAL_TYPE }}
       DEPLOY_APPLICATIONS: "true"
-      API_IMAGE: ${{ vars.API_IMAGE }}
+      DEPLOYMENT_NAME: fde-dev-${{ github.sha }}
+      AZURE_DEPLOYMENT_PRINCIPAL_ID: ${{ vars.AZURE_DEPLOYMENT_PRINCIPAL_ID }}
+      AZURE_EVALUATION_PRINCIPAL_ID: ${{ vars.AZURE_EVALUATION_PRINCIPAL_ID }}
+      API_IMAGE: ${{ needs.deploy_dev.outputs.api_image }}
       WEB_IMAGE: ${{ needs.deploy_dev.outputs.web_image }}
       WORKER_IMAGE: ${{ needs.deploy_dev.outputs.worker_image }}
       API_ENTRA_TENANT_ID: ${{ vars.API_ENTRA_TENANT_ID }}
@@ -454,15 +480,7 @@ jobs:
           retention-days: 30
 
       - name: Deploy application resources through Bicep
-        shell: bash
-        run: |
-          set -euo pipefail
-          az deployment sub create \
-            --subscription "$AZURE_SUBSCRIPTION_ID" --location "$AZURE_LOCATION" \
-            --name "fde-dev-apps-$GITHUB_SHA" \
-            --template-file infrastructure/main.bicep \
-            --parameters infrastructure/parameters/dev.example.bicepparam \
-            --output none
+        run: infrastructure/scripts/deploy-dev.sh applications
 
       - name: Verify application resource provisioning
         shell: bash
@@ -483,6 +501,15 @@ jobs:
             fi
           done
 
+      - name: Run schema migrations
+        run: infrastructure/scripts/deploy-dev.sh migrate
+
+      - name: Create or update the search index
+        run: infrastructure/scripts/deploy-dev.sh index
+
+      - name: Smoke test the web app and the API behind it
+        run: infrastructure/scripts/deploy-dev.sh smoke
+
       - name: Deploy and smoke test Foundry hosted agent
         shell: bash
         env:
@@ -499,24 +526,34 @@ jobs:
           uv run --project infrastructure/hosted_agent \
             python -m infrastructure.hosted_agent.cli smoke
 
+  # Scopes for the evaluation principal come from the private database, so this
+  # runs on the VNet runner, signed in with the dev-database OIDC identity.
   full_evaluation:
     name: Full evaluation
-    needs: deploy_applications
+    needs: [deploy_dev, deploy_applications]
     if: github.ref == 'refs/heads/main'
-    runs-on: ubuntu-latest
+    runs-on: [self-hosted, linux, "${{ vars.POSTGRES_RUNNER_LABEL }}"]
     timeout-minutes: 60
-    environment:
-      name: dev
+    environment: dev-database
     permissions:
       contents: read
       id-token: write
     env:
-      AZURE_CLIENT_ID: ${{ vars.AZURE_CLIENT_ID }}
-      AZURE_TENANT_ID: ${{ vars.AZURE_TENANT_ID }}
-      AZURE_SUBSCRIPTION_ID: ${{ vars.AZURE_SUBSCRIPTION_ID }}
+      API_ENVIRONMENT: development
+      API_ENTRA_TENANT_ID: ${{ vars.API_ENTRA_TENANT_ID }}
+      API_ENTRA_AUDIENCE: ${{ vars.API_ENTRA_AUDIENCE }}
+      API_DATABASE_URL: postgresql+asyncpg://${{ vars.AZURE_POSTGRES_ADMIN_NAME }}@${{ needs.deploy_dev.outputs.postgres_fqdn }}:5432/${{ needs.deploy_dev.outputs.postgres_database_name }}
+      API_DATABASE_AUTH_MODE: managed_identity
+      API_DATABASE_TLS_CA_FILE: ${{ vars.POSTGRES_CA_CERTIFICATE_PATH }}
+      API_FOUNDRY_PROJECT_ENDPOINT: ${{ needs.deploy_dev.outputs.project_endpoint }}
+      API_FOUNDRY_MODEL_DEPLOYMENT: ${{ needs.deploy_dev.outputs.model_deployment_name }}
+      API_FOUNDRY_EMBEDDING_DEPLOYMENT: ${{ needs.deploy_dev.outputs.embedding_deployment_name }}
+      API_SEARCH_ENDPOINT: ${{ needs.deploy_dev.outputs.search_endpoint }}
+      API_SEARCH_INDEX_NAME: ${{ needs.deploy_dev.outputs.search_index_name }}
+      API_SEARCH_VECTOR_DIMENSIONS: ${{ needs.deploy_dev.outputs.search_vector_dimensions }}
+      EVALUATION_PRINCIPAL_OBJECT_ID: ${{ vars.EVALUATION_PRINCIPAL_OBJECT_ID }}
       EVALUATION_JUDGE_AZURE_ENDPOINT: ${{ vars.EVALUATION_JUDGE_AZURE_ENDPOINT }}
       EVALUATION_JUDGE_AZURE_DEPLOYMENT: ${{ vars.EVALUATION_JUDGE_AZURE_DEPLOYMENT }}
-      EVALUATION_DATASET: ${{ vars.EVALUATION_DATASET }}
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
         with:
@@ -536,11 +573,15 @@ jobs:
       - name: Sign in to Azure with OIDC
         uses: azure/login@7184910d9eb2b1c5e48f7073824a90609bb9b6d6 # v2
         with:
-          client-id: ${{ env.AZURE_CLIENT_ID }}
-          tenant-id: ${{ env.AZURE_TENANT_ID }}
-          subscription-id: ${{ env.AZURE_SUBSCRIPTION_ID }}
+          client-id: ${{ vars.AZURE_CLIENT_ID }}
+          tenant-id: ${{ vars.AZURE_TENANT_ID }}
+          subscription-id: ${{ vars.AZURE_SUBSCRIPTION_ID }}
 
+      # Defaults to evaluations/example-datasets/smoke.jsonl over the fixture corpus;
+      # set EVALUATION_DATASET in the environment for a project dataset.
       - name: Run full evaluation
+        env:
+          EVALUATION_DATASET: ${{ vars.EVALUATION_DATASET || 'evaluations/example-datasets/smoke.jsonl' }}
         run: |
           uv sync --all-packages --frozen
           make eval-full

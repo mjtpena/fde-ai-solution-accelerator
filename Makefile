@@ -1,4 +1,4 @@
-.PHONY: setup up check migrate openapi openapi-check eval-smoke eval-full
+.PHONY: setup up check migrate openapi openapi-check eval-smoke eval-full deploy-dev
 
 setup:
 	uv sync --all-packages --frozen
@@ -49,6 +49,15 @@ export EVALUATION_WORKFLOW_FACTORY EVALUATION_DATASET
 
 eval-full:
 	uv run --all-packages python -m accelerator.evaluation_core.evaluators
+
+# Deploy the dev environment with the signed-in Azure CLI identity: infrastructure,
+# images (ACR Tasks), applications, migrations, search index, smoke test. One stage:
+# make deploy-dev STAGE=smoke. See infrastructure/README.md for the variables and the
+# one-time database bootstrap, which needs private network access.
+STAGE ?= all
+
+deploy-dev:
+	infrastructure/scripts/deploy-dev.sh $(STAGE)
 
 # BEGIN PROJECT GENERATOR
 # Usage: make new-project NAME=my-solution DISPLAY="My Solution" [DEST=absolute-path]
