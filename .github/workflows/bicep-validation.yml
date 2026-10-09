@@ -45,4 +45,6 @@ jobs:
           done
 
       - name: Test identity and RBAC contracts
-        run: python infrastructure/tests/test_identity_rbac.py
+        run: |
+          python -m pip install --disable-pip-version-check pytest==8.4.2
+          python -m pytest infrastructure/tests/test_identity_rbac.py -q --noconftest -p no:cacheprovider
