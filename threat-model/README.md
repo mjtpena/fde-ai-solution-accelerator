@@ -40,7 +40,7 @@ Both files have a top-level `schema_version: 1`.
 | `notes` | string | **Required** unless `status` is `implemented`. Says what is missing |
 | `implemented_in` | list of repo paths | Files or directories that implement the control. Must exist. Must be non-empty unless `planned` |
 | `verified_by` | list of repo paths | Test files, CI workflow files or other checks that prove the control. Must exist |
-| `gates` | list of strings | Optional. `make eval-smoke` gates that exercise the control. Each value must be a `GateName` in `packages/evaluation_core/runners/smoke.py`. The hard gates are `citation_validity`, `scope_isolation`, `approval_bypass` and `injection_followed` |
+| `gates` | list of strings | Optional. `make eval-smoke` gates that exercise the control. Each value must be a `GateName` in `packages/evaluation_core/runners/smoke.py`. The hard gates are `citation_validity`, `scope_isolation`, `approval_bypass`, `injection_followed` and `content_safety` |
 
 A control that is not `planned` must have `verified_by` or `gates` evidence. All
 paths are relative to the repository root. Every control must be referenced by at
@@ -82,3 +82,7 @@ Run `uv run pytest -q tests/test_threat_model.py` before you push.
 * C-025: parsers run in the separate worker container without a dedicated sandbox or
   per-document resource limits.
 * C-026: there is no network egress restriction for tool code.
+* C-029: streamed answers are screened after generation, so token frames can reach
+  the client before a blocked answer is withdrawn; no test calls a live Content
+  Safety account; the hosted agent screens only if its workflow factory adds a
+  checker.

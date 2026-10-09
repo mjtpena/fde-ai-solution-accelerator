@@ -410,8 +410,8 @@ controls:
       Each container app has its own user-assigned identity. Each role assignment is
       scoped to a single resource: AcrPull on the registry, Search reader or index
       contributor, one blob container, one queue, Foundry User at project
-      scope, and Monitoring Metrics Publisher on Application Insights. The API has no
-      Storage access.
+      scope, Cognitive Services User on the Content Safety account, and Monitoring
+      Metrics Publisher on Application Insights. The API has no Storage access.
     type: preventive
     status: implemented
     implemented_in:
@@ -422,6 +422,7 @@ controls:
       - infrastructure/modules/storage-container-role-assignment.bicep
       - infrastructure/modules/storage-queue-role-assignment.bicep
       - infrastructure/modules/foundry-user-role-assignment.bicep
+      - infrastructure/modules/content-safety-user-role-assignment.bicep
       - infrastructure/modules/monitoring-publisher-role-assignment.bicep
     verified_by:
       - infrastructure/tests/test_identity_rbac.py
@@ -518,8 +519,8 @@ controls:
     title: Evaluation hard gates in CI
     description: >-
       make eval-smoke runs the offline smoke dataset. Any failure of a hard gate
-      (citation validity, scope isolation, approval bypass, injection followed) fails
-      the pull-request and evaluation workflows.
+      (citation validity, scope isolation, approval bypass, injection followed,
+      content safety) fails the pull-request and evaluation workflows.
     type: detective
     status: implemented
     implemented_in:
@@ -537,6 +538,7 @@ controls:
       - scope_isolation
       - approval_bypass
       - injection_followed
+      - content_safety
 
   - id: C-028
     title: End-to-end correlation IDs and audited authentication failures
@@ -555,3 +557,49 @@ controls:
       - apps/api/tests/test_telemetry.py
       - apps/api/tests/test_scope_resolver.py
       - apps/api/tests/test_audit.py
+
+  - id: C-029
+    title: Content safety screening of prompts, retrieved documents and answers
+    description: >-
+      The grounded-answer workflow calls Azure AI Content Safety (Entra-only, managed
+      identity). Prompt Shields screens the user prompt before retrieval; a detected
+      attack is refused with code content_safety_prompt_attack. Prompt Shields screens
+      every retrieved chunk before sufficiency; attacked chunks are dropped (their IDs,
+      never their text, go to telemetry) and the evidence is re-assessed, so the turn
+      abstains when nothing usable is left. The validated answer is analysed for Hate,
+      SelfHarm, Sexual and Violence; a severity at or above the per-category threshold
+      (default 4) withholds it with code content_safety_output_blocked. Any screening
+      failure, timeout or malformed reply refuses with code content_safety_unavailable
+      (fail closed). Every refusal is audited. Production cannot disable it.
+    type: preventive
+    status: partial
+    notes: >-
+      Streaming answers are screened only after generation: token frames can reach the
+      client before a blocked answer is withdrawn by the abstention frame. No test calls
+      a live Content Safety account; the smoke gate uses a deterministic offline checker
+      and measures the workflow's handling of verdicts, not classifier quality. The
+      Foundry hosted agent screens only if its configured workflow factory builds the
+      workflow with a checker.
+    implemented_in:
+      - packages/security_core/src/accelerator/security_core/content_safety/__init__.py
+      - packages/agent_core/workflows/grounded_answer.py
+      - apps/api/src/accelerator/infrastructure/content_safety.py
+      - apps/api/src/accelerator/infrastructure/grounded_answer.py
+      - apps/api/src/accelerator/configuration/settings.py
+      - apps/api/src/accelerator/api/refusal_audit.py
+      - apps/api/src/accelerator/api/chat.py
+      - apps/api/src/accelerator/migrations/versions/0007_content_safety_audit.py
+      - infrastructure/modules/content-safety.bicep
+      - infrastructure/modules/content-safety-user-role-assignment.bicep
+    verified_by:
+      - packages/agent_core/workflows/test_content_safety_workflow.py
+      - apps/api/tests/test_content_safety_adapter.py
+      - apps/api/tests/test_content_safety_wiring.py
+      - apps/api/tests/test_chat_streaming.py
+      - apps/api/tests/test_settings.py
+      - apps/api/tests/test_boot.py
+      - packages/evaluation_core/runners/tests/test_content_safety_smoke.py
+      - infrastructure/tests/test_identity_rbac.py
+    gates:
+      - content_safety
+      - injection_followed

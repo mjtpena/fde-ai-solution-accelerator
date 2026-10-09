@@ -31,6 +31,7 @@ user-assigned managed identity.
 | PostgreSQL Flexible Server 16 | Entra-only authentication, delegated subnet, private DNS zone linked to the VNet, public access disabled |
 | Storage account | Containers `incoming` and `documents`; queues `ingestion` and `ingestion-poison`; shared keys off |
 | Azure AI Search | Local auth off; semantic ranker plan `searchSemanticSearch` (default `free`); index `chunks` with 1536-dimension vectors |
+| Azure AI Content Safety | Kind `ContentSafety`, SKU `contentSafetySkuName` (default `S0`), key auth off; the API screens every chat turn with it ([ADR-0007](adr/0007-content-safety.md)) |
 | Microsoft Foundry | Project with a chat deployment (`chat-model`, default `gpt-5-mini` `2025-08-07`) and an embedding deployment (`embedding-model`, default `text-embedding-3-small`) |
 | Container registry | Images by immutable digest; each app identity has AcrPull |
 | Key Vault, Log Analytics, Application Insights | RBAC vault; App Insights ingestion requires Entra |
@@ -40,12 +41,12 @@ Identity grants (see [`infrastructure/README.md`](../infrastructure/README.md#le
 
 | Identity | Grants |
 | --- | --- |
-| api | AcrPull, Search Index Data Reader, Foundry project user, Monitoring Metrics Publisher, database role `accelerator_api` |
+| api | AcrPull, Search Index Data Reader, Foundry project user, Cognitive Services User on the Content Safety account, Monitoring Metrics Publisher, database role `accelerator_api` |
 | worker | AcrPull, Search Index Data Contributor, Foundry project user, Blob Data Reader on `incoming`, Blob Data Contributor on `documents`, Queue Message Processor on `ingestion`, Queue Message Sender on `ingestion-poison`, database role `accelerator_worker` |
 | migrator | AcrPull, Monitoring Metrics Publisher, database role `accelerator_migrator` (the only role that can create objects) |
 | web | AcrPull only; it reaches the API over the environment's internal network |
 | `AZURE_DEPLOYMENT_PRINCIPAL_ID` (optional) | Search Service Contributor, so the `index` stage can create the index |
-| `AZURE_EVALUATION_PRINCIPAL_ID` (optional) | Search Index Data Reader and Foundry project access, for the full evaluation |
+| `AZURE_EVALUATION_PRINCIPAL_ID` (optional) | Search Index Data Reader, Foundry project access and Cognitive Services User on the Content Safety account, for the full evaluation |
 
 Parameters live in `infrastructure/parameters/dev.example.bicepparam`
 (resource group `fde-dev-rg`, prefix `fde-dev`, SKUs, network prefixes). Values
@@ -445,6 +446,7 @@ private, run it from the VNet machine (the workflow uses the VNet runner).
 | `API_DATABASE_URL`, `API_DATABASE_AUTH_MODE=managed_identity`, `API_DATABASE_TLS_CA_FILE` | Private database, Entra token, trusted CA |
 | `API_FOUNDRY_PROJECT_ENDPOINT`, `API_FOUNDRY_MODEL_DEPLOYMENT`, `API_FOUNDRY_EMBEDDING_DEPLOYMENT` | Deployment outputs |
 | `API_SEARCH_ENDPOINT`, `API_SEARCH_INDEX_NAME`, `API_SEARCH_VECTOR_DIMENSIONS` | Deployment outputs |
+| `API_CONTENT_SAFETY_ENDPOINT` | Deployment output `contentSafetyEndpoint`. Without it a development-mode run is unscreened (logged as `content_safety_unscreened`) |
 | `EVALUATION_PRINCIPAL_OBJECT_ID` | Principal whose memberships bound every turn |
 | `EVALUATION_JUDGE_AZURE_ENDPOINT`, `EVALUATION_JUDGE_AZURE_DEPLOYMENT` | Judge model; `DefaultAzureCredential`, no API key |
 | `EVALUATION_DATASET` | Optional; defaults to `evaluations/example-datasets/smoke.jsonl` |
@@ -530,7 +532,8 @@ must be able to pull from it.
 | `migration execution ... ended as Failed` | Most likely the bootstrap did not run or bound the wrong object IDs, so `accelerator_migrator` cannot sign in or lacks schema CREATE. List executions with `az containerapp job execution list --name <job> --resource-group <rg> --output table` and read the job's console logs in the Log Analytics workspace (the environment sends all logs there). The job does not retry (`replicaRetryLimit: 0`); fix the cause and re-run the `migrate` stage |
 | `smoke test failed` | The web app answered but `/api/health` returned 502 ("The API is unreachable.") or an error, or the web app is not up. The smoke check only proves API liveness (`/healthz`) |
 | API revision never becomes ready | The API's readiness probe is `GET /readyz` (internal ingress, so not reachable from outside). It returns 503 with fixed check names: `database` (connection or role privileges, often migrations not run), `identity_provider` (Entra signing keys unreachable), `chat_workflow` (Foundry/Search not configured). Read the reason in the app's logs (`readiness_check_failed`) |
-| API exits on start | Production settings validation fails fast when any of the managed identity client ID, database URL, Foundry endpoint and deployments, Search endpoint, index and dimensions, or Application Insights connection string is missing |
+| API exits on start | Production settings validation fails fast when any of the managed identity client ID, database URL, Foundry endpoint and deployments, Search endpoint, index and dimensions, Content Safety endpoint, or Application Insights connection string is missing, or when `API_CONTENT_SAFETY_ENABLED=false` |
+| Every chat turn ends in an abstention with code `content_safety_unavailable` | The API cannot reach Azure AI Content Safety and fails closed. Check `fde.content_safety.error_reason` on the `content_safety.*` spans: `http_401`/`http_403` usually means the Cognitive Services User assignment has not propagated yet; `timeout` means the call exceeded `API_CONTENT_SAFETY_TIMEOUT_SECONDS` or the request deadline |
 | Worker logs `ingestion_disabled` | Indexing settings are incomplete; in production the worker refuses to start instead |
 | Messages land in `ingestion-poison` | Invalid JSON or unknown fields, unsupported `content_type`, oversized, unparseable or empty document, or retries exhausted |
 | `403` from Search, Storage, Foundry or the registry right after deployment | Azure role assignments can take several minutes to take effect. Wait and re-run the stage; only `smoke` retries on its own |

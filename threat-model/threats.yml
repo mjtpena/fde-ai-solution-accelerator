@@ -36,7 +36,7 @@ threats:
     assets: [system instructions, tool side effects, answers]
     likelihood: high
     impact: medium
-    controls: [C-004, C-008, C-027]
+    controls: [C-004, C-008, C-027, C-029]
 
   - id: T-004
     title: Indirect prompt injection through retrieved documents
@@ -48,7 +48,7 @@ threats:
     assets: [answers, tool side effects, indexed documents]
     likelihood: medium
     impact: high
-    controls: [C-004, C-005, C-008, C-027]
+    controls: [C-004, C-005, C-008, C-027, C-029]
 
   - id: T-005
     title: Fabricated or hallucinated citations
@@ -238,3 +238,15 @@ threats:
     likelihood: medium
     impact: medium
     controls: [C-025]
+
+  - id: T-022
+    title: Harmful generated content
+    description: >-
+      The model produces hateful, self-harm, sexual or violent content, either on its
+      own or because a prompt or retrieved document steered it, and the answer reaches
+      the user under the product's name.
+    stride: information_disclosure
+    assets: [answers, users, reputation]
+    likelihood: medium
+    impact: high
+    controls: [C-029, C-027]

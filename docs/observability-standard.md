@@ -69,10 +69,13 @@ Trace of a chat request today:
 ```text
 http.request                    SERVER    TracingMiddleware
 ├── workflow.grounded_answer    INTERNAL  TracedChatTurn
+│   ├── content_safety.shield_prompt  CLIENT  TracedContentSafetyChecker (prompt)
 │   ├── retrieval.search        CLIENT    TracedRetriever
+│   ├── content_safety.shield_prompt  CLIENT  TracedContentSafetyChecker (documents)
 │   ├── retrieval.sufficiency   INTERNAL  TracedSufficiencyChecker
 │   ├── gen_ai.chat             CLIENT    TracedAnswerGenerator
-│   └── citations.validate      INTERNAL  TracedCitationValidator
+│   ├── citations.validate      INTERNAL  TracedCitationValidator
+│   └── content_safety.analyze  CLIENT    TracedContentSafetyChecker
 └── response                    INTERNAL  TracingMiddleware
 ```
 
@@ -80,13 +83,16 @@ http.request                    SERVER    TracingMiddleware
 |---|---|---|---|
 | `http.request` | SERVER | `TracingMiddleware` through `Telemetry.request` (`packages/observability_core/src/observability_core/middleware.py`, `tracing.py`), installed in `apps/api/src/accelerator/api/app.py` | `http.request.method`, `http.response.status_code`, `fde.correlation_id`, `fde.duration_ms`, `error.type` (on exception) |
 | `response` | INTERNAL | `TracingMiddleware` through `Telemetry.response`. A direct child of `http.request`, created before the app runs, so it covers processing and all streaming sends | `http.response.status_code`, `fde.correlation_id`, `fde.duration_ms`, `error.type` |
-| `workflow.grounded_answer` | INTERNAL | `TracedChatTurn` (`apps/api/src/accelerator/telemetry/traced.py`), wired with `name="grounded_answer"` in `apps/api/src/accelerator/api/composition.py` | `fde.outcome`, `fde.correlation_id`, `fde.duration_ms`, `error.type` |
+| `workflow.grounded_answer` | INTERNAL | `TracedChatTurn` (`apps/api/src/accelerator/telemetry/traced.py`), wired with `name="grounded_answer"` in `apps/api/src/accelerator/api/composition.py` | `fde.outcome`, `fde.abstention.code`, `fde.content_safety.dropped_chunk_ids`, `fde.correlation_id`, `fde.duration_ms`, `error.type` |
 | `retrieval.search` | CLIENT | `TracedRetriever` (`apps/api/src/accelerator/telemetry/traced.py`), wired in `apps/api/src/accelerator/infrastructure/grounded_answer.py` | `fde.retrieval.top_k`, `fde.retrieval.filter_fields`, `fde.retrieval.result_count`, `fde.retrieval.injection_signal_count`, `fde.correlation_id`, `fde.duration_ms`, `error.type` |
 | `retrieval.sufficiency` | INTERNAL | `TracedSufficiencyChecker` (`apps/api/src/accelerator/telemetry/traced.py`) | `fde.retrieval.decision`, `fde.retrieval.result_count`, `fde.correlation_id`, `fde.duration_ms`, `error.type` |
 | `gen_ai.chat` | CLIENT | `TracedAnswerGenerator` (`apps/api/src/accelerator/telemetry/traced.py`) | `gen_ai.operation.name`, `gen_ai.request.model`, `fde.citations.count`, `fde.correlation_id`, `fde.duration_ms`, `error.type` |
 | `citations.validate` | INTERNAL | `TracedCitationValidator` (`apps/api/src/accelerator/telemetry/traced.py`) | `fde.citations.count`, `fde.citations.valid`, `fde.correlation_id`, `fde.duration_ms`, `error.type` |
+| `content_safety.shield_prompt` | CLIENT | `TracedContentSafetyChecker` (`apps/api/src/accelerator/telemetry/traced.py`), wired in `apps/api/src/accelerator/infrastructure/grounded_answer.py`. Twice per turn: the prompt before retrieval, then the retrieved chunks | `fde.content_safety.stage`, `fde.content_safety.document_count`, `fde.content_safety.decision`, `fde.content_safety.prompt_attack`, `fde.content_safety.dropped_chunk_ids`, `fde.content_safety.error_reason`, `fde.correlation_id`, `fde.duration_ms`, `error.type` |
+| `content_safety.analyze` | CLIENT | `TracedContentSafetyChecker`. Once per answered turn, after citation validation | `fde.content_safety.decision`, `fde.content_safety.blocked_categories`, `fde.content_safety.severity.<Category>`, `fde.content_safety.error_reason`, `fde.correlation_id`, `fde.duration_ms`, `error.type` |
 
-`Telemetry` sets the span kind: `CLIENT` for `retrieval.search` and `gen_ai.chat`,
+`Telemetry` sets the span kind: `CLIENT` for `retrieval.search`, `gen_ai.chat` and
+the two `content_safety.*` operations,
 `SERVER` for `http.request`, and `INTERNAL` for everything else. On any exception a
 span gets status `ERROR` and `error.type`. Exception events and stack traces are not
 recorded (`record_exception=False`). An HTTP status of 500 or above also sets `ERROR`
@@ -116,6 +122,15 @@ worker does this today.
 | `fde.citations.count` | int (≥ 0) | On `gen_ai.chat`, the number of citations the model returned. On `citations.validate`, the number of citations checked | `TracedAnswerGenerator`, `TracedCitationValidator` |
 | `fde.citations.valid` | boolean | `true` if every cited chunk ID was retrieved in this turn. `false` if validation raised | `TracedCitationValidator` |
 | `fde.outcome` | enum `success` / `abstained` / `denied` (the contract also allows `failure`) | Workflow result. `success` means answered, `abstained` means an abstention, and `denied` means the turn ended in a pending approval (`ApprovalRequired`) | `TracedChatTurn` |
+| `fde.abstention.code` | enum `insufficient_evidence` / `content_safety_prompt_attack` / `content_safety_output_blocked` / `content_safety_unavailable` | Stable cause of an abstention or refusal (`Abstention.code`) | `TracedChatTurn` |
+| `fde.content_safety.stage` | enum `prompt` / `documents` | What a `content_safety.shield_prompt` span screened | `TracedContentSafetyChecker` |
+| `fde.content_safety.document_count` | int (≥ 0) | Number of retrieved chunks sent to Prompt Shields | `TracedContentSafetyChecker` |
+| `fde.content_safety.decision` | enum `allow` / `attack` / `block` / `unavailable` | Screening verdict. `attack` (Prompt Shields) refuses the prompt or drops chunks; `block` (analysis) withholds the answer; `unavailable` refuses (fail closed) | `TracedContentSafetyChecker` |
+| `fde.content_safety.prompt_attack` | boolean | Prompt Shields flagged the user prompt | `TracedContentSafetyChecker` |
+| `fde.content_safety.dropped_chunk_ids` | string[] | Chunk IDs flagged as document attacks and dropped from evidence. IDs only, never text. Also on `workflow.grounded_answer` | `TracedContentSafetyChecker`, `TracedChatTurn` |
+| `fde.content_safety.blocked_categories` | string[] | Harm categories at or above their block threshold | `TracedContentSafetyChecker` |
+| `fde.content_safety.severity.<Category>` | int (0–7) | Severity per category (`Hate`, `SelfHarm`, `Sexual`, `Violence`) | `TracedContentSafetyChecker` |
+| `fde.content_safety.error_reason` | string | Why screening had no verdict (`timeout`, `transport_error`, `http_<status>`, `malformed_response`, `incomplete_analysis`, `deadline_elapsed`) | `TracedContentSafetyChecker` |
 
 `SpanAttributes` also defines two `fde.*` attributes that no production code sets
 yet: `fde.retrieval.reason_code` (a bounded identifier) and `fde.tool.risk` (`read` /
@@ -182,6 +197,10 @@ Container Apps sends stdout and stderr to Log Analytics (see
 | `search_index_provisioned` | INFO | `index_name` | `apps/api/src/accelerator/infrastructure/search/provision.py` |
 | `chat_turn_ended_with_pending_approval` | WARNING | `correlation_id`, `exception_type` (via `exc_info`) | `apps/api/src/accelerator/api/tool_turns.py` |
 | `streamed_answer_withdrawn` | ERROR | `correlation_id`, `exception_type` | `apps/api/src/accelerator/api/chat.py` |
+| `content_safety_refusal` | WARNING | `correlation_id`, `reason_code` | `apps/api/src/accelerator/api/refusal_audit.py` |
+| `content_safety_refusal_unaudited` | ERROR | `correlation_id`, `reason_code` (development without a database only) | `apps/api/src/accelerator/api/refusal_audit.py` |
+| `content_safety_chunks_dropped` | WARNING | `correlation_id`, `chunk_ids` | `apps/api/src/accelerator/api/refusal_audit.py` |
+| `content_safety_unscreened` | WARNING | `environment`, `content_safety_enabled` (development and test only; production refuses to start) | `apps/api/src/accelerator/infrastructure/grounded_answer.py` |
 | `database_unconfigured` | WARNING | `environment` | `apps/api/src/accelerator/api/composition.py` |
 | `approval_decision_refused` | INFO | `correlation_id`, `reason` (exception class name) | `apps/api/src/accelerator/api/approvals.py` |
 | `readiness_check_failed` | WARNING | `check`, `exception_type`, `correlation_id` | `apps/api/src/accelerator/api/health.py` |

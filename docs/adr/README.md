@@ -12,6 +12,7 @@ summary is in `docs/spec.md` §2.
 | [0004](0004-approval-bound-to-arguments.md) | Bind approvals to the tool, canonical arguments, scope, requester and expiry | Accepted |
 | [0005](0005-foundry-evaluation.md) | Deterministic smoke gate on every PR, Foundry evaluators for full evaluation | Accepted |
 | [0006](0006-container-apps.md) | Azure Container Apps for the API, web, worker and migration job | Accepted |
+| [0007](0007-content-safety.md) | Azure AI Content Safety screens prompts, retrieved chunks and answers, failing closed | Accepted |
 
 ## Adding an ADR
 
