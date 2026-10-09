@@ -26,9 +26,20 @@ Operation = Literal[
     "tool",
     "approval",
     "citations.validate",
+    "content_safety.shield_prompt",
+    "content_safety.analyze",
     "response",
 ]
 _OPERATIONS = frozenset(get_args(Operation))
+# Operations that call a remote service.
+_CLIENT_OPERATIONS = frozenset(
+    {
+        "retrieval.search",
+        "gen_ai.chat",
+        "content_safety.shield_prompt",
+        "content_safety.analyze",
+    }
+)
 _CORRELATION_ID: ContextVar[str | None] = ContextVar("fde_correlation_id", default=None)
 _IDENTIFIER = re.compile(r"[A-Za-z0-9][A-Za-z0-9_.-]{0,127}", re.ASCII)
 
@@ -109,11 +120,7 @@ class Telemetry:
         values = attributes.to_otel() if attributes is not None else {}
         if operation == "gen_ai.chat":
             values["gen_ai.operation.name"] = "chat"
-        kind = (
-            SpanKind.CLIENT
-            if operation in {"retrieval.search", "gen_ai.chat"}
-            else SpanKind.INTERNAL
-        )
+        kind = SpanKind.CLIENT if operation in _CLIENT_OPERATIONS else SpanKind.INTERNAL
         with self._span(span_name, values, kind) as span:
             yield span
 

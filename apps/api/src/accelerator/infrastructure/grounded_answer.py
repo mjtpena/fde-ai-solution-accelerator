@@ -2,9 +2,11 @@
 
 Azure AI Search retrieval (scope injected from ``ExecutionContext``), Foundry query
 embeddings, the threshold sufficiency gate, a tool-less Foundry agent as the answer
-generator, and same-turn citation validation.
+generator, same-turn citation validation, and Azure AI Content Safety screening of
+the prompt, the retrieved chunks and the answer.
 """
 
+import logging
 from collections.abc import Awaitable, Callable
 from importlib.resources import files
 from pathlib import Path
@@ -24,6 +26,7 @@ from accelerator.agent_core.workflows.grounded_answer import (
     SufficiencyChecker,
 )
 from accelerator.configuration.settings import Settings
+from accelerator.infrastructure.content_safety import AzureContentSafetyChecker
 from accelerator.infrastructure.foundry.agent_runtime import AgentFrameworkFoundryRuntime
 from accelerator.infrastructure.foundry.embedder import EmbeddingClient, FoundryQueryEmbedder
 from accelerator.infrastructure.search.adapter import AzureSearchRetriever
@@ -35,13 +38,17 @@ from accelerator.retrieval_core.sufficiency import (
     EvidenceSufficiencyChecker,
     SufficiencyPolicy,
 )
+from accelerator.security_core.content_safety import ContentSafetyChecker
 from accelerator.security_core.data_boundaries.context import ExecutionContext
 from accelerator.telemetry.traced import (
     TracedAnswerGenerator,
     TracedCitationValidator,
+    TracedContentSafetyChecker,
     TracedRetriever,
     TracedSufficiencyChecker,
 )
+
+logger = logging.getLogger(__name__)
 
 GROUNDED_ANSWER_AGENT = "grounded-answer"
 GroundedAnswer = GroundedAnswerWorkflow[RetrievalRequest, ExecutionContext, Evidence]
@@ -53,6 +60,39 @@ def instructions_directory() -> Path:
 
 def _no_tools(name: str) -> Any:
     raise ValueError(f"The grounded-answer agent has no tools; got {name!r}.")
+
+
+def build_content_safety_checker(
+    settings: Settings,
+    credential: AsyncTokenCredential,
+    shutdown: list[Callable[[], Awaitable[None]]],
+    *,
+    telemetry: Telemetry | None = None,
+) -> ContentSafetyChecker | None:
+    """The Content Safety adapter, or ``None`` where development/test runs without it.
+
+    Production settings validation guarantees an endpoint and an enabled flag.
+    """
+    if not settings.content_safety_enabled or settings.content_safety_endpoint is None:
+        if not settings.allows_fakes:
+            raise ValueError("Production requires Azure AI Content Safety.")
+        logger.warning(
+            "content_safety_unscreened",
+            extra={
+                "environment": settings.environment,
+                "content_safety_enabled": settings.content_safety_enabled,
+            },
+        )
+        return None
+    adapter = AzureContentSafetyChecker(
+        str(settings.content_safety_endpoint),
+        credential,
+        timeout_seconds=settings.content_safety_timeout_seconds,
+    )
+    shutdown.append(adapter.close)
+    if telemetry is None:
+        return adapter
+    return TracedContentSafetyChecker(adapter, telemetry, settings.content_safety_policy)
 
 
 def build_azure_grounded_answer(
@@ -123,6 +163,9 @@ def build_azure_grounded_answer(
         cast(ChatAgent, agent), max_output_tokens=settings.generation_max_output_tokens
     )
     validator: CitationValidator = SameTurnCitationValidator()
+    content_safety = build_content_safety_checker(
+        settings, credential, shutdown, telemetry=telemetry
+    )
     traced_retriever: Retriever[RetrievalRequest, ExecutionContext, Evidence] = retriever
     if telemetry is not None:
         traced_retriever = TracedRetriever(retriever, telemetry)
@@ -138,4 +181,6 @@ def build_azure_grounded_answer(
         citation_validator=validator,
         retrieval_request_factory=lambda query: RetrievalRequest(query=query, top_k=top_k),
         capture_evaluation_context=capture_evaluation_context,
+        content_safety_checker=content_safety,
+        content_safety_policy=settings.content_safety_policy,
     )

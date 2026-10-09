@@ -53,9 +53,27 @@ class ApprovalEvent(BaseModel):
     approval: ApprovalCard
 
 
+AbstentionCode = Literal[
+    "insufficient_evidence",
+    "answer_withdrawn",
+    "content_safety_prompt_attack",
+    "content_safety_output_blocked",
+    "content_safety_unavailable",
+]
+
+
 class AbstentionEvent(BaseModel):
     reason: str
     evidence_ids: list[str]
+    code: AbstentionCode = Field(
+        description=(
+            "Stable machine-readable cause. insufficient_evidence: retrieval could not "
+            "support an answer. answer_withdrawn: streamed text failed verification. "
+            "content_safety_prompt_attack: the request was refused as a prompt attack. "
+            "content_safety_output_blocked: the answer was withheld by harm screening. "
+            "content_safety_unavailable: screening could not run, so nothing was answered."
+        )
+    )
 
 
 class DoneEvent(BaseModel):
@@ -162,6 +180,7 @@ async def _stream_result(
             AbstentionEvent(
                 reason=result.abstention.reason,
                 evidence_ids=list(result.abstention.evidence_ids),
+                code=result.abstention.code,
             ),
         )
     else:
@@ -185,11 +204,13 @@ async def _stream_result(
             "description": (
                 "Server-sent events. Each frame has an event name and JSON data. "
                 "Answered turns emit token frames as the model produces them, then "
-                "citations (only after they validate against this turn's retrieval) "
-                "and done; insufficient evidence emits abstention and done; policy "
-                "handoffs emit approval and done. An abstention after token frames "
-                "withdraws the streamed text, and clients must discard it. Clients "
-                "must ignore event names they do not recognise."
+                "citations (only after they validate against this turn's retrieval "
+                "and the answer passes content safety screening) and done; "
+                "insufficient evidence or a content safety refusal emits abstention "
+                "(with a stable code) and done; policy handoffs emit approval and done. "
+                "An abstention after token frames withdraws the streamed text, and "
+                "clients must discard it. Clients must ignore event names they do not "
+                "recognise."
             ),
             "content": {
                 "text/event-stream": {
@@ -292,7 +313,10 @@ async def _stream_live(
                 "streamed_answer_withdrawn",
                 extra={"correlation_id": correlation_id, "exception_type": type(error).__name__},
             )
-            yield _frame("abstention", AbstentionEvent(reason=WITHDRAWN_REASON, evidence_ids=[]))
+            yield _frame(
+                "abstention",
+                AbstentionEvent(reason=WITHDRAWN_REASON, evidence_ids=[], code="answer_withdrawn"),
+            )
             yield _frame("done", DoneEvent())
             return
         if isinstance(result, ApprovalRequired) or result.status == "abstained":

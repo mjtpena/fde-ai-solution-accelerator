@@ -413,7 +413,7 @@
         },
         "responses": {
           "200": {
-            "description": "Server-sent events. Each frame has an event name and JSON data. Answered turns emit token frames as the model produces them, then citations (only after they validate against this turn's retrieval) and done; insufficient evidence emits abstention and done; policy handoffs emit approval and done. An abstention after token frames withdraws the streamed text, and clients must discard it. Clients must ignore event names they do not recognise.",
+            "description": "Server-sent events. Each frame has an event name and JSON data. Answered turns emit token frames as the model produces them, then citations (only after they validate against this turn's retrieval and the answer passes content safety screening) and done; insufficient evidence or a content safety refusal emits abstention (with a stable code) and done; policy handoffs emit approval and done. An abstention after token frames withdraws the streamed text, and clients must discard it. Clients must ignore event names they do not recognise.",
             "content": {
               "text/event-stream": {
                 "schema": {
@@ -524,11 +524,24 @@
                         },
                         "title": "Evidence Ids",
                         "type": "array"
+                      },
+                      "code": {
+                        "description": "Stable machine-readable cause. insufficient_evidence: retrieval could not support an answer. answer_withdrawn: streamed text failed verification. content_safety_prompt_attack: the request was refused as a prompt attack. content_safety_output_blocked: the answer was withheld by harm screening. content_safety_unavailable: screening could not run, so nothing was answered.",
+                        "enum": [
+                          "insufficient_evidence",
+                          "answer_withdrawn",
+                          "content_safety_prompt_attack",
+                          "content_safety_output_blocked",
+                          "content_safety_unavailable"
+                        ],
+                        "title": "Code",
+                        "type": "string"
                       }
                     },
                     "required": [
                       "reason",
-                      "evidence_ids"
+                      "evidence_ids",
+                      "code"
                     ],
                     "title": "AbstentionEvent",
                     "type": "object"
@@ -715,6 +728,22 @@
               }
             ],
             "title": "Tool Name"
+          },
+          "reason_code": {
+            "anyOf": [
+              {
+                "type": "string",
+                "enum": [
+                  "content_safety_prompt_attack",
+                  "content_safety_output_blocked",
+                  "content_safety_unavailable"
+                ]
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Reason Code"
           }
         },
         "additionalProperties": false,
@@ -727,7 +756,8 @@
           "correlation_id",
           "actor_id",
           "approval_id",
-          "tool_name"
+          "tool_name",
+          "reason_code"
         ],
         "title": "AuditEvent"
       },
@@ -779,7 +809,8 @@
           "auth_failure",
           "authorization_failure",
           "approval",
-          "tool_execution"
+          "tool_execution",
+          "content_safety"
         ],
         "title": "EventType"
       },

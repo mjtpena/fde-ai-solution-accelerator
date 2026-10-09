@@ -6,6 +6,7 @@ import pytest
 from pydantic import ValidationError
 
 from accelerator.configuration.settings import Settings
+from accelerator.security_core.content_safety import HarmCategory
 
 TENANT = "00000000-0000-0000-0000-000000000001"
 
@@ -25,6 +26,7 @@ def production_values(**overrides: Any) -> dict[str, Any]:
         "search_vector_dimensions": 1536,
         "search_endpoint": "https://search.example.test",
         "search_index_name": "chunks",
+        "content_safety_endpoint": "https://safety.example.test",
         "applicationinsights_connection_string": "InstrumentationKey=test",
     }
     values.update(overrides)
@@ -61,6 +63,7 @@ def test_production_accepts_complete_managed_identity_configuration() -> None:
         "search_index_name",
         "search_vector_dimensions",
         "applicationinsights_connection_string",
+        "content_safety_endpoint",
     ],
 )
 def test_production_fails_fast_on_each_missing_service(missing: str) -> None:
@@ -238,3 +241,50 @@ def test_web_origin_may_carry_a_port() -> None:
     settings = Settings.model_validate(production_values(web_origin="https://app.example.test:8443"))
 
     assert settings.web_origin == "https://app.example.test:8443"
+
+
+def test_content_safety_is_on_by_default_and_cannot_be_disabled_in_production() -> None:
+    assert Settings.model_validate(production_values()).content_safety_enabled
+    with pytest.raises(ValidationError, match="API_CONTENT_SAFETY_ENABLED=true"):
+        Settings.model_validate(production_values(content_safety_enabled=False))
+
+
+def test_production_content_safety_endpoint_must_use_https() -> None:
+    with pytest.raises(ValidationError, match="API_CONTENT_SAFETY_ENDPOINT must use HTTPS"):
+        Settings.model_validate(
+            production_values(content_safety_endpoint="http://safety.example.test")
+        )
+
+
+def test_development_may_disable_content_safety() -> None:
+    settings = Settings.model_validate(
+        {
+            "environment": "development",
+            "entra_tenant_id": TENANT,
+            "entra_audience": "api://x",
+            "content_safety_enabled": False,
+        }
+    )
+
+    assert not settings.content_safety_enabled
+
+
+def test_content_safety_thresholds_default_to_medium_and_are_per_category() -> None:
+    settings = Settings.model_validate(
+        production_values(content_safety_block_severity_self_harm=2)
+    )
+
+    assert settings.content_safety_policy.thresholds == {
+        HarmCategory.HATE: 4,
+        HarmCategory.SELF_HARM: 2,
+        HarmCategory.SEXUAL: 4,
+        HarmCategory.VIOLENCE: 4,
+    }
+
+
+@pytest.mark.parametrize("threshold", [0, 7])
+def test_content_safety_thresholds_must_be_able_to_block(threshold: int) -> None:
+    with pytest.raises(ValidationError):
+        Settings.model_validate(
+            production_values(content_safety_block_severity_violence=threshold)
+        )

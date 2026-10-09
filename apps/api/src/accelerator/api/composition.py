@@ -17,7 +17,9 @@ from accelerator.agent_core.tools import ToolRegistry
 from accelerator.api.app import create_app
 from accelerator.api.approvals import get_approval_service
 from accelerator.api.chat import ChatTurnPort
+from accelerator.api.refusal_audit import AuditedRefusalsChatTurn
 from accelerator.api.tool_turns import PolicyEnforcedChatTurn
+from accelerator.application.audit import AuditRecorder
 from accelerator.configuration.settings import Settings
 from accelerator.identity.scope_resolver import get_execution_context
 from accelerator.infrastructure.audit import PostgresAuditRepository
@@ -108,10 +110,22 @@ def build_application(
             extra={"environment": settings.environment},
         )
 
+    audit_repository = (
+        PostgresAuditRepository(session_factory) if session_factory is not None else None
+    )
     workflow = chat_turn_factory(settings, credential, shutdown, telemetry)
     chat_turn = (
         PolicyEnforcedChatTurn(
-            TracedChatTurn(workflow, telemetry, name="grounded_answer"),
+            TracedChatTurn(
+                # Content-safety refusals are audited; without a database (development
+                # only) they are logged instead.
+                AuditedRefusalsChatTurn(
+                    workflow,
+                    AuditRecorder(audit_repository) if audit_repository is not None else None,
+                ),
+                telemetry,
+                name="grounded_answer",
+            ),
             tool_registry if tool_registry is not None else ToolRegistry(),
             session_factory=session_factory,
             limits=ToolCallLimits(
@@ -124,9 +138,7 @@ def build_application(
     )
     app = create_app(
         settings,
-        audit_repository=(
-            PostgresAuditRepository(session_factory) if session_factory is not None else None
-        ),
+        audit_repository=audit_repository,
         scope_repository=(
             SqlAlchemyScopeMembershipRepository(session_factory)
             if session_factory is not None

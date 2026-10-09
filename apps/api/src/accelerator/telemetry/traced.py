@@ -5,6 +5,7 @@ evidence text, prompts and answers never become span attributes.
 """
 
 from collections.abc import Sequence
+from datetime import datetime
 
 from pydantic import BaseModel
 
@@ -20,6 +21,14 @@ from accelerator.agent_core.workflows.grounded_answer import (
 from accelerator.api.chat import ChatTurnPort
 from accelerator.observability_core import SpanAttributes, Telemetry
 from accelerator.retrieval_core.models import Evidence, RetrievalRequest
+from accelerator.security_core.content_safety import (
+    ContentSafetyChecker,
+    ContentSafetyPolicy,
+    ContentSafetyUnavailableError,
+    ScreenedDocument,
+    ShieldResult,
+    TextAnalysis,
+)
 from accelerator.security_core.data_boundaries.context import ExecutionContext
 from accelerator.security_core.prompt_injection import injection_signals
 from accelerator.security_core.tool_policy import ApprovalRequired
@@ -99,6 +108,64 @@ class TracedCitationValidator:
             span.set_attribute("fde.citations.valid", True)
 
 
+class TracedContentSafetyChecker:
+    """``content_safety.*`` spans: decisions, flagged categories and chunk IDs, never text."""
+
+    def __init__(
+        self, inner: ContentSafetyChecker, telemetry: Telemetry, policy: ContentSafetyPolicy
+    ) -> None:
+        self._inner = inner
+        self._telemetry = telemetry
+        self._policy = policy
+
+    async def shield_prompt(
+        self,
+        user_prompt: str,
+        documents: Sequence[ScreenedDocument],
+        *,
+        deadline_utc: datetime | None = None,
+    ) -> ShieldResult:
+        with self._telemetry.span("content_safety.shield_prompt") as span:
+            span.set_attribute("fde.content_safety.stage", "documents" if documents else "prompt")
+            span.set_attribute("fde.content_safety.document_count", len(documents))
+            try:
+                result = await self._inner.shield_prompt(
+                    user_prompt, documents, deadline_utc=deadline_utc
+                )
+            except ContentSafetyUnavailableError as error:
+                span.set_attribute("fde.content_safety.decision", "unavailable")
+                span.set_attribute("fde.content_safety.error_reason", error.reason)
+                raise
+            span.set_attribute(
+                "fde.content_safety.decision",
+                "attack" if result.user_prompt_attack or result.attacked_document_ids else "allow",
+            )
+            span.set_attribute("fde.content_safety.prompt_attack", result.user_prompt_attack)
+            span.set_attribute(
+                "fde.content_safety.dropped_chunk_ids", list(result.attacked_document_ids)
+            )
+            return result
+
+    async def analyze_text(
+        self, text: str, *, deadline_utc: datetime | None = None
+    ) -> TextAnalysis:
+        with self._telemetry.span("content_safety.analyze") as span:
+            try:
+                analysis = await self._inner.analyze_text(text, deadline_utc=deadline_utc)
+                blocked = self._policy.blocked_categories(analysis)
+            except ContentSafetyUnavailableError as error:
+                span.set_attribute("fde.content_safety.decision", "unavailable")
+                span.set_attribute("fde.content_safety.error_reason", error.reason)
+                raise
+            span.set_attribute("fde.content_safety.decision", "block" if blocked else "allow")
+            span.set_attribute(
+                "fde.content_safety.blocked_categories", [category.value for category in blocked]
+            )
+            for category, severity in analysis.severities.items():
+                span.set_attribute(f"fde.content_safety.severity.{category.value}", severity)
+            return analysis
+
+
 class TracedChatTurn:
     def __init__(self, inner: ChatTurnPort, telemetry: Telemetry, *, name: str) -> None:
         self._inner = inner
@@ -116,4 +183,10 @@ class TracedChatTurn:
                 span.set_attribute(
                     "fde.outcome", "success" if result.status == "answered" else "abstained"
                 )
+                if result.abstention is not None:
+                    span.set_attribute("fde.abstention.code", result.abstention.code)
+                if result.screened_out_chunk_ids:
+                    span.set_attribute(
+                        "fde.content_safety.dropped_chunk_ids", list(result.screened_out_chunk_ids)
+                    )
             return result

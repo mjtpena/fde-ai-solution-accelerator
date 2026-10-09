@@ -9,7 +9,12 @@ from fastapi.responses import StreamingResponse
 from pydantic import BaseModel
 
 from accelerator.agent_core.workflows.generation import current_token_sink
-from accelerator.agent_core.workflows.grounded_answer import CitationSource, GroundedAnswerResult
+from accelerator.agent_core.workflows.grounded_answer import (
+    REFUSAL_REASONS,
+    Abstention,
+    CitationSource,
+    GroundedAnswerResult,
+)
 from accelerator.api.chat import WITHDRAWN_REASON, ChatRequest, stream_chat
 from accelerator.retrieval_core.citations import CitationValidationError, CitationValidationResult
 from accelerator.security_core.data_boundaries.context import ExecutionContext
@@ -105,7 +110,11 @@ async def test_invalid_citations_after_streaming_withdraw_the_answer() -> None:
     events = [frame async for frame in frames(response)]
 
     assert [name for name, _ in events] == ["token", "token", "abstention", "done"]
-    assert events[2][1] == {"reason": WITHDRAWN_REASON, "evidence_ids": []}
+    assert events[2][1] == {
+        "reason": WITHDRAWN_REASON,
+        "evidence_ids": [],
+        "code": "answer_withdrawn",
+    }
     assert all(name != "citations" for name, _ in events)
 
 
@@ -145,3 +154,58 @@ async def test_client_disconnect_cancels_generation() -> None:
 
     assert turn.cancelled
     assert not turn.finished
+
+
+async def test_a_blocked_answer_after_streaming_is_withdrawn_with_its_code() -> None:
+    """Output screening runs after generation, so streamed text is retracted."""
+    blocked = GroundedAnswerResult(
+        status="abstained",
+        answer=None,
+        citations=(),
+        citation_sources=(),
+        abstention=Abstention(
+            reason=REFUSAL_REASONS["content_safety_output_blocked"],
+            evidence_ids=(),
+            code="content_safety_output_blocked",
+        ),
+    )
+    turn = GatedStreamingTurn(blocked)
+    turn.release.set()
+
+    response = await stream_chat(ChatRequest(message="q"), context(), turn)
+    events = [frame async for frame in frames(response)]
+
+    assert [name for name, _ in events] == ["token", "token", "abstention", "done"]
+    assert events[2][1]["code"] == "content_safety_output_blocked"
+    assert all(name != "citations" for name, _ in events)
+
+
+async def test_a_refused_prompt_streams_no_tokens() -> None:
+    class RefusingTurn:
+        async def run(self, query: str, ctx: ExecutionContext) -> GroundedAnswerResult:
+            return GroundedAnswerResult(
+                status="abstained",
+                answer=None,
+                citations=(),
+                citation_sources=(),
+                abstention=Abstention(
+                    reason=REFUSAL_REASONS["content_safety_prompt_attack"],
+                    evidence_ids=(),
+                    code="content_safety_prompt_attack",
+                ),
+            )
+
+    response = await stream_chat(ChatRequest(message="q"), context(), RefusingTurn())
+    events = [frame async for frame in frames(response)]
+
+    assert events == [
+        (
+            "abstention",
+            {
+                "reason": REFUSAL_REASONS["content_safety_prompt_attack"],
+                "evidence_ids": [],
+                "code": "content_safety_prompt_attack",
+            },
+        ),
+        ("done", {}),
+    ]

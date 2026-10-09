@@ -199,6 +199,8 @@ export interface components {
             approval_id: string | null;
             /** Tool Name */
             tool_name: string | null;
+            /** Reason Code */
+            reason_code: ("content_safety_prompt_attack" | "content_safety_output_blocked" | "content_safety_unavailable") | null;
         };
         /** AuditPage */
         AuditPage: {
@@ -219,7 +221,7 @@ export interface components {
          * EventType
          * @enum {string}
          */
-        EventType: "auth_failure" | "authorization_failure" | "approval" | "tool_execution";
+        EventType: "auth_failure" | "authorization_failure" | "approval" | "tool_execution" | "content_safety";
         /** HTTPValidationError */
         HTTPValidationError: {
             /** Detail */
@@ -668,7 +670,7 @@ export interface operations {
             };
         };
         responses: {
-            /** @description Server-sent events. Each frame has an event name and JSON data. Answered turns emit token frames as the model produces them, then citations (only after they validate against this turn's retrieval) and done; insufficient evidence emits abstention and done; policy handoffs emit approval and done. An abstention after token frames withdraws the streamed text, and clients must discard it. Clients must ignore event names they do not recognise. */
+            /** @description Server-sent events. Each frame has an event name and JSON data. Answered turns emit token frames as the model produces them, then citations (only after they validate against this turn's retrieval and the answer passes content safety screening) and done; insufficient evidence or a content safety refusal emits abstention (with a stable code) and done; policy handoffs emit approval and done. An abstention after token frames withdraws the streamed text, and clients must discard it. Clients must ignore event names they do not recognise. */
             200: {
                 headers: {
                     [name: string]: unknown;

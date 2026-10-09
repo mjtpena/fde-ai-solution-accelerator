@@ -24,6 +24,7 @@ audit_event = Table(
     Column("actor_id", String(128)),
     Column("approval_id", Uuid),
     Column("tool_name", String(128)),
+    Column("reason_code", String(64)),
     CheckConstraint(
         "(event_type = 'auth_failure' AND outcome = 'failed' "
         "AND actor_id IS NULL AND approval_id IS NULL AND tool_name IS NULL) OR "
@@ -32,7 +33,9 @@ audit_event = Table(
         "(event_type = 'approval' AND outcome IN ('approved', 'denied') "
         "AND actor_id IS NOT NULL AND approval_id IS NOT NULL AND tool_name IS NULL) OR "
         "(event_type = 'tool_execution' AND outcome IN ('succeeded', 'failed') "
-        "AND actor_id IS NOT NULL AND approval_id IS NULL AND tool_name IS NOT NULL)",
+        "AND actor_id IS NOT NULL AND approval_id IS NULL AND tool_name IS NOT NULL) OR "
+        "(event_type = 'content_safety' AND actor_id IS NOT NULL "
+        "AND approval_id IS NULL AND tool_name IS NULL AND reason_code IS NOT NULL)",
         name="audit_event_valid_fields",
     ),
 )

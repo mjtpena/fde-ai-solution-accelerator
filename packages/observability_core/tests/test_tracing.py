@@ -127,6 +127,26 @@ def test_unsafe_or_invalid_attributes_are_rejected(attributes: dict[str, object]
         SpanAttributes.model_validate(attributes)
 
 
+def test_content_safety_spans_are_unnamed_client_calls(
+    runtime: tuple[Telemetry, InMemorySpanExporter],
+) -> None:
+    telemetry, exporter = runtime
+    with telemetry.span("content_safety.shield_prompt"):
+        pass
+    with telemetry.span("content_safety.analyze"):
+        pass
+    with pytest.raises(ValueError):
+        with telemetry.span("content_safety.analyze", name="answer"):
+            pass
+
+    spans = exporter.get_finished_spans()
+    assert [span.name for span in spans] == [
+        "content_safety.shield_prompt",
+        "content_safety.analyze",
+    ]
+    assert all(span.kind == SpanKind.CLIENT for span in spans)
+
+
 def test_dynamic_names_are_validated(runtime: tuple[Telemetry, InMemorySpanExporter]) -> None:
     telemetry, _ = runtime
     with pytest.raises(ValueError):

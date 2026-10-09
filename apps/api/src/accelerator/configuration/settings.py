@@ -14,6 +14,12 @@ from pydantic import (
 )
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
+from accelerator.security_core.content_safety import (
+    DEFAULT_BLOCK_SEVERITY,
+    ContentSafetyPolicy,
+    HarmCategory,
+)
+
 Environment = Literal["development", "test", "production"]
 DatabaseAuthMode = Literal["password", "managed_identity"]
 
@@ -98,6 +104,22 @@ class Settings(BaseSettings):
     sufficiency_min_score: float = Field(default=2.0, allow_inf_nan=False)
     sufficiency_min_evidence: int = Field(default=1, ge=1, le=20)
 
+    # Azure AI Content Safety (spec §6.2): Prompt Shields on the prompt and retrieved
+    # chunks, harm-category analysis of the answer. Always on in production; only
+    # development and test may disable it or run without an endpoint.
+    content_safety_enabled: bool = True
+    content_safety_endpoint: HttpUrl | None = None
+    content_safety_timeout_seconds: float = Field(default=5.0, gt=0, le=60, allow_inf_nan=False)
+    # Block when a category's severity (0/2/4/6, FourSeverityLevels) reaches the threshold.
+    content_safety_block_severity_hate: int = Field(default=DEFAULT_BLOCK_SEVERITY, ge=1, le=6)
+    content_safety_block_severity_self_harm: int = Field(
+        default=DEFAULT_BLOCK_SEVERITY, ge=1, le=6
+    )
+    content_safety_block_severity_sexual: int = Field(default=DEFAULT_BLOCK_SEVERITY, ge=1, le=6)
+    content_safety_block_severity_violence: int = Field(
+        default=DEFAULT_BLOCK_SEVERITY, ge=1, le=6
+    )
+
     # Application Insights. The standard Azure Monitor variable name is accepted
     # so platform-injected configuration works unchanged.
     applicationinsights_connection_string: SecretStr | None = Field(
@@ -129,6 +151,17 @@ class Settings(BaseSettings):
             return str(self.entra_jwks_uri)
         host = str(self.entra_authority_host).rstrip("/")
         return f"{host}/{self.entra_tenant_id}/discovery/v2.0/keys"
+
+    @property
+    def content_safety_policy(self) -> ContentSafetyPolicy:
+        return ContentSafetyPolicy(
+            {
+                HarmCategory.HATE: self.content_safety_block_severity_hate,
+                HarmCategory.SELF_HARM: self.content_safety_block_severity_self_harm,
+                HarmCategory.SEXUAL: self.content_safety_block_severity_sexual,
+                HarmCategory.VIOLENCE: self.content_safety_block_severity_violence,
+            }
+        )
 
     @property
     def allows_fakes(self) -> bool:
@@ -193,6 +226,7 @@ class Settings(BaseSettings):
                 "search_index_name",
                 "search_vector_dimensions",
                 "applicationinsights_connection_string",
+                "content_safety_endpoint",
             )
             if getattr(self, name) is None
         ]
@@ -201,6 +235,8 @@ class Settings(BaseSettings):
             raise ValueError(f"Production requires these settings: {variables}.")
         if self.database_auth_mode != "managed_identity":
             raise ValueError("Production requires API_DATABASE_AUTH_MODE=managed_identity.")
+        if not self.content_safety_enabled:
+            raise ValueError("Production requires API_CONTENT_SAFETY_ENABLED=true.")
         if "web_origin" not in self.model_fields_set:
             raise ValueError("Production requires API_WEB_ORIGIN to be set explicitly.")
         origin = urlsplit(self.web_origin)
@@ -216,6 +252,7 @@ class Settings(BaseSettings):
         for name in (
             "foundry_project_endpoint",
             "search_endpoint",
+            "content_safety_endpoint",
             "entra_authority_host",
             "entra_jwks_uri",
         ):
