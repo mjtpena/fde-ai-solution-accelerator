@@ -1,4 +1,4 @@
-"""Run explicitly against an isolated PostgreSQL with schema/001_audit_event.sql applied."""
+"""Run explicitly against an isolated PostgreSQL migrated with `make migrate`."""
 
 import os
 from datetime import datetime, timezone

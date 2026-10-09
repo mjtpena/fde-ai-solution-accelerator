@@ -1,4 +1,4 @@
-.PHONY: setup up check eval-smoke eval-full
+.PHONY: setup up check migrate eval-smoke eval-full
 
 setup:
 	uv sync --all-packages --frozen
@@ -7,6 +7,10 @@ setup:
 
 up:
 	docker compose up --build --detach
+
+# Apply database migrations. Reads API_DATABASE_URL (and API_DATABASE_AUTH_MODE).
+migrate:
+	uv run --all-packages python -m accelerator.migrations upgrade head
 
 check:
 	uv run --all-packages ruff check

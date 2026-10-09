@@ -36,6 +36,27 @@ services:
       retries: 10
       start_period: 5s
 
+  migrate:
+    image: python:3.12-slim
+    working_dir: /workspace
+    volumes:
+      - .:/workspace:ro
+    command:
+      - /bin/sh
+      - -c
+      - >-
+        cp -a /workspace/apps/api /tmp/accelerator-api
+        && cp -a /workspace/packages/agent_core /tmp/accelerator-agent-core
+        && cp -a /workspace/packages/security_core /tmp/accelerator-security-core
+        && python -m pip install --no-cache-dir /tmp/accelerator-agent-core /tmp/accelerator-security-core /tmp/accelerator-api
+        && python -m accelerator.migrations upgrade head
+    environment:
+      API_DATABASE_URL: postgresql+asyncpg://${POSTGRES_USER:-accelerator}:${POSTGRES_PASSWORD:-local-development-only}@postgres:5432/${POSTGRES_DB:-accelerator}
+    depends_on:
+      postgres:
+        condition: service_healthy
+    restart: "no"
+
   api:
     image: python:3.12-slim
     working_dir: /workspace
@@ -61,11 +82,12 @@ services:
       API_SEARCH_ENDPOINT: ${API_SEARCH_ENDPOINT:-}
       API_SEARCH_INDEX_NAME: ${API_SEARCH_INDEX_NAME:-}
       APPLICATIONINSIGHTS_CONNECTION_STRING: ${APPLICATIONINSIGHTS_CONNECTION_STRING:-}
+      API_DATABASE_URL: postgresql+asyncpg://${POSTGRES_USER:-accelerator}:${POSTGRES_PASSWORD:-local-development-only}@postgres:5432/${POSTGRES_DB:-accelerator}
     ports:
       - "${API_PORT:-8000}:8000"
     depends_on:
-      postgres:
-        condition: service_healthy
+      migrate:
+        condition: service_completed_successfully
       azurite:
         condition: service_healthy
     healthcheck:

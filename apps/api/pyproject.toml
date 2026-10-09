@@ -16,6 +16,7 @@ dependencies = [
     "pydantic-settings>=2.7,<3",
     "pyjwt[crypto]>=2.10,<3",
     "sqlalchemy[asyncio]>=2.0,<3",
+    "alembic>=1.16,<2",
 ]
 
 [tool.uv.sources]
@@ -41,4 +42,4 @@ where = ["src"]
 include = ["accelerator*"]
 
 [tool.setuptools.package-data]
-accelerator = ["py.typed"]
+accelerator = ["py.typed", "migrations/script.py.mako"]

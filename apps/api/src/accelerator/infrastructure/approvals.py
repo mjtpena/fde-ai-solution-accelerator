@@ -3,7 +3,7 @@ from contextlib import asynccontextmanager
 from datetime import datetime
 from uuid import UUID, uuid4
 
-from sqlalchemy import DateTime, ForeignKey, String, Uuid, select, update
+from sqlalchemy import CheckConstraint, DateTime, ForeignKey, Index, String, Uuid, select, update
 from sqlalchemy.engine import CursorResult
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import DeclarativeBase, Mapped, mapped_column
@@ -17,6 +17,13 @@ class ApprovalBase(DeclarativeBase):
 
 class ApprovalRecord(ApprovalBase):
     __tablename__ = "approvals"
+    __table_args__ = (
+        CheckConstraint(
+            "status IN ('pending', 'approved', 'rejected', 'executed', 'expired')",
+            name="approvals_valid_status",
+        ),
+        Index("ix_approvals_scope_status", "scope_id", "status"),
+    )
 
     id: Mapped[UUID] = mapped_column(Uuid(as_uuid=True), primary_key=True)
     tool_name: Mapped[str] = mapped_column(String(255), nullable=False)
@@ -44,6 +51,7 @@ class ApprovalRecord(ApprovalBase):
 
 class ApprovalAuditRecord(ApprovalBase):
     __tablename__ = "approval_audit_events"
+    __table_args__ = (Index("ix_approval_audit_events_approval", "approval_id"),)
 
     id: Mapped[UUID] = mapped_column(Uuid(as_uuid=True), primary_key=True)
     approval_id: Mapped[UUID] = mapped_column(
