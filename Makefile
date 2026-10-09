@@ -26,6 +26,12 @@ eval-smoke:
 	uv run --all-packages python -m accelerator.evaluation_core.reporting.smoke \
 		--baseline evaluations/baselines/accepted.json --thresholds $(EVAL_THRESHOLDS)
 
+# Full evaluation composes the API's Azure workflow; override either to evaluate
+# a project's own dataset or composition.
+EVALUATION_WORKFLOW_FACTORY ?= accelerator.infrastructure.evaluation:create_full_evaluation_runtime
+EVALUATION_DATASET ?= evaluations/example-datasets/smoke.jsonl
+export EVALUATION_WORKFLOW_FACTORY EVALUATION_DATASET
+
 eval-full:
 	uv run --all-packages python -m accelerator.evaluation_core.evaluators
 

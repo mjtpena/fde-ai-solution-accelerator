@@ -55,6 +55,7 @@ def build_azure_grounded_answer(
     shutdown: list[Callable[[], Awaitable[None]]],
     *,
     telemetry: Telemetry | None = None,
+    capture_evaluation_context: bool = False,
 ) -> GroundedAnswer:
     if not settings.azure_services_configured:
         raise ValueError("Foundry and Azure AI Search settings are incomplete.")
@@ -128,4 +129,5 @@ def build_azure_grounded_answer(
         answer_generator=generator,
         citation_validator=validator,
         retrieval_request_factory=lambda query: RetrievalRequest(query=query, top_k=top_k),
+        capture_evaluation_context=capture_evaluation_context,
     )

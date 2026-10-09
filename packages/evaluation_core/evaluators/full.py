@@ -6,7 +6,7 @@ import argparse
 import asyncio
 import importlib
 import logging
-from collections.abc import Callable, Sequence
+from collections.abc import Awaitable, Callable, Sequence
 from dataclasses import dataclass
 from pathlib import Path
 from typing import TYPE_CHECKING, Literal, Protocol
@@ -46,6 +46,8 @@ class FullEvaluationRuntime:
 
     workflow: EvaluationWorkflow
     context: ExecutionContext
+    # Releases clients the factory opened; awaited on the run's event loop.
+    close: Callable[[], Awaitable[None]] | None = None
 
 
 class FullEvaluationSettings(BaseSettings):
@@ -125,6 +127,16 @@ async def run_full(
     )
 
 
+async def _run_and_close(
+    rows: Sequence[DatasetRow], runtime: FullEvaluationRuntime, judge: Judge
+) -> FullEvaluationResult:
+    try:
+        return await run_full(rows, runtime, judge)
+    finally:
+        if runtime.close is not None:
+            await runtime.close()
+
+
 def load_runtime(factory_path: str) -> FullEvaluationRuntime:
     """Load only an explicitly configured trusted local composition factory."""
     module_name, function_name = factory_path.split(":")
@@ -150,7 +162,7 @@ def main() -> None:
     rows = load_dataset(settings.dataset)
     runtime = load_runtime(settings.workflow_factory)
     with FoundryEvaluatorAdapters.from_settings(judge_settings) as judge:
-        result = asyncio.run(run_full(rows, runtime, judge))
+        result = asyncio.run(_run_and_close(rows, runtime, judge))
     logging.basicConfig(level=logging.INFO)
     logging.getLogger(__name__).info(
         "Full evaluation measured %d rows; metrics=%s counts=%s correlation_id=%s",

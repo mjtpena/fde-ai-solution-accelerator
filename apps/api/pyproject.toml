@@ -24,8 +24,13 @@ dependencies = [
     "uvicorn[standard]>=0.30,<1",
 ]
 
+[project.optional-dependencies]
+# Full evaluation against Azure (make eval-full); not installed in the API image.
+evaluation = ["fde-evaluation-core"]
+
 [tool.uv.sources]
 fde-agent-core = { workspace = true }
+fde-evaluation-core = { workspace = true }
 fde-observability-core = { workspace = true }
 fde-retrieval-core = { workspace = true }
 fde-security-core = { workspace = true }

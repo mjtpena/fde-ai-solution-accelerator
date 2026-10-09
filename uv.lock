@@ -580,6 +580,11 @@ dependencies = [
     { name = "uvicorn", extra = ["standard"] },
 ]
 
+[package.optional-dependencies]
+evaluation = [
+    { name = "fde-evaluation-core" },
+]
+
 [package.dev-dependencies]
 dev = [
     { name = "asyncpg" },
@@ -595,6 +600,7 @@ requires-dist = [
     { name = "azure-search-documents", specifier = ">=11.6,<12" },
     { name = "fastapi", specifier = ">=0.115,<1" },
     { name = "fde-agent-core", editable = "packages/agent_core" },
+    { name = "fde-evaluation-core", marker = "extra == 'evaluation'", editable = "packages/evaluation_core" },
     { name = "fde-observability-core", editable = "packages/observability_core" },
     { name = "fde-retrieval-core", editable = "packages/retrieval_core" },
     { name = "fde-security-core", editable = "packages/security_core" },
@@ -604,6 +610,7 @@ requires-dist = [
     { name = "sqlalchemy", extras = ["asyncio"], specifier = ">=2.0,<3" },
     { name = "uvicorn", extras = ["standard"], specifier = ">=0.30,<1" },
 ]
+provides-extras = ["evaluation"]
 
 [package.metadata.requires-dev]
 dev = [

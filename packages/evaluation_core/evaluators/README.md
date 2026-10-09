@@ -35,8 +35,31 @@ These adapters do not load evaluation datasets or generate agent responses.
 returning `FullEvaluationRuntime(workflow, context)`. The factory constructs
 the existing `GroundedAnswerWorkflow` with `capture_evaluation_context=True`
 and resolves an authorized `ExecutionContext` server-side. Dataset `scope_id`
-is never used to grant access. There is no default workflow, fake answer,
-fixture metric, or second retrieval.
+is never used to grant access. There is no fake answer, fixture metric, or
+second retrieval.
+
+The checked-in factory is
+`accelerator.infrastructure.evaluation:create_full_evaluation_runtime` (in the
+API package, `evaluation` extra), and `make eval-full` uses it by default with
+`evaluations/example-datasets/smoke.jsonl`. It builds the API's own Azure
+grounded-answer workflow with capture enabled, and resolves the context's scopes
+from `scope_memberships` for `EVALUATION_PRINCIPAL_OBJECT_ID`, exactly as the API
+resolves a signed-in user. It refuses to run for a principal with no memberships.
+Clients it opens are closed on the run's event loop through
+`FullEvaluationRuntime.close`.
+
+To run it, set:
+
+| Variable | Purpose |
+| --- | --- |
+| `API_*` | Foundry, Azure AI Search and database settings, as for the API |
+| `EVALUATION_PRINCIPAL_OBJECT_ID` | Entra object ID whose scope memberships bound every turn |
+| `EVALUATION_JUDGE_AZURE_ENDPOINT`, `EVALUATION_JUDGE_AZURE_DEPLOYMENT` | Foundry judge model |
+| `EVALUATION_DATASET` (optional) | A project dataset instead of the smoke dataset |
+
+With the default dataset, the index must contain the fixture corpus
+(`tests/fixtures/retrieval/corpus`) and the principal must be a member of
+`scope-a` only, so the scope-isolation row stays meaningful.
 
 The runner passes actual answers and captured same-turn evidence to the SDK
 off the async event loop. `run_full(rows, runtime, judge)` returns a typed
@@ -52,4 +75,4 @@ A live run needs both judge variables, a deployed model, and an Entra identity
 authorized for inference, plus the application's configured workflow/retrieval
 dependencies. Offline tests inject the workflow and SDK boundaries; they do
 not prove live Azure access. An unconfigured `make eval-full` fails rather than
-fabricating successful output. `make eval-smoke` remains owned by #30/#31.
+fabricating successful output.

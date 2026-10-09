@@ -7,7 +7,7 @@ from collections.abc import Sequence
 from dataclasses import dataclass, replace
 from datetime import UTC, datetime
 from pathlib import Path
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Any
 
 import pytest
 from pydantic import ValidationError
@@ -414,3 +414,48 @@ def compose():
     assert "'completeness': 4.0" in result.stderr
     assert "Actual same-turn text" not in result.stderr
     assert "Actual workflow answer" not in result.stderr
+
+
+class FailingWorkflow:
+    async def run(self, workflow_input: str, ctx: ExecutionContext) -> GroundedAnswerResult:
+        raise RuntimeError("search unavailable")
+
+
+@pytest.mark.parametrize("workflow", [Workflow(), FailingWorkflow()])
+def test_cli_closes_the_runtime_on_the_run_loop_even_on_failure(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, workflow: Any
+) -> None:
+    dataset = tmp_path / "rows.jsonl"
+    dataset.write_text(json.dumps(row().model_dump()) + "\n", encoding="utf-8")
+    closed: list[bool] = []
+
+    async def close() -> None:
+        asyncio.get_running_loop()  # awaited inside the evaluation's event loop
+        closed.append(True)
+
+    monkeypatch.setenv("EVALUATION_DATASET", str(dataset))
+    monkeypatch.setenv("EVALUATION_WORKFLOW_FACTORY", "builtins:full_test_factory")
+    monkeypatch.setenv("EVALUATION_JUDGE_AZURE_ENDPOINT", "https://judge.example.invalid")
+    monkeypatch.setenv("EVALUATION_JUDGE_AZURE_DEPLOYMENT", "judge")
+    monkeypatch.setattr(
+        "builtins.full_test_factory",
+        lambda: FullEvaluationRuntime(workflow, context(), close=close),
+        raising=False,
+    )
+    monkeypatch.setattr(FoundryEvaluatorAdapters, "from_settings", lambda settings: Judge())
+    monkeypatch.setattr(sys, "argv", ["eval-full"])
+    if isinstance(workflow, FailingWorkflow):
+        with pytest.raises(RuntimeError, match="search unavailable"):
+            main()
+    else:
+        main()
+    assert closed == [True]
+
+
+def test_make_eval_full_defaults_to_the_api_composition() -> None:
+    makefile = (Path(__file__).resolve().parents[4] / "Makefile").read_text()
+    assert (
+        "EVALUATION_WORKFLOW_FACTORY ?= "
+        "accelerator.infrastructure.evaluation:create_full_evaluation_runtime"
+    ) in makefile
+    assert "export EVALUATION_WORKFLOW_FACTORY EVALUATION_DATASET" in makefile
