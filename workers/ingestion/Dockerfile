@@ -2,7 +2,7 @@
 # Build from the repository root: docker build -f workers/ingestion/Dockerfile .
 FROM ghcr.io/astral-sh/uv:0.11.10@sha256:bca7f6959666f3524e0c42129f9d8bbcfb0c180d847f5187846b98ff06125ead AS uv
 
-FROM python:3.12-alpine@sha256:1b668429b3511ab407d8e00648891631b0b1a4d7e15e3ca70f38ab5b91ad4ab4 AS builder
+FROM python:3.14-alpine@sha256:f6a589d43c42b9e7f7dc67a12d37132491f362859a5d750607710cc56da3bc72 AS builder
 COPY --from=uv /uv /usr/local/bin/uv
 WORKDIR /workspace
 ENV UV_PROJECT_ENVIRONMENT=/opt/venv \
@@ -24,7 +24,7 @@ COPY packages ./packages
 COPY workers/ingestion ./workers/ingestion
 RUN uv sync --frozen --no-dev --package fde-ingestion-worker --no-editable
 
-FROM python:3.12-alpine@sha256:1b668429b3511ab407d8e00648891631b0b1a4d7e15e3ca70f38ab5b91ad4ab4
+FROM python:3.14-alpine@sha256:f6a589d43c42b9e7f7dc67a12d37132491f362859a5d750607710cc56da3bc72
 ENV PATH="/opt/venv/bin:$PATH" \
     PYTHONUNBUFFERED=1 \
     PYTHONDONTWRITEBYTECODE=1 \
