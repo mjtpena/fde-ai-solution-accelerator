@@ -110,4 +110,17 @@ describe("streamChat", () => {
       { type: "done" },
     ]);
   });
+  it("ignores event names it does not recognise", async () => {
+    const body =
+      'event: progress\ndata: {"step":"retrieval"}\n\n' +
+      'event: token\ndata: {"text":"Answer"}\n\n' +
+      "event: done\ndata: {}\n\n";
+    const events: unknown[] = [];
+    const fetcher: typeof fetch = async () =>
+      new Response(body, { headers: { "Content-Type": "text/event-stream" } });
+
+    await streamChat("Question", (event) => events.push(event), "token", undefined, fetcher);
+
+    expect(events).toEqual([{ type: "token", text: "Answer" }, { type: "done" }]);
+  });
 });

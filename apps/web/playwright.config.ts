@@ -8,6 +8,10 @@ export default defineConfig({
     baseURL: "http://127.0.0.1:3100",
     trace: "retain-on-failure",
     ...devices["Desktop Chrome"],
+    // Lets environments with a preinstalled Chromium skip `playwright install`.
+    launchOptions: process.env.PLAYWRIGHT_CHROMIUM_EXECUTABLE_PATH
+      ? { executablePath: process.env.PLAYWRIGHT_CHROMIUM_EXECUTABLE_PATH }
+      : {},
   },
   webServer: [
     {
@@ -23,7 +27,6 @@ export default defineConfig({
       timeout: 120_000,
       env: {
         API_BASE_URL: "http://127.0.0.1:8100",
-        NEXT_PUBLIC_API_URL: "http://127.0.0.1:8100",
         NEXT_PUBLIC_ENTRA_CLIENT_ID: "playwright-client-id",
         NEXT_PUBLIC_ENTRA_TENANT_ID: "00000000-0000-0000-0000-000000000001",
         NEXT_PUBLIC_ENTRA_API_SCOPE:

@@ -9,22 +9,29 @@ import { useCallback, useEffect, useState } from "react";
 
 import { getHealth } from "../api/client";
 import { getApiScope, getMsalInstance } from "./msal";
+import { type AccessTokenProvider, acquireApiToken } from "./token";
 
 type EntraSignInProps = {
-  onAccessTokenChange?: (accessToken: string | null) => void;
+  onTokenProviderChange?: (provider: AccessTokenProvider | null) => void;
 };
 
-export function EntraSignIn({ onAccessTokenChange }: EntraSignInProps) {
+export function EntraSignIn({ onTokenProviderChange }: EntraSignInProps) {
   const [account, setAccount] = useState<AccountInfo | null>(null);
-  const [accessToken, setAccessToken] = useState<string | null>(null);
   const [healthStatus, setHealthStatus] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [ready, setReady] = useState(false);
   const scope = getApiScope();
 
+  // Consumers get a provider, not a token: every API call asks MSAL for a
+  // current token, so expired tokens are renewed instead of reused.
   useEffect(() => {
-    onAccessTokenChange?.(accessToken);
-  }, [accessToken, onAccessTokenChange]);
+    const msal = getMsalInstance();
+    if (!account || !msal || !scope) {
+      onTokenProviderChange?.(null);
+      return;
+    }
+    onTokenProviderChange?.(() => acquireApiToken(msal, account, scope));
+  }, [account, scope, onTokenProviderChange]);
 
   useEffect(() => {
     let active = true;
@@ -47,15 +54,12 @@ export function EntraSignIn({ onAccessTokenChange }: EntraSignInProps) {
           null;
         if (signedInAccount) {
           msal.setActiveAccount(signedInAccount);
-          const tokenResult = redirectResult?.accessToken
-            ? redirectResult
-            : await msal.acquireTokenSilent({
-                account: signedInAccount,
-                scopes: [scope],
-              });
+          if (!redirectResult?.accessToken) {
+            // Confirms the cached session can still produce an API token.
+            await acquireApiToken(msal, signedInAccount, scope);
+          }
           if (active) {
             setAccount(signedInAccount);
-            setAccessToken(tokenResult.accessToken);
           }
         }
       } catch (caught) {
@@ -76,12 +80,12 @@ export function EntraSignIn({ onAccessTokenChange }: EntraSignInProps) {
   }, [scope]);
 
   useEffect(() => {
-    if (!accessToken) {
+    if (!account) {
       return;
     }
 
     let active = true;
-    void getHealth(accessToken)
+    void getHealth()
       .then((health) => {
         if (active) {
           setHealthStatus(health.status);
@@ -97,7 +101,7 @@ export function EntraSignIn({ onAccessTokenChange }: EntraSignInProps) {
     return () => {
       active = false;
     };
-  }, [accessToken]);
+  }, [account]);
 
   const signIn = useCallback(async () => {
     const msal = getMsalInstance();
@@ -112,7 +116,6 @@ export function EntraSignIn({ onAccessTokenChange }: EntraSignInProps) {
       });
       msal.setActiveAccount(result.account);
       setAccount(result.account);
-      setAccessToken(result.accessToken);
       setError(null);
     } catch (caught) {
       setError(errorMessage(caught));
@@ -128,7 +131,6 @@ export function EntraSignIn({ onAccessTokenChange }: EntraSignInProps) {
     try {
       await msal.logoutPopup({ account });
       setAccount(null);
-      setAccessToken(null);
       setHealthStatus(null);
       setError(null);
     } catch (caught) {

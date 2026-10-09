@@ -2,31 +2,27 @@ import { describe, expect, it } from "vitest";
 import { getHealth } from "../../lib/api/client";
 
 describe("getHealth", () => {
-  it("calls /healthz and returns the typed health status", async () => {
-    let requestUrl: URL | undefined;
+  it("calls the same-origin health route and returns the typed status", async () => {
+    let requestUrl: string | undefined;
     let requestInit: RequestInit | undefined;
     const fetcher: typeof fetch = async (input, init) => {
-      requestUrl = input instanceof URL ? input : new URL(input.toString());
+      requestUrl = input.toString();
       requestInit = init;
       return new Response(JSON.stringify({ status: "ok" }), {
         headers: { "Content-Type": "application/json" },
       });
     };
 
-    await expect(getHealth("test-access-token", fetcher)).resolves.toEqual({
-      status: "ok",
-    });
-    expect(requestUrl?.pathname).toBe("/healthz");
+    await expect(getHealth(fetcher)).resolves.toEqual({ status: "ok" });
+    expect(requestUrl).toBe("/api/health");
     expect(requestInit?.cache).toBe("no-store");
-    expect(new Headers(requestInit?.headers).get("Authorization")).toBe(
-      "Bearer test-access-token",
-    );
+    expect(new Headers(requestInit?.headers).get("Authorization")).toBeNull();
   });
 
   it("reports non-success API responses", async () => {
     const fetcher: typeof fetch = async () => new Response(null, { status: 503 });
 
-    await expect(getHealth("test-access-token", fetcher)).rejects.toThrow(
+    await expect(getHealth(fetcher)).rejects.toThrow(
       "API health check failed with status 503.",
     );
   });
@@ -37,7 +33,7 @@ describe("getHealth", () => {
         headers: { "Content-Type": "application/json" },
       });
 
-    await expect(getHealth("test-access-token", fetcher)).rejects.toThrow(
+    await expect(getHealth(fetcher)).rejects.toThrow(
       "API health check returned an invalid response.",
     );
   });
