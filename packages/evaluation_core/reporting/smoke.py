@@ -23,7 +23,6 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--output-dir", type=Path, default=Path("evaluations/reports"))
     parser.add_argument("--dataset", type=Path, default=DEFAULT_DATASET)
     parser.add_argument("--corpus", type=Path, default=DEFAULT_CORPUS)
-    parser.add_argument("--allow-fixture", action="store_true")
     args = parser.parse_args(argv)
     logging.basicConfig(level=logging.INFO, format="%(levelname)s %(message)s")
     # Workflow supersteps are not evaluation results; keep the report log readable.
@@ -35,17 +34,13 @@ def main(argv: list[str] | None = None) -> int:
         (args.output_dir / "smoke.md").unlink(missing_ok=True)
         measured = run_smoke(args.dataset, args.corpus)
         current = EvaluationResult(metrics=measured.metrics, hard_failures=measured.hard_failures)
-        baseline, thresholds, fixture = load_comparison_config(
-            args.baseline, args.thresholds, allow_fixture=args.allow_fixture
+        baseline, thresholds = load_comparison_config(args.baseline, args.thresholds)
+        logger.info(
+            "correlation_id=evaluation-smoke baseline=%s thresholds=%s",
+            args.baseline, args.thresholds, extra=context,
         )
-        if fixture:
-            logger.warning(
-                "correlation_id=evaluation-smoke missing baseline=%s thresholds=%s; "
-                "using explicit deterministic fixtures, not a project baseline",
-                args.baseline, args.thresholds, extra=context,
-            )
         report = compare(current, baseline, thresholds)
-        write_report(report, args.output_dir, fixture=fixture)
+        write_report(report, args.output_dir)
     except (OSError, ValueError, ValidationError, yaml.YAMLError) as error:
         logger.exception("correlation_id=evaluation-smoke evaluation failed", extra=context)
         try:
@@ -69,8 +64,8 @@ def main(argv: list[str] | None = None) -> int:
             )
         return 2
     logger.info(
-        "correlation_id=evaluation-smoke passed=%s fixture=%s metrics=%d hard_failures=%d",
-        report.passed, fixture, len(report.metrics), len(report.hard_failures), extra=context,
+        "correlation_id=evaluation-smoke passed=%s metrics=%d hard_failures=%d",
+        report.passed, len(report.metrics), len(report.hard_failures), extra=context,
     )
     return 0 if report.passed else 1
 

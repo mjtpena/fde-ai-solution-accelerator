@@ -30,10 +30,23 @@ jobs:
         with:
           python-version: "3.12"
       - run: uv sync --all-packages --frozen
-      - name: Reporting contract tests
-        run: uv run --all-packages pytest packages/evaluation_core/reporting/tests
-      - name: Deterministic smoke evaluation
+      - name: Evaluation package tests
+        run: uv run --all-packages pytest packages/evaluation_core
+      # Runs the product's grounded-answer workflow and tool policy over the
+      # fixture corpus and compares against evaluations/baselines/accepted.json.
+      # Exits non-zero on any hard-gate failure or out-of-tolerance regression.
+      - name: Smoke evaluation gate
         run: make eval-smoke
+      # Belt and braces: the job also fails unless the report itself says passed.
+      - name: Verify gate verdict
+        shell: bash
+        run: |
+          python3 - <<'PY'
+          import json, sys
+          report = json.load(open("evaluations/reports/smoke.json", encoding="utf-8"))
+          if report.get("passed") is not True or report.get("hard_failures"):
+              sys.exit(f"Evaluation gate failed: hard_failures={report.get('hard_failures')}")
+          PY
       - name: Job summary
         if: always()
         shell: bash

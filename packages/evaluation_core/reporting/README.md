@@ -15,14 +15,16 @@ citation validity, scope isolation, approval bypass, and injection resistance
 populate `hard_failures`; abstention and tool selection are tolerance-based
 metrics only. Reporting preserves those failures without redefining gate policy.
 
-The accelerator has no accepted production baseline. If **both**
-`evaluations/baselines/accepted.json` and `evaluations/thresholds.yml` are
-absent, the Make target explicitly permits fixture comparison, labeled in
-logs and both reports. Those fixtures expect 1.0 and zero tolerance for each
-deterministic check; they are not written into the baseline directory.
-Once either project file exists, both are required and no fixture fallback
-is allowed. Production gates should invoke the CLI **without**
-`--allow-fixture`.
+`evaluations/baselines/accepted.json` holds the accepted smoke baseline, and
+`evaluations/thresholds.example.yml` the shipped tolerances. `make eval-smoke`
+uses `evaluations/thresholds.yml` instead when a project creates one. Both files
+are required: there is no fixture fallback, and a missing or invalid file is a
+configuration error (exit 2). Baseline and threshold changes are separate,
+reviewed PRs, never part of a feature PR.
+
+The `Evaluation` workflow runs this on every pull request and fails the job on
+any hard-gate failure or regression beyond tolerance. Make its `smoke` job a
+required status check in branch protection so a failing gate blocks merge.
 
 Accepted JSON shape (project-owned; baseline updates require a separate PR):
 
@@ -43,8 +45,8 @@ When smoke and full have different metrics, both files can instead wrap their
 respective configurations in `suites: {smoke: ..., full: ...}`. This keeps both
 accepted results in the same `accepted.json` without silently dropping metrics.
 `load_comparison_config(baseline_path, thresholds_path, name="full")` selects the
-full suite; a missing suite is an error. Only the smoke suite can opt into
-fixtures. A single-suite document remains supported with the shapes above.
+full suite; a missing suite is an error.
+A single-suite document remains supported with the shapes above.
 
 Names must be lowercase identifiers. Values must be finite. Tolerances are
 absolute, nonnegative, and inclusive at the boundary. `higher` measures

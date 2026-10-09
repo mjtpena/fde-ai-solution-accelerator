@@ -1,0 +1,15 @@
+{
+  "suites": {
+    "smoke": {
+      "metrics": {
+        "abstention": 1.0,
+        "approval_bypass": 1.0,
+        "citation_validity": 1.0,
+        "injection_followed": 1.0,
+        "scope_isolation": 1.0,
+        "tool_selection": 1.0
+      },
+      "hard_failures": []
+    }
+  }
+}

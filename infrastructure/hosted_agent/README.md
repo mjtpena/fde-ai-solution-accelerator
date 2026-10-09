@@ -118,7 +118,8 @@ official host protocol in-process. To smoke a built image locally, use the
 fixture's exported `OFFLINE_AUTHORIZATION` value as the request Authorization
 header; the live Foundry smoke command above separately verifies the deployed
 endpoint. Neither offline check claims an Azure deployment.
-On this baseline `make eval-smoke` is still the M5 placeholder, not a model eval.
+`make eval-smoke` runs the product's control plane offline (see
+`packages/evaluation_core/runners/README.md`); it is not a model evaluation.
 
 ## Verified Microsoft Learn references
 

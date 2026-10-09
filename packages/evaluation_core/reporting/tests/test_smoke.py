@@ -29,35 +29,51 @@ def configure(tmp_path: Path) -> tuple[Path, Path]:
     return baseline, thresholds
 
 
-def cli_args(tmp_path: Path, *, fixture: bool = False) -> list[str]:
-    args = [
+ROOT = Path(__file__).resolve().parents[4]
+
+
+def cli_args(tmp_path: Path) -> list[str]:
+    return [
         "--baseline", str(tmp_path / "accepted.json"),
         "--thresholds", str(tmp_path / "thresholds.yml"),
         "--output-dir", str(tmp_path / "reports"),
     ]
-    return args + (["--allow-fixture"] if fixture else [])
 
 
-def test_real_deterministic_smoke_and_fixture_artifacts(tmp_path: Path) -> None:
-    assert smoke.main(cli_args(tmp_path, fixture=True)) == 0
+def test_real_smoke_passes_against_the_committed_baseline_and_example_thresholds(
+    tmp_path: Path,
+) -> None:
+    args = [
+        "--baseline", str(ROOT / "evaluations/baselines/accepted.json"),
+        "--thresholds", str(ROOT / "evaluations/thresholds.example.yml"),
+        "--dataset", str(ROOT / "evaluations/example-datasets/smoke.jsonl"),
+        "--corpus", str(ROOT / "tests/fixtures/retrieval/corpus"),
+        "--output-dir", str(tmp_path / "reports"),
+    ]
+    assert smoke.main(args) == 0
     payload = json.loads((tmp_path / "reports" / "smoke.json").read_text(encoding="utf-8"))
     assert payload["passed"] is True
-    assert payload["fixture"] is True
+    assert payload["fixture"] is False
     assert payload["hard_failures"] == []
     assert {row["name"] for row in payload["metrics"]} == set(SMOKE_METRICS)
     assert len(payload["metrics"]) == 6
-    assert "injection_followed" in SMOKE_METRICS
     assert all(row["current"] == row["baseline"] == 1.0 for row in payload["metrics"])
-    assert "not an accepted project baseline" in (
+    assert "not an accepted project baseline" not in (
         tmp_path / "reports" / "smoke.md"
     ).read_text(encoding="utf-8")
-    assert not (tmp_path / "accepted.json").exists()
+
+
+def test_the_fixture_fallback_flag_no_longer_exists(tmp_path: Path) -> None:
+    with pytest.raises(SystemExit) as raised:
+        smoke.main(cli_args(tmp_path) + ["--allow-fixture"])
+    assert raised.value.code == 2
+    assert not (tmp_path / "reports").exists()
 
 
 def test_project_baseline_files_are_read_only(tmp_path: Path) -> None:
     baseline, thresholds = configure(tmp_path)
     originals = baseline.read_bytes(), thresholds.read_bytes()
-    assert smoke.main(cli_args(tmp_path, fixture=True)) == 0
+    assert smoke.main(cli_args(tmp_path)) == 0
     assert (baseline.read_bytes(), thresholds.read_bytes()) == originals
     payload = json.loads((tmp_path / "reports" / "smoke.json").read_text(encoding="utf-8"))
     assert payload["fixture"] is False
@@ -76,8 +92,6 @@ def test_partial_or_missing_project_config_does_not_pass(
     payload = json.loads((tmp_path / "reports" / "smoke.json").read_text(encoding="utf-8"))
     assert payload == {"passed": False, "error": "FileNotFoundError"}
     assert "ERROR" in (tmp_path / "reports" / "smoke.md").read_text(encoding="utf-8")
-    if missing != "both":
-        assert smoke.main(cli_args(tmp_path, fixture=True)) == 2
 
 
 @pytest.mark.parametrize(
@@ -151,16 +165,16 @@ def test_regression_artifacts_are_written_before_failure_exit(
     "content",
     ["metrics: [", "metrics: {}", "metrics:\n  unexpected: 1", "!!python/object/apply:os.system []"],
 )
-def test_invalid_yaml_fails_even_when_fixtures_are_allowed(tmp_path: Path, content: str) -> None:
+def test_invalid_yaml_fails(tmp_path: Path, content: str) -> None:
     _, thresholds = configure(tmp_path)
     thresholds.write_text(content, encoding="utf-8")
-    assert smoke.main(cli_args(tmp_path, fixture=True)) == 2
+    assert smoke.main(cli_args(tmp_path)) == 2
 
 
-def test_invalid_baseline_does_not_fall_back_to_fixture(tmp_path: Path) -> None:
+def test_invalid_baseline_fails(tmp_path: Path) -> None:
     baseline, _ = configure(tmp_path)
     baseline.write_text('{"metrics": {"score": NaN}}', encoding="utf-8")
-    assert smoke.main(cli_args(tmp_path, fixture=True)) == 2
+    assert smoke.main(cli_args(tmp_path)) == 2
 
 
 def test_error_exit_code_is_preserved_when_artifact_writing_also_fails(
@@ -183,9 +197,7 @@ def test_error_exit_code_is_preserved_when_artifact_writing_also_fails(
 
 
 def test_full_report_writer_uses_requested_name(tmp_path: Path) -> None:
-    baseline, thresholds, _ = load_comparison_config(
-        tmp_path / "missing.json", tmp_path / "missing.yml", allow_fixture=True
-    )
+    baseline, thresholds = load_comparison_config(*configure(tmp_path))
     report = compare(baseline, baseline, thresholds)
     write_report(report, tmp_path / "reports", name="full")
     assert (tmp_path / "reports" / "full.json").exists()
@@ -216,22 +228,19 @@ def test_suite_baselines_preserve_distinct_smoke_and_full_metrics(tmp_path: Path
         encoding="utf-8",
     )
     assert smoke.main(cli_args(tmp_path)) == 0
-    full_baseline, full_thresholds, fixture = load_comparison_config(
-        baseline, thresholds, name="full"
-    )
+    full_baseline, full_thresholds = load_comparison_config(baseline, thresholds, name="full")
     assert full_baseline.metrics == {"groundedness": 0.9}
     assert full_thresholds.metrics["groundedness"].tolerance == 0.1
-    assert fixture is False
     with pytest.raises(ValueError, match="Missing accepted baseline suite"):
         load_comparison_config(baseline, thresholds, name="unknown")
 
 
-def test_full_evaluation_never_falls_back_to_smoke_fixtures(tmp_path: Path) -> None:
-    with pytest.raises(FileNotFoundError):
-        load_comparison_config(
-            tmp_path / "accepted.json", tmp_path / "thresholds.yml",
-            name="full", allow_fixture=True,
-        )
+def test_missing_project_files_never_fall_back_for_any_suite(tmp_path: Path) -> None:
+    for name in ("smoke", "full"):
+        with pytest.raises(FileNotFoundError):
+            load_comparison_config(
+                tmp_path / "accepted.json", tmp_path / "thresholds.yml", name=name
+            )
 
 
 def test_cli_passes_dataset_and_corpus_to_the_runner(

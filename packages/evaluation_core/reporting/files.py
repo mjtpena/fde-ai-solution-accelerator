@@ -11,7 +11,6 @@ from .comparison import (
     ComparisonReport,
     EvaluationResult,
     MetricName,
-    MetricThreshold,
     ReportModel,
     Thresholds,
     markdown_summary,
@@ -35,24 +34,9 @@ def load_comparison_config(
     baseline_path: Path,
     thresholds_path: Path,
     *,
-    allow_fixture: bool = False,
     name: str = "smoke",
-) -> tuple[EvaluationResult, Thresholds, bool]:
-    """Fixtures are opt-in and only available when neither project file exists."""
-    if (
-        allow_fixture and name == "smoke"
-        and not baseline_path.exists() and not thresholds_path.exists()
-    ):
-        return (
-            EvaluationResult(metrics={name: 1.0 for name in SMOKE_METRICS}),
-            Thresholds(
-                metrics={
-                    name: MetricThreshold(direction="higher", tolerance=0)
-                    for name in SMOKE_METRICS
-                }
-            ),
-            True,
-        )
+) -> tuple[EvaluationResult, Thresholds]:
+    """Both project files are required; there is no fixture fallback."""
     accepted: EvaluationResult | AcceptedBaselines = TypeAdapter(
         EvaluationResult | AcceptedBaselines
     ).validate_json(
@@ -75,7 +59,7 @@ def load_comparison_config(
         thresholds = configured.suites[name]
     else:
         thresholds = configured
-    return baseline, thresholds, False
+    return baseline, thresholds
 
 
 def write_report(

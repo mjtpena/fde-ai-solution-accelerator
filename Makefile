@@ -19,8 +19,12 @@ check:
 	uv run --all-packages pytest
 	npm run check --workspaces --if-present
 
+# A project-owned evaluations/thresholds.yml takes precedence over the shipped example.
+EVAL_THRESHOLDS ?= $(firstword $(wildcard evaluations/thresholds.yml) evaluations/thresholds.example.yml)
+
 eval-smoke:
-	uv run --all-packages python -m accelerator.evaluation_core.reporting.smoke --allow-fixture
+	uv run --all-packages python -m accelerator.evaluation_core.reporting.smoke \
+		--baseline evaluations/baselines/accepted.json --thresholds $(EVAL_THRESHOLDS)
 
 eval-full:
 	uv run --all-packages python -m accelerator.evaluation_core.evaluators

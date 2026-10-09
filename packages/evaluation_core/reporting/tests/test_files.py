@@ -23,9 +23,8 @@ def test_suite_config_and_report_file_shape(tmp_path: Path) -> None:
         "        direction: higher\n        tolerance: 0.1\n",
         encoding="utf-8",
     )
-    accepted, rules, fixture = load_comparison_config(baseline, thresholds, name="full")
+    accepted, rules = load_comparison_config(baseline, thresholds, name="full")
     assert accepted.metrics == {"groundedness": 0.9}
-    assert fixture is False
     report = compare(accepted, accepted, rules)
     write_report(report, tmp_path, name="full")
     payload = json.loads((tmp_path / "full.json").read_text(encoding="utf-8"))
@@ -50,14 +49,11 @@ def test_threshold_suite_is_required_explicitly(tmp_path: Path) -> None:
         load_comparison_config(baseline, thresholds)
 
 
-def test_fixture_is_opt_in_and_never_for_full_suite(tmp_path: Path) -> None:
+def test_missing_files_are_errors_for_every_suite(tmp_path: Path) -> None:
     baseline, thresholds = tmp_path / "accepted.json", tmp_path / "thresholds.yml"
     with pytest.raises(FileNotFoundError):
         load_comparison_config(baseline, thresholds)
     with pytest.raises(FileNotFoundError):
-        load_comparison_config(baseline, thresholds, name="full", allow_fixture=True)
-    accepted, rules, fixture = load_comparison_config(baseline, thresholds, allow_fixture=True)
-    assert fixture is True
-    assert compare(accepted, accepted, rules).passed
+        load_comparison_config(baseline, thresholds, name="full")
     assert not baseline.exists()
     assert not thresholds.exists()
