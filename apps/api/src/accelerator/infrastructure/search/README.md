@@ -79,12 +79,12 @@ The security-sensitive search test directories are included in root pytest
 
 ## Ranking evaluation gate
 
-Before/after recall@k is required for ranking changes and remains unmeasured.
-`make eval-smoke` currently exits successfully with an M5 placeholder message; it
-does not run retrieval evaluation. `contracts/evaluation/valid-example.jsonl`
-contains synthetic schema-validation rows, not a retrieval corpus: there is no
-source chunk or embedding for `synthetic-chunk-1`. The evaluation runner,
-evaluators, and baseline packages are empty.
+Before/after recall@k is required for ranking changes and remains unmeasured
+against a live index. `make eval-smoke` runs the product's control plane offline
+with a lexical stand-in retriever (see `packages/evaluation_core/runners/README.md`),
+so it gates scope isolation, abstention and citations but says nothing about this
+adapter's ranking. Measure ranking with `make eval-full` against a deployed index
+(`packages/evaluation_core/evaluators/README.md`) before and after the change.
 
 Valid evidence requires a shared indexed corpus with ground-truth chunk IDs,
 fixed queries/scopes and k, a baseline/candidate retrieval runner, and operational
