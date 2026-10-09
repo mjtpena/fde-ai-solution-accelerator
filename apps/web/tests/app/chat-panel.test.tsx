@@ -29,7 +29,7 @@ describe("ChatPanel", () => {
           ),
       ),
     );
-    render(<ChatPanel accessToken="token" />);
+    render(<ChatPanel getAccessToken={async () => "token"} />);
 
     fireEvent.change(screen.getByLabelText("Message"), {
       target: { value: "Question" },
