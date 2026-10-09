@@ -442,6 +442,36 @@ def test_cli_closes_the_runtime_on_the_run_loop_even_on_failure(
     assert closed == [True]
 
 
+def test_cli_closes_the_runtime_when_the_judge_cannot_be_set_up(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    dataset = tmp_path / "rows.jsonl"
+    dataset.write_text(json.dumps(row().model_dump()) + "\n", encoding="utf-8")
+    closed: list[bool] = []
+
+    async def close() -> None:
+        closed.append(True)
+
+    def failing_judge(settings: object) -> FoundryEvaluatorAdapters:
+        raise ImportError("azure-ai-evaluation is not installed")
+
+    monkeypatch.setenv("EVALUATION_DATASET", str(dataset))
+    monkeypatch.setenv("EVALUATION_WORKFLOW_FACTORY", "builtins:full_test_factory")
+    monkeypatch.setenv("EVALUATION_JUDGE_AZURE_ENDPOINT", "https://judge.example.invalid")
+    monkeypatch.setenv("EVALUATION_JUDGE_AZURE_DEPLOYMENT", "judge")
+    monkeypatch.setattr(
+        "builtins.full_test_factory",
+        lambda: FullEvaluationRuntime(Workflow(), context(), close=close),
+        raising=False,
+    )
+    monkeypatch.setattr(FoundryEvaluatorAdapters, "from_settings", failing_judge)
+    monkeypatch.setattr(sys, "argv", ["eval-full"])
+
+    with pytest.raises(ImportError):
+        main()
+    assert closed == [True]
+
+
 def test_make_eval_full_defaults_to_the_api_composition() -> None:
     makefile = (Path(__file__).resolve().parents[4] / "Makefile").read_text()
     assert (

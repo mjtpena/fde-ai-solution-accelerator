@@ -157,7 +157,19 @@ def main() -> None:
     judge_settings = FoundryEvaluatorSettings.model_validate({})
     rows = load_dataset(settings.dataset)
     runtime = load_runtime(settings.workflow_factory)
-    with FoundryEvaluatorAdapters.from_settings(judge_settings) as judge:
+    try:
+        adapters = FoundryEvaluatorAdapters.from_settings(judge_settings)
+    except BaseException:
+        # The runtime already holds clients; release them if the judge cannot start.
+        if runtime.close is not None:
+            close = runtime.close
+
+            async def release() -> None:
+                await close()
+
+            asyncio.run(release())
+        raise
+    with adapters as judge:
         result = asyncio.run(_run_and_close(rows, runtime, judge))
     logging.basicConfig(level=logging.INFO)
     logging.getLogger(__name__).info(
