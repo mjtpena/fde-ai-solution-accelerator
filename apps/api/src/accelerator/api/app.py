@@ -1,3 +1,4 @@
+from collections.abc import Awaitable, Callable, Sequence
 from contextlib import asynccontextmanager
 from typing import AsyncIterator
 
@@ -28,13 +29,18 @@ from accelerator.identity.scope_resolver import (
 )
 from accelerator.security_core.authorisation.memberships import ScopeMembershipRepository
 from accelerator.security_core.cost_guard import RateLimiter, TokenBudgetExceeded
+from accelerator.security_core.infrastructure.database import SessionFactory
 
 
 @asynccontextmanager
 async def lifespan(app: FastAPI) -> AsyncIterator[None]:
-    async with httpx.AsyncClient(timeout=5) as client:
-        app.state.http_client = client
-        yield
+    try:
+        async with httpx.AsyncClient(timeout=5) as client:
+            app.state.http_client = client
+            yield
+    finally:
+        for callback in reversed(app.state.shutdown_callbacks):
+            await callback()
 
 
 def create_app(
@@ -46,6 +52,8 @@ def create_app(
     rate_limiter: RateLimiter | None = None,
     chat_turn: ChatTurnPort | None = None,
     scope_repository: ScopeMembershipRepository | None = None,
+    session_factory: SessionFactory | None = None,
+    on_shutdown: Sequence[Callable[[], Awaitable[None]]] = (),
 ) -> FastAPI:
     app = FastAPI(
         title="FDE AI Solution Accelerator API",
@@ -62,6 +70,8 @@ def create_app(
         },
     )
     app.state.settings = settings
+    app.state.session_factory = session_factory
+    app.state.shutdown_callbacks = tuple(on_shutdown)
     app.state.retrieval_diagnostics_store = (
         diagnostics_store
         if diagnostics_store is not None

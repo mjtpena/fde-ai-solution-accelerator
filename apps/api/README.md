@@ -19,12 +19,18 @@ structured abstentions, or a pending approval reference. Approval cards do not
 execute tools or expose bound arguments. Answer chunks are emitted only after
 the workflow completes citation validation, not during unvalidated generation.
 
-The default ASGI entry point has no host providers: absent workflow or scope
-repository returns 503, never a synthetic answer or permissive scope. Configure
-audit persistence as described below so authentication failures can be recorded.
-`test_configured_app_authenticates_and_streams_without_dependency_overrides`
-exercises this composition seam with a signed test JWT, real authentication and
-scope resolution, and test-only workflow/repository/JWKS fixtures.
+The default ASGI entry point, `accelerator.api.main:app`, is built by the
+composition root `accelerator.api.composition.build_application(settings)`. It
+creates the async SQLAlchemy engine from `API_DATABASE_URL` with explicit pool
+limits (`API_DATABASE_POOL_*`), disposes it on shutdown, and wires
+`SqlAlchemyScopeMembershipRepository`, `PostgresAuditRepository`, the
+request-scoped `ApprovalService` dependency (`get_approval_service`) and the
+cost-guard dependency. With `API_DATABASE_AUTH_MODE=managed_identity` every
+pooled connection authenticates with a fresh Microsoft Entra token from
+`DefaultAzureCredential`; the DSN carries no password. Development and test may
+run without a database, in which case persistence-backed routes return 503;
+production settings validation refuses to start without one. A route whose
+workflow is not configured still returns 503, never a synthetic answer.
 
 `AuditRecorder` exposes async `auth_failure`, `approval`, and `tool_execution`
 hooks. Call approval/tool hooks from trusted API application code with the
