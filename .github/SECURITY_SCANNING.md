@@ -8,8 +8,8 @@ CodeQL uses the extended security suite for Python, JavaScript/TypeScript, and
 GitHub Actions, and uploads results to code scanning. Trivy rejects HIGH and
 CRITICAL vulnerabilities (including unfixed ones), misconfigurations, and
 secrets in the repository (including development dependencies), and
-vulnerabilities and secrets in every built runtime image (api, web, ingestion,
-hosted agent). Trivy exits nonzero
+vulnerabilities and secrets in every runtime image built from a Dockerfile in
+the repository. Trivy exits nonzero
 for findings at those thresholds; scanner errors also fail their jobs.
 Dependency review rejects newly introduced HIGH/CRITICAL vulnerable
 dependencies in pull requests. A successful CodeQL workflow means analysis
@@ -28,11 +28,15 @@ Repository files cannot enable native security features or enforce merge rules.
 After the workflow first reports its checks, an administrator must configure
 an active `main` ruleset or branch protection without removing existing checks:
 
-1. Require **Quality checks**, **Generated project**, **Playwright end-to-end**,
-   **Docker build** (api, web, ingestion, hosted-agent), **smoke** (Evaluation),
+1. Require **Quality checks**, **Playwright end-to-end**,
+   **Docker build** (api, web, ingestion), **smoke** (Evaluation),
    **Security configuration**, **CodeQL (python)**,
    **CodeQL (javascript-typescript)**, **CodeQL (actions)**, **Dependency review**,
-   **Trivy repository**, and **Trivy image** (api, web, ingestion, hosted-agent).
+   **Trivy repository**, and **Trivy image** (api, web, ingestion).
+   <!-- BEGIN ACCELERATOR ONLY -->
+   In the accelerator repository, also require **Generated project** and the
+   hosted-agent **Docker build** and **Trivy image** jobs.
+   <!-- END ACCELERATOR ONLY -->
    Also enable **Require review from Code Owners** (`.github/CODEOWNERS`).
    Bind status checks to the GitHub Actions app and require branches to be up
    to date. Require pull requests, and do not grant scanner bypasses.
@@ -51,7 +55,8 @@ an active `main` ruleset or branch protection without removing existing checks:
    provides an additional PR secret gate. Investigate native alerts, revoke
    exposed credentials, and do not use bypasses to land detected secrets.
 
-Repository status recorded on 2026-10-07: GitHub reports no repository
+<!-- BEGIN ACCELERATOR ONLY -->
+Accelerator repository status recorded on 2026-10-07: GitHub reports no repository
 rulesets, so merge enforcement is not configured. Repository vulnerability
 alerts and Dependabot security updates are enabled, and the Dependency Graph is
 active; CodeQL default setup was not configured. The Dependency Review check
@@ -64,6 +69,7 @@ not establish that there are no alerts; an active **Require code scanning
 results** rule with the documented threshold is also needed to block
 qualifying alerts. Do not describe this repository as merge-gated until an
 administrator verifies the rules are active.
+<!-- END ACCELERATOR ONLY -->
 
 If a merge queue is introduced, dependency review only runs on pull requests;
 retain its PR requirement and configure the queue accordingly. All other
@@ -85,6 +91,10 @@ The tests check coverage, triggers, least privilege, and fail-closed scanner
 settings. GitHub-hosted runs provide the actual CodeQL, dependency-review, and
 container-scan evidence. Existing vulnerabilities can fail these checks; fix
 them in the owning issue rather than weakening gates or adding suppressions.
+
+<!-- BEGIN ACCELERATOR ONLY -->
+The sections below are the accelerator repository's own scan evidence; generated
+projects do not inherit them.
 
 ## Initial scan baseline
 
@@ -150,3 +160,4 @@ changes, outside issue #35's `.github/**` scope. Keep the thresholds and
 fail-closed checks unchanged; do not add suppressions or claim remediation
 without a passing scan of the exact integrated head. Counts are point-in-time
 observations and may change with advisory databases or base-image tags.
+<!-- END ACCELERATOR ONLY -->

@@ -796,6 +796,12 @@ class GeneratorTests(unittest.TestCase):
             self.assertEqual(main(), 0)
         self.assertEqual(generate_mock.call_args.args[2:], ("my-solution", "My Solution"))
 
+    def test_real_manifest_copies_the_files_inherited_checks_read(self) -> None:
+        # .github/tests/test_security_configuration.py reads the root SECURITY.md.
+        copied = set(Manifest.load(ROOT).copy)
+        self.assertIn(Path(".github"), copied)
+        self.assertIn(Path("SECURITY.md"), copied)
+
     def test_rejects_invalid_starter_schema(self) -> None:
         self.manifest["starter_row"]["expected_abstain"] = False
         self.write("accelerator.manifest.yml", json.dumps(self.manifest))
