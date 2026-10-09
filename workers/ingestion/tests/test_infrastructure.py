@@ -1,9 +1,11 @@
+import asyncio
 from collections.abc import AsyncIterator, Sequence
 from dataclasses import dataclass
 from datetime import date
 from typing import Any
 
 import pytest
+from azure.core import MatchConditions
 from azure.core.exceptions import ResourceNotFoundError
 from sqlalchemy.ext.asyncio import async_sessionmaker, create_async_engine
 
@@ -26,6 +28,7 @@ from accelerator.retrieval_core.chunking.contracts import ChunkingConfig
 class FakeContainer:
     def __init__(self) -> None:
         self.blobs: dict[str, bytes] = {}
+        self.replacements: dict[str, bytes] = {}
 
     async def upload_blob(self, name: str, data: bytes, *, overwrite: bool) -> None:
         assert overwrite
@@ -37,24 +40,31 @@ class FakeContainer:
         del self.blobs[name]
 
     def get_blob_client(self, name: str) -> "FakeBlob":
-        return FakeBlob(self.blobs[name])
+        self.last_blob = FakeBlob(self.blobs[name])
+        self.last_blob.replacement = self.replacements.get(name)
+        return self.last_blob
 
 
 class FakeBlob:
     def __init__(self, data: bytes) -> None:
         self.data = data
         self.downloaded = False
+        self.download_kwargs: dict[str, Any] = {}
+        self.replacement: bytes | None = None
 
     async def get_blob_properties(self) -> Any:
-        return type("Properties", (), {"size": len(self.data)})()
+        return type("Properties", (), {"size": len(self.data), "etag": "etag-1"})()
 
-    async def download_blob(self) -> Any:
+    async def download_blob(self, **kwargs: Any) -> Any:
         self.downloaded = True
-        data = self.data
+        self.download_kwargs = kwargs
+        # Simulates a service that ignored the ETag condition and served a larger blob.
+        data = self.replacement if self.replacement is not None else self.data
 
         class Downloader:
-            async def readall(self) -> bytes:
-                return data
+            async def chunks(self) -> AsyncIterator[bytes]:
+                for start in range(0, len(data), 4):
+                    yield data[start : start + 4]
 
         return Downloader()
 
@@ -78,6 +88,29 @@ async def test_source_reader_refuses_oversized_blobs_before_download() -> None:
 
     with pytest.raises(SourceTooLarge):
         await reader.read("big")
+    assert not container.last_blob.downloaded
+
+
+async def test_source_reader_binds_the_download_to_the_inspected_etag() -> None:
+    container = FakeContainer()
+    container.blobs["doc"] = b"0123456789"
+    reader = AzureSourceReader(container, max_bytes=10)  # type: ignore[arg-type]
+
+    assert await reader.read("doc") == b"0123456789"
+    assert container.last_blob.download_kwargs == {
+        "etag": "etag-1",
+        "match_condition": MatchConditions.IfNotModified,
+    }
+
+
+async def test_source_reader_caps_a_blob_replaced_after_its_size_check() -> None:
+    container = FakeContainer()
+    container.blobs["doc"] = b"small"
+    container.replacements["doc"] = b"x" * 1_000
+    reader = AzureSourceReader(container, max_bytes=10)  # type: ignore[arg-type]
+
+    with pytest.raises(SourceTooLarge):
+        await reader.read("doc")
 
 
 @dataclass
@@ -127,7 +160,14 @@ class FakeEmbeddings:
         return [type("E", (), {"vector": [0.1] * self.dimensions})() for _ in values]
 
 
-def job(document_id: str = "doc-1", text: bytes = b"First part. " * 20) -> Any:
+def job(
+    document_id: str = "doc-1",
+    text: bytes = b"First part. " * 20,
+    *,
+    version: str = "1",
+    content_type: str = "text/plain",
+    chunking: ChunkingConfig = ChunkingConfig(size=50, overlap=5),
+) -> Any:
     return build_job(
         IngestionMessage(
             operation="ingest",
@@ -135,14 +175,14 @@ def job(document_id: str = "doc-1", text: bytes = b"First part. " * 20) -> Any:
             scope_id="scope-a",
             title="Doc",
             source_uri="https://d.test/doc",
-            version="1",
+            version=version,
             effective_date=date(2026, 1, 1),
-            content_type="text/plain",
+            content_type=content_type,
             source_blob="incoming/doc",
         ),
         text,
         max_bytes=10_000,
-        chunking=ChunkingConfig(size=50, overlap=5),
+        chunking=chunking,
     )
 
 
@@ -211,5 +251,53 @@ async def test_postgres_repository_round_trips_state_lineage_and_deletes(
         assert await repository.get_document("doc-1") is None
         assert await repository.get_chunk_ids("doc-1") == ()
         assert container.blobs == {}
+    finally:
+        await engine.dispose()
+
+
+async def test_postgres_repository_serializes_concurrent_ingests_of_one_document(
+    migrated_database_url: str,
+) -> None:
+    engine = create_async_engine(migrated_database_url)
+    repository = PostgresIngestionRepository(async_sessionmaker(engine))
+    container = FakeContainer()
+    client = FakeSearchClient()
+    index = AzureSearchChunkIndex(client, FakeEmbeddings(), dimensions=3)  # type: ignore[arg-type]
+    service = IngestionService(AzureBlobStore(container), index, repository)  # type: ignore[arg-type]
+    jobs = {v: job(text=f"Version {v} text. ".encode() * 10, version=v) for v in "123"}
+    try:
+        await asyncio.gather(*(service.ingest(item) for item in jobs.values()))
+
+        record = await repository.get_document("doc-1")
+        assert record is not None and record.version is not None
+        expected = {chunk.chunk_id for chunk in jobs[record.version].chunks}
+        assert record.status is IngestionStatus.READY
+        assert set(await repository.get_chunk_ids("doc-1")) == expected
+        assert set(client.documents) == expected
+        assert container.blobs[blob_name("doc-1")] == jobs[record.version].source_content
+    finally:
+        await engine.dispose()
+
+
+async def test_postgres_repository_stores_headings_longer_than_a_bounded_column(
+    migrated_database_url: str,
+) -> None:
+    engine = create_async_engine(migrated_database_url)
+    repository = PostgresIngestionRepository(async_sessionmaker(engine))
+    index = AzureSearchChunkIndex(FakeSearchClient(), FakeEmbeddings(), dimensions=3)  # type: ignore[arg-type]
+    service = IngestionService(AzureBlobStore(FakeContainer()), index, repository)  # type: ignore[arg-type]
+    long_heading = "H" * 5_000
+    try:
+        ingested = job(
+            text=f"# {long_heading}\nBody text.".encode(),
+            content_type="text/markdown",
+            chunking=ChunkingConfig(size=50, overlap=5, heading_aware=True),
+        )
+        assert ingested.chunks[0].section_heading == long_heading
+
+        await service.ingest(ingested)
+
+        record = await repository.get_document("doc-1")
+        assert record is not None and record.status is IngestionStatus.READY
     finally:
         await engine.dispose()

@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from contextlib import AbstractAsyncContextManager
 from dataclasses import dataclass
 from datetime import date
 from enum import StrEnum
@@ -37,6 +38,11 @@ class Chunk(Protocol):
 
     @property
     def document_id(self) -> str: ...
+
+    @property
+    def scope_id(self) -> str:
+        """Must equal the document's server-assigned scope; checked before any write."""
+        ...
 
     @property
     def text(self) -> str: ...
@@ -92,6 +98,10 @@ class ChunkIndex(Protocol):
 
 
 class IngestionRepository(Protocol):
+    def lock_document(self, document_id: str) -> AbstractAsyncContextManager[None]:
+        """Serialize every ingest and delete of one document across workers."""
+        ...
+
     async def get_document(self, document_id: str) -> DocumentRecord | None: ...
 
     async def get_chunk_ids(self, document_id: str) -> Sequence[str]: ...
@@ -133,11 +143,15 @@ class IngestionService:
         self._repository = repository
 
     async def ingest(self, job: IngestionJob) -> IngestionResult:
+        async with self._repository.lock_document(job.document.document_id):
+            return await self._ingest_locked(job)
+
+    async def _ingest_locked(self, job: IngestionJob) -> IngestionResult:
         content_hash = hashlib.sha256(job.source_content).hexdigest()
-        stage = "validate"
+        # An inconsistent job is rejected before any write, including the failed state.
+        chunks = self._validate_and_version_chunks(job)
+        stage = "document_lookup"
         try:
-            chunks = self._validate_and_version_chunks(job)
-            stage = "document_lookup"
             existing = await self._repository.get_document(job.document.document_id)
             if (
                 existing is not None
@@ -203,6 +217,10 @@ class IngestionService:
             raise
 
     async def delete(self, document_id: str) -> None:
+        async with self._repository.lock_document(document_id):
+            await self._delete_locked(document_id)
+
+    async def _delete_locked(self, document_id: str) -> None:
         failures: list[tuple[str, Exception]] = []
         for store, delete in (
             ("blob", self._blob_store.delete),
@@ -223,6 +241,8 @@ class IngestionService:
         for chunk in job.chunks:
             if chunk.document_id != job.document.document_id:
                 raise ValueError("All chunks must belong to the ingested document")
+            if chunk.scope_id != job.document.scope_id:
+                raise ValueError("Chunk scopes must match the document scope")
             if chunk.chunk_id in chunk_ids:
                 raise ValueError("Chunk IDs must be unique within an ingestion job")
             if chunk.version != job.document.version:

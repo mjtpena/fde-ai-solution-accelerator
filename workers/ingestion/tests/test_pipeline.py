@@ -75,8 +75,16 @@ def test_invalid_documents_are_rejected_permanently(
         {"scope_id": ""},
         {"unexpected": "field"},
         {"document_id": "bad\nid"},
+        {"content_type": None},
+        {"source_blob": None},
     ],
 )
 def test_messages_outside_the_allow_list_do_not_validate(overrides: dict[str, object]) -> None:
     with pytest.raises(ValidationError):
         message(**overrides)
+
+
+def test_delete_messages_need_no_source() -> None:
+    deletion = message(operation="delete", content_type=None, source_blob=None)
+
+    assert deletion.operation == "delete"

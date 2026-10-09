@@ -42,7 +42,7 @@ def upgrade() -> None:
         ),
         sa.Column("version", sa.String(255), nullable=True),
         sa.Column("effective_date", sa.Date(), nullable=True),
-        sa.Column("section_heading", sa.String(1024), nullable=True),
+        sa.Column("section_heading", sa.Text(), nullable=True),
     )
     op.create_index("ix_document_chunks_document", "document_chunks", ["document_id"])
 

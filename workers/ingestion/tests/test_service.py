@@ -1,5 +1,8 @@
 from __future__ import annotations
 
+import asyncio
+from collections.abc import AsyncIterator
+from contextlib import asynccontextmanager
 from dataclasses import dataclass
 from datetime import date
 import hashlib
@@ -32,6 +35,7 @@ class FakeChunk:
     document_id: str
     text: str
     version: str | None = "v1"
+    scope_id: str = "scope-a"
     effective_date: date | None = None
     section_heading: str | None = None
 
@@ -64,6 +68,7 @@ class MemoryChunkIndex:
 
     async def upsert_chunks(self, chunks: Sequence[Chunk]) -> None:
         self.upsert_calls += 1
+        await asyncio.sleep(0)
         if self.upsert_error is not None:
             raise self.upsert_error
         for chunk in chunks:
@@ -84,20 +89,29 @@ class MemoryChunkIndex:
 
 class MemoryRepository:
     def __init__(self) -> None:
+        self.locks: dict[str, asyncio.Lock] = {}
         self.documents: dict[str, DocumentRecord] = {}
         self.chunks: dict[str, Chunk] = {}
         self.deleted_chunk_ids: list[str] = []
         self.deleted_documents: list[str] = []
 
+    @asynccontextmanager
+    async def lock_document(self, document_id: str) -> AsyncIterator[None]:
+        async with self.locks.setdefault(document_id, asyncio.Lock()):
+            yield
+
     async def get_document(self, document_id: str) -> DocumentRecord | None:
+        await asyncio.sleep(0)  # yield like a real store so interleavings are possible
         return self.documents.get(document_id)
 
     async def get_chunk_ids(self, document_id: str) -> tuple[str, ...]:
-        return tuple(
+        chunk_ids = tuple(
             chunk_id
             for chunk_id, chunk in self.chunks.items()
             if chunk.document_id == document_id
         )
+        await asyncio.sleep(0)
+        return chunk_ids
 
     async def upsert_document(self, document: DocumentRecord) -> None:
         self.documents[document.document_id] = document
@@ -153,6 +167,7 @@ class IngestionServiceTests(unittest.IsolatedAsyncioTestCase):
                     document_id="doc-1",
                     text="first chunk",
                     version=version,
+                    scope_id=scope_id,
                 ),
             ),
         )
@@ -232,6 +247,47 @@ class IngestionServiceTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(failed_document.status, IngestionStatus.FAILED)
         self.assertEqual(failed_document.failure_reason, "index_upsert failed (RuntimeError)")
         self.assertNotIn("sensitive", failed_document.failure_reason or "")
+
+    async def test_chunks_outside_the_document_scope_are_rejected_before_any_write(self) -> None:
+        job = self.make_job(
+            chunks=(
+                FakeChunk(
+                    chunk_id="chunk-1", document_id="doc-1", text="x", scope_id="scope-b"
+                ),
+            )
+        )
+
+        with self.assertRaisesRegex(ValueError, "scope"):
+            await self.service.ingest(job)
+
+        self.assertEqual(self.repository.documents, {})
+        self.assertEqual(self.blobs.put_calls, 0)
+        self.assertEqual(self.index.upsert_calls, 0)
+
+    async def test_concurrent_ingests_of_one_document_leave_one_consistent_version(self) -> None:
+        def versioned(version: str) -> IngestionJob:
+            return self.make_job(
+                version=version,
+                source_content=version.encode(),
+                chunks=tuple(
+                    FakeChunk(
+                        chunk_id=f"{version}-{index}",
+                        document_id="doc-1",
+                        text=f"{version} text",
+                        version=version,
+                    )
+                    for index in range(2)
+                ),
+            )
+
+        await asyncio.gather(*(self.service.ingest(versioned(v)) for v in ("v1", "v2", "v3")))
+
+        winner = self.repository.documents["doc-1"]
+        expected = {f"{winner.version}-0", f"{winner.version}-1"}
+        self.assertEqual(winner.status, IngestionStatus.READY)
+        self.assertEqual(set(self.repository.chunks), expected)
+        self.assertEqual(set(self.index.chunks), expected)
+        self.assertEqual(self.blobs.blobs["doc-1"], (winner.version or "").encode())
 
 
 if __name__ == "__main__":

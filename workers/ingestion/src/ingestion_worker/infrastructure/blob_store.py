@@ -2,6 +2,7 @@
 
 from urllib.parse import quote
 
+from azure.core import MatchConditions
 from azure.core.exceptions import ResourceNotFoundError
 from azure.storage.blob.aio import ContainerClient
 
@@ -32,7 +33,11 @@ class SourceTooLarge(ValueError):
 
 
 class AzureSourceReader:
-    """Read an uploaded source document, refusing oversized blobs before download."""
+    """Read an uploaded source document without ever buffering more than ``max_bytes``.
+
+    The size is checked before download, the download is bound to the inspected ETag,
+    and the stream is capped as well, so a blob replaced in between cannot slip through.
+    """
 
     def __init__(self, container: ContainerClient, *, max_bytes: int) -> None:
         self._container = container
@@ -43,5 +48,12 @@ class AzureSourceReader:
         properties = await blob.get_blob_properties()
         if properties.size > self._max_bytes:
             raise SourceTooLarge(f"source blob exceeds {self._max_bytes} bytes")
-        downloader = await blob.download_blob()
-        return await downloader.readall()
+        downloader = await blob.download_blob(
+            etag=properties.etag, match_condition=MatchConditions.IfNotModified
+        )
+        content = bytearray()
+        async for chunk in downloader.chunks():
+            content.extend(chunk)
+            if len(content) > self._max_bytes:
+                raise SourceTooLarge(f"source blob exceeds {self._max_bytes} bytes")
+        return bytes(content)

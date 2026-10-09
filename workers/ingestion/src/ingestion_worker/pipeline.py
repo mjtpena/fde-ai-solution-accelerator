@@ -11,7 +11,7 @@ from dataclasses import dataclass
 from datetime import date
 from typing import Literal
 
-from pydantic import BaseModel, ConfigDict, Field
+from pydantic import BaseModel, ConfigDict, Field, model_validator
 
 from accelerator.retrieval_core.chunking.chunker import TextChunker
 from accelerator.retrieval_core.chunking.contracts import ChunkingConfig
@@ -48,6 +48,12 @@ class IngestionMessage(BaseModel):
     content_type: ContentType | None = None
     # Blob name in the incoming container holding the uploaded source document.
     source_blob: str | None = Field(default=None, min_length=1, max_length=1024)
+
+    @model_validator(mode="after")
+    def require_a_source_to_ingest(self) -> "IngestionMessage":
+        if self.operation == "ingest" and (self.content_type is None or self.source_blob is None):
+            raise ValueError("ingest messages require content_type and source_blob")
+        return self
 
 
 class RejectedDocument(ValueError):

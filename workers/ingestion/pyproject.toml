@@ -13,7 +13,6 @@ dependencies = [
     "azure-identity>=1.26,<2",
     "azure-search-documents>=11.6,<12",
     "azure-storage-blob>=12.24,<13",
-    "azure-storage-queue>=12.12,<13",
     "fde-retrieval-core",
     "pydantic>=2.10,<3",
     "pydantic-settings>=2.7,<3",
