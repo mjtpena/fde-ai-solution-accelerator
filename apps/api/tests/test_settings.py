@@ -104,3 +104,31 @@ def test_reads_standard_application_insights_variable() -> None:
         == "InstrumentationKey=from-platform"
     )
     assert "from-platform" not in repr(settings)
+
+
+def test_rejected_database_password_never_appears_in_the_error() -> None:
+    with pytest.raises(ValidationError) as raised:
+        Settings.model_validate(
+            production_values(
+                database_url="postgresql+asyncpg://user:hunter2-secret@db.example.test/accelerator"
+            )
+        )
+
+    assert "hunter2-secret" not in str(raised.value)
+    assert "hunter2-secret" not in repr(raised.value.errors(include_input=False))
+
+
+@pytest.mark.parametrize(
+    "variable", ["APPLICATIONINSIGHTS_CONNECTION_STRING", "API_APPLICATIONINSIGHTS_CONNECTION_STRING"]
+)
+def test_blank_application_insights_string_counts_as_missing_in_production(variable: str) -> None:
+    environment = {
+        f"API_{key.upper()}": str(value)
+        for key, value in production_values().items()
+        if key != "applicationinsights_connection_string"
+    }
+    environment[variable] = ""
+    with patch.dict(os.environ, environment, clear=True), pytest.raises(
+        ValidationError, match="APPLICATIONINSIGHTS_CONNECTION_STRING"
+    ):
+        Settings()  # type: ignore[call-arg]

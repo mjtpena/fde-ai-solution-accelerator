@@ -22,7 +22,11 @@ FAKE_FRIENDLY_ENVIRONMENTS: frozenset[str] = frozenset({"development", "test"})
 
 
 class Settings(BaseSettings):
-    model_config = SettingsConfigDict(env_prefix="API_")
+    # Validation errors must never echo inputs: a rejected DSN can carry a password.
+    # Blank variables (e.g. compose pass-throughs of unset values) count as unset.
+    model_config = SettingsConfigDict(
+        env_prefix="API_", hide_input_in_errors=True, env_ignore_empty=True
+    )
 
     environment: Environment
     request_token_budget: int = Field(default=8192, gt=0)
@@ -55,6 +59,7 @@ class Settings(BaseSettings):
     # so platform-injected configuration works unchanged.
     applicationinsights_connection_string: SecretStr | None = Field(
         default=None,
+        min_length=1,
         validation_alias=AliasChoices(
             "API_APPLICATIONINSIGHTS_CONNECTION_STRING",
             "APPLICATIONINSIGHTS_CONNECTION_STRING",
