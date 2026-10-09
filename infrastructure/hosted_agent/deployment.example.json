@@ -6,6 +6,7 @@
   "context_resolver_factory": "replace_with_packaged_identity_provider:create_context_resolver",
   "grounded_workflow_factory": "replace_with_packaged_grounded_workflow:create_workflow",
   "model_deployment": "replace-with-model-deployment",
+  "content_safety_endpoint": "https://replace-with-content-safety-account.cognitiveservices.azure.com/",
   "cpu": "1",
   "memory": "2Gi",
   "credential_mode": "managed-identity"

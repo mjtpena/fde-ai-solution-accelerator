@@ -11,11 +11,22 @@ class InvocationRequest(BaseModel):
     query: str = Field(min_length=1, max_length=16000, pattern=r"\S")
 
 
+# Stable refusal codes, identical to the grounded-answer workflow's and the API's
+# SSE ``abstention`` codes (the API adds ``answer_withdrawn`` for streaming only).
+HostedAbstentionCode = Literal[
+    "insufficient_evidence",
+    "content_safety_prompt_attack",
+    "content_safety_output_blocked",
+    "content_safety_unavailable",
+]
+
+
 class HostedAbstention(BaseModel):
     model_config = ConfigDict(extra="forbid", frozen=True)
 
     reason: str = Field(min_length=1)
     evidence_ids: tuple[str, ...]
+    code: HostedAbstentionCode
 
 
 class InvocationResult(BaseModel):

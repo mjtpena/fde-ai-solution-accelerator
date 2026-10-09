@@ -21,6 +21,9 @@ from accelerator.security_core.content_safety import (
     ContentSafetyUnavailableError,
     ScreenedDocument,
 )
+from accelerator.security_core.content_safety import (
+    REFUSAL_REASONS as REFUSAL_REASONS,  # re-exported for callers of this module
+)
 
 from .base import Workflow
 
@@ -101,12 +104,8 @@ AbstentionCode = Literal[
 CONTENT_SAFETY_CODES: Final[frozenset[str]] = frozenset(
     {PROMPT_ATTACK, OUTPUT_BLOCKED, UNAVAILABLE}
 )
-# Fixed refusal texts: they never echo the prompt, the evidence or the answer.
-REFUSAL_REASONS: Final[dict[str, str]] = {
-    PROMPT_ATTACK: "The request was refused by content safety screening.",
-    OUTPUT_BLOCKED: "The generated answer was withheld by content safety screening.",
-    UNAVAILABLE: "Content safety screening is unavailable, so no answer was returned.",
-}
+# Fixed refusal texts (``REFUSAL_REASONS``) live in security_core so every host,
+# including the Foundry hosted agent, refuses with the same words.
 
 
 @dataclass(frozen=True, slots=True)

@@ -24,6 +24,12 @@ from typing import Final, Protocol
 PROMPT_ATTACK: Final = "content_safety_prompt_attack"
 OUTPUT_BLOCKED: Final = "content_safety_output_blocked"
 UNAVAILABLE: Final = "content_safety_unavailable"
+# Fixed refusal texts: they never echo the prompt, the evidence or the answer.
+REFUSAL_REASONS: Final[Mapping[str, str]] = {
+    PROMPT_ATTACK: "The request was refused by content safety screening.",
+    OUTPUT_BLOCKED: "The generated answer was withheld by content safety screening.",
+    UNAVAILABLE: "Content safety screening is unavailable, so no answer was returned.",
+}
 
 
 class HarmCategory(StrEnum):
@@ -127,6 +133,7 @@ __all__ = [
     "DEFAULT_BLOCK_SEVERITY",
     "OUTPUT_BLOCKED",
     "PROMPT_ATTACK",
+    "REFUSAL_REASONS",
     "SEVERITY_SCALE_MAX",
     "UNAVAILABLE",
     "ContentSafetyChecker",
