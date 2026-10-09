@@ -137,9 +137,23 @@ def test_control_paths_exist(control: dict[str, Any], field: str) -> None:
         assert not Path(path).is_absolute(), path
         resolved = (ROOT / path).resolve()
         assert resolved.is_relative_to(ROOT), path
-        if GENERATED_PROJECT and path.startswith(NOT_GENERATED):
+        # The generator downgrades controls whose implementation it did not copy, so
+        # only a control that no longer claims to be implemented may cite them.
+        if (
+            GENERATED_PROJECT
+            and control["status"] != "implemented"
+            and path.startswith(NOT_GENERATED)
+        ):
             continue
         assert resolved.exists(), f"{control['id']} {field}: {path} does not exist"
+
+
+@pytest.mark.parametrize("control", CONTROLS, ids=lambda control: control["id"])
+def test_controls_in_force_have_code_in_this_repository(control: dict[str, Any]) -> None:
+    if control["status"] != "planned":
+        assert any((ROOT / path).exists() for path in control["implemented_in"]), (
+            f"{control['id']} is {control['status']} but none of its code is here"
+        )
 
 
 @pytest.mark.parametrize("control", CONTROLS, ids=lambda control: control["id"])

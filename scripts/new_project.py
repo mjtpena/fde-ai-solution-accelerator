@@ -23,9 +23,10 @@ import shutil
 import subprocess
 import sys
 import tempfile
+import textwrap
 import tomllib
 import unittest
-from collections.abc import Mapping
+from collections.abc import Callable, Mapping
 from dataclasses import dataclass
 from pathlib import Path, PurePosixPath, PureWindowsPath
 from unittest.mock import patch
@@ -43,6 +44,7 @@ BEGIN_ACCELERATOR_ONLY_MARKERS = frozenset(
 )
 END_ACCELERATOR_ONLY_MARKERS = frozenset({END_ACCELERATOR_ONLY, "<!-- END ACCELERATOR ONLY -->"})
 WORKFLOWS = Path(".github/workflows")
+THREAT_MODEL_CONTROLS = Path("threat-model/controls.yml")
 TEXT_SUFFIXES = {
     ".py",
     ".toml",
@@ -328,6 +330,54 @@ def generated_spec(text: str) -> str:
     return text
 
 
+def generated_controls(text: str, present: Callable[[str], bool]) -> str:
+    """Downgrade controls whose implementation the generated project did not receive.
+
+    A control with some implementation paths missing (infrastructure/, deployment
+    workflows) is at most ``partial``; with all of them missing it is ``planned``.
+    Each downgrade explains itself in ``notes``.
+    """
+    blocks = re.split(r"(?m)^(?=  - id: )", text)
+    for index, block in enumerate(blocks):
+        status = re.search(r"(?m)^    status: (\w+)\n", block)
+        implemented = re.search(r"(?m)^    implemented_in:\n((?:      - .+\n)+)", block)
+        if status is None or implemented is None:
+            continue
+        paths = [line.strip().removeprefix("- ") for line in implemented[1].splitlines()]
+        missing = [path for path in paths if not present(path)]
+        new_status = (
+            "planned"
+            if len(missing) == len(paths)
+            else "partial"
+            if missing and status[1] == "implemented"
+            else status[1]
+        )
+        if not missing or status[1] == "planned":
+            continue
+        note = textwrap.fill(
+            f"Generated project: {len(missing)} of {len(paths)} implementation paths "
+            f"(including {missing[0]}) were not generated, so that part of the control "
+            "is not in force here.",
+            width=88,
+            initial_indent="      ",
+            subsequent_indent="      ",
+        )
+        notes = re.search(r"(?m)^    notes:(.*)\n((?:      .+\n)*)", block)
+        if notes is None:
+            block = (
+                block[: status.start()]
+                + f"    status: {new_status}\n    notes: >-\n{note}\n"
+                + block[status.end() :]
+            )
+        elif notes[1].strip() == ">-":
+            block = block[: notes.end()] + note + "\n" + block[notes.end() :]
+            block = re.sub(r"(?m)^    status: \w+$", f"    status: {new_status}", block, count=1)
+        else:
+            raise ValueError(f"Unsupported notes style in {THREAT_MODEL_CONTROLS}: {notes[0]!r}")
+        blocks[index] = block
+    return "".join(blocks)
+
+
 def generate(source: Path, destination: Path, name: str, display: str) -> None:
     module = validate_name(name)
     if not display.strip() or any(ord(char) < 32 for char in display):
@@ -403,6 +453,12 @@ def generate(source: Path, destination: Path, name: str, display: str) -> None:
     ):
         raise ValueError("Accelerator version must be a semantic version string")
 
+    copied_files = [original for original, _ in files]
+
+    def copied(path: str) -> bool:
+        wanted = relative_path(path.rstrip("/"))
+        return any(original.is_relative_to(wanted) for original in copied_files)
+
     destination.mkdir()
     line_growth = 0
     for directory in sorted(directories, key=lambda path: len(path.parts)):
@@ -440,6 +496,8 @@ def generate(source: Path, destination: Path, name: str, display: str) -> None:
                 )
             if original == Path("docs/spec.md"):
                 text = generated_spec(text)
+            if original == THREAT_MODEL_CONTROLS:
+                text = generated_controls(text, copied)
             renamed = replace_text(text, text_replacements)
             if original.suffix == ".py":
                 line_growth = max(
@@ -795,6 +853,43 @@ class GeneratorTests(unittest.TestCase):
         ), patch(__name__ + ".generate") as generate_mock:
             self.assertEqual(main(), 0)
         self.assertEqual(generate_mock.call_args.args[2:], ("my-solution", "My Solution"))
+
+    def test_controls_without_generated_implementation_are_downgraded(self) -> None:
+        controls = (
+            "controls:\n"
+            "  - id: C-001\n    status: implemented\n    implemented_in:\n"
+            "      - apps/a.py\n    verified_by: []\n\n"
+            "  - id: C-002\n    status: implemented\n    implemented_in:\n"
+            "      - apps/a.py\n      - infrastructure/b.bicep\n    verified_by: []\n\n"
+            "  - id: C-003\n    status: partial\n    notes: >-\n      Existing gap.\n"
+            "    implemented_in:\n      - infrastructure/c.bicep\n    verified_by: []\n"
+        )
+        output = generated_controls(controls, lambda path: not path.startswith("infra"))
+        blocks = output.split("  - id: ")
+        self.assertEqual(blocks[1], controls.split("  - id: ")[1])
+        self.assertIn(
+            "    status: partial\n    notes: >-\n      Generated project: 1 of 2", blocks[2]
+        )
+        self.assertIn("(including infrastructure/b.bicep)", blocks[2])
+        self.assertIn("    status: planned\n    notes: >-\n      Existing gap.\n", blocks[3])
+        self.assertIn("      Generated project: 1 of 1", blocks[3])
+        with self.assertRaisesRegex(ValueError, "Unsupported notes style"):
+            generated_controls(
+                controls.replace("notes: >-\n      Existing gap.", "notes: Existing gap."),
+                lambda path: False,
+            )
+        # A generation run applies it to the copied threat model.
+        self.manifest["copy"] = [*self.manifest["copy"], "threat-model"]
+        self.write("accelerator.manifest.yml", json.dumps(self.manifest))
+        self.write(
+            "threat-model/controls.yml",
+            controls.replace("apps/a.py", "apps/api/src/accelerator/api.py"),
+        )
+        with patch("subprocess.run"):
+            self.run_generator()
+        generated = (self.destination / "threat-model/controls.yml").read_text()
+        self.assertIn("apps/api/src/my_solution/api.py", generated)
+        self.assertEqual(generated.count("Generated project:"), 2)
 
     def test_real_manifest_copies_the_files_inherited_checks_read(self) -> None:
         # .github/tests/test_security_configuration.py reads the root SECURITY.md.

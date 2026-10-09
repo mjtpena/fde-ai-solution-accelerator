@@ -260,7 +260,9 @@ script, the hosted-agent package). It keeps only the CI workflows the manifest
 lists (quality, evaluation, security, Copilot setup), and everything between
 `# BEGIN ACCELERATOR ONLY` / `# END ACCELERATOR ONLY` markers (in Markdown,
 `<!-- BEGIN ACCELERATOR ONLY -->` / `<!-- END ACCELERATOR ONLY -->`) is stripped,
-including `make deploy-dev` and the accelerator's own scan evidence. Copy or recreate `infrastructure/` and `deploy-dev.yml` when the
+including `make deploy-dev` and the accelerator's own scan evidence. Threat-model
+controls implemented partly or wholly in files it does not receive are downgraded to
+`partial` or `planned`, with a note saying what is missing. Copy or recreate `infrastructure/` and `deploy-dev.yml` when the
 project is ready to deploy.
 
 After generating, `git init` the new directory, fill in `engagement/project/`,
