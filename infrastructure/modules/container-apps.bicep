@@ -24,6 +24,8 @@ param apiEntraTenantId string
 param apiEntraAudience string
 param postgresHost string
 param postgresDatabaseName string
+@description('PostgreSQL Entra administrator name; granted scope-membership management.')
+param postgresAdministratorName string
 param blobEndpoint string
 param queueEndpoint string
 param incomingContainerName string
@@ -277,6 +279,7 @@ resource migrationJob 'Microsoft.App/jobs@2024-03-01' = if (deployApplications) 
             { name: 'API_DATABASE_AUTH_MODE', value: 'managed_identity' }
             { name: 'API_DATABASE_API_ROLE', value: 'accelerator_api' }
             { name: 'API_DATABASE_WORKER_ROLE', value: 'accelerator_worker' }
+            { name: 'API_DATABASE_OPERATOR_ROLE', value: postgresAdministratorName }
           ]
         }
       ]

@@ -538,6 +538,7 @@ module containerApps './modules/container-apps.bicep' = {
     apiEntraAudience: apiEntraAudience
     postgresHost: postgres.outputs.fullyQualifiedDomainName
     postgresDatabaseName: postgresDatabaseName
+    postgresAdministratorName: postgresAdministratorName
     blobEndpoint: storage.outputs.blobEndpoint
     queueEndpoint: storage.outputs.queueEndpoint
     incomingContainerName: incomingContainerName

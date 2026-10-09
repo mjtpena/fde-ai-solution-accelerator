@@ -158,7 +158,8 @@ def test_upgrade_grants_runtime_roles_only_what_their_code_uses(
 ) -> None:
     suffix = os.urandom(4).hex()
     api_role, worker_role = f"test_api_{suffix}", f"test_worker_{suffix}"
-    asyncio.run(_create_roles(empty_database_url, api_role, worker_role))
+    operator_role = f"DB Admins {suffix}"
+    asyncio.run(_create_roles(empty_database_url, api_role, worker_role, f'"{operator_role}"'))
     with patch.dict(
         os.environ,
         {
@@ -166,11 +167,14 @@ def test_upgrade_grants_runtime_roles_only_what_their_code_uses(
             "API_DATABASE_AUTH_MODE": "password",
             "API_DATABASE_API_ROLE": api_role,
             "API_DATABASE_WORKER_ROLE": worker_role,
+            "API_DATABASE_OPERATOR_ROLE": operator_role,
         },
     ):
         command.upgrade(alembic_config(), "head")
 
     api = asyncio.run(_privileges(empty_database_url, api_role))
+    operator = asyncio.run(_privileges(empty_database_url, operator_role))
+    assert operator == {"scope_memberships": {"SELECT", "INSERT", "DELETE"}}
     worker = asyncio.run(_privileges(empty_database_url, worker_role))
 
     assert api["audit_event"] == {"SELECT", "INSERT"}  # append-only
@@ -190,6 +194,10 @@ def test_runtime_role_names_must_be_plain_identifiers() -> None:
     for name in ("Api", 'x"; DROP TABLE audit_event; --', "", "a-b"):
         with pytest.raises(ValueError):
             quoted_role(name)
+    # Entra administrator names are quoted, with embedded quotes doubled.
+    assert quoted_role('DB "Admins"', entra=True) == '"DB ""Admins"""'
+    with pytest.raises(ValueError):
+        quoted_role("bad\nname", entra=True)
 
 
 class _PasswordAsToken:
