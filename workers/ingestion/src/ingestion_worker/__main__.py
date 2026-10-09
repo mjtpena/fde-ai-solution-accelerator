@@ -4,8 +4,12 @@ import logging
 import os
 import signal
 import time
+from collections.abc import Awaitable, Callable
 from datetime import UTC, datetime
 from pathlib import Path
+
+from .composition import compose_consumer
+from .settings import WorkerSettings
 
 
 logger = logging.getLogger("ingestion_worker")
@@ -49,11 +53,19 @@ def log_event(event: str) -> None:
     )
 
 
-async def run_worker(stop_event: asyncio.Event, *, heartbeat_file: Path | None = None) -> None:
+async def run_worker(
+    stop_event: asyncio.Event,
+    *,
+    heartbeat_file: Path | None = None,
+    consume: Callable[[asyncio.Event], Awaitable[None]] | None = None,
+) -> None:
     log_event("worker_started")
     beat = asyncio.create_task(heartbeat(stop_event, heartbeat_file or heartbeat_path()))
     try:
-        await stop_event.wait()
+        if consume is None:
+            await stop_event.wait()
+        else:
+            await consume(stop_event)
     finally:
         beat.cancel()
         log_event("worker_stopped")
@@ -71,8 +83,10 @@ async def main() -> None:
             continue
         registered_signals.append(handled_signal)
 
+    settings = WorkerSettings()
     try:
-        await run_worker(stop_event)
+        async with compose_consumer(settings) as consumer:
+            await run_worker(stop_event, consume=consumer.run if consumer else None)
     finally:
         for handled_signal in registered_signals:
             loop.remove_signal_handler(handled_signal)

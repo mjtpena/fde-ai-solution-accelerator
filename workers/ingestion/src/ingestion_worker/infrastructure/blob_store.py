@@ -6,6 +6,8 @@ from azure.core import MatchConditions
 from azure.core.exceptions import ResourceNotFoundError
 from azure.storage.blob.aio import ContainerClient
 
+from ..pipeline import RejectedDocument
+
 
 def blob_name(document_id: str) -> str:
     """One flat, traversal-free blob name per document."""
@@ -28,8 +30,8 @@ class AzureBlobStore:
             return  # deletion is idempotent
 
 
-class SourceTooLarge(ValueError):
-    pass
+class SourceTooLarge(RejectedDocument):
+    """Permanent: the same blob will never fit."""
 
 
 class AzureSourceReader:

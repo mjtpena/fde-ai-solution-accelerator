@@ -119,10 +119,20 @@ services:
       context: .
       dockerfile: workers/ingestion/Dockerfile
     environment:
+      INGESTION_ENVIRONMENT: development
       INGESTION_LOG_LEVEL: ${INGESTION_LOG_LEVEL:-INFO}
+      INGESTION_DATABASE_URL: postgresql+asyncpg://${POSTGRES_USER:-accelerator}:${POSTGRES_PASSWORD:-local-development-only}@postgres:5432/${POSTGRES_DB:-accelerator}
+      # Indexing stays disabled (the worker idles, healthy) until Azurite and the
+      # Azure AI Search / Foundry embedding settings below are all provided.
+      INGESTION_STORAGE_CONNECTION_STRING: ${AZURITE_CONNECTION_STRING:-}
+      INGESTION_SEARCH_ENDPOINT: ${API_SEARCH_ENDPOINT:-}
+      INGESTION_SEARCH_INDEX_NAME: ${API_SEARCH_INDEX_NAME:-}
+      INGESTION_VECTOR_DIMENSIONS: ${API_SEARCH_VECTOR_DIMENSIONS:-}
+      INGESTION_FOUNDRY_PROJECT_ENDPOINT: ${API_FOUNDRY_PROJECT_ENDPOINT:-}
+      INGESTION_FOUNDRY_EMBEDDING_DEPLOYMENT: ${API_FOUNDRY_EMBEDDING_DEPLOYMENT:-}
     depends_on:
-      postgres:
-        condition: service_healthy
+      migrate:
+        condition: service_completed_successfully
       azurite:
         condition: service_healthy
     healthcheck:
