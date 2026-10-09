@@ -37,6 +37,10 @@
     machine-readable threat model.
   - Generator fixes: the `TITLE` placeholder replaces `DISPLAY`, and generated
     projects receive only the workflows they can run.
+- `make e2e-local` and an `e2e-local` CI job: the API, the ingestion worker and
+  the web app as real processes against PostgreSQL and Azurite
+  (`docs/testing-strategy.md`). The worker's `INGESTION_SKIP_SEARCH_INDEXING`
+  local mode ends documents as `indexing_skipped` and is refused in production.
 
 ### Changed
 
@@ -44,6 +48,12 @@
 - Approval endpoints return 503, not 403, when audit persistence is unavailable.
 - API ingress is internal; the web app proxies to it.
 - Database access uses separate API, worker and operator roles.
+- Malformed PDFs (`PdfReadError`, decompression limits) are rejected on first
+  delivery instead of being retried as transient failures.
+- An unreachable database returns 503, not 500, from the audit middleware, the
+  audit query and the scope resolver.
+- The Compose Azurite skips its API-version check, as CI already did, so the
+  storage SDKs in `uv.lock` can reach it.
 
 ### Known limitations
 
@@ -51,6 +61,7 @@
   yet by a recorded end-to-end run against a live subscription.
 - Retrieval recall@k has not been measured against a live index.
 - `make eval-full` needs a Foundry project and a deployed environment.
+- No code calls Azure AI Content Safety; see `docs/testing-strategy.md`.
 - The **Trivy repository** check fails on two HIGH findings with no upstream
   fix: `braces` 3.0.3 (CVE-2026-93687, web dev tooling) and `nltk` 3.10.3
   (CVE-2026-81726, via `azure-ai-evaluation` in the optional `evaluation`
