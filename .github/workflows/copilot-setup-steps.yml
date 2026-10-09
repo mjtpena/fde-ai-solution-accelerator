@@ -60,7 +60,7 @@ jobs:
             --volume "$tls_dir:/tls:ro" \
             postgres:16-alpine \
             -c ssl=on -c ssl_cert_file=/tls/server.crt -c ssl_key_file=/tls/server.key
-          for attempt in $(seq 1 30); do
+          for _ in $(seq 1 30); do
             if docker exec postgres psql -U postgres -h 127.0.0.1 -c 'select 1' >/dev/null 2>&1; then
               exit 0
             fi
@@ -74,7 +74,7 @@ jobs:
           docker run --detach --name azurite --publish 10000:10000 --publish 10001:10001 \
             mcr.microsoft.com/azure-storage/azurite:3.33.0 \
             azurite --blobHost 0.0.0.0 --queueHost 0.0.0.0 --skipApiVersionCheck --loose
-          for attempt in $(seq 1 30); do
+          for _ in $(seq 1 30); do
             if curl --silent --output /dev/null http://127.0.0.1:10001/; then exit 0; fi
             sleep 1
           done

@@ -46,6 +46,9 @@ from accelerator.security_core.data_boundaries.context import ExecutionContext
 # Fast enough that a turn which sleeps briefly is still "slow" for the route.
 SCREENED = StreamRelease(mode="screened", heartbeat_seconds=0.01)
 INCREMENTAL = StreamRelease(mode="incremental", heartbeat_seconds=0.01)
+# Long enough that an undelayed turn always finishes inside the first wait, even on a
+# loaded runner, so the fast-turn error contract is what the test observes.
+SCREENED_FAST = StreamRelease(mode="screened", heartbeat_seconds=30.0)
 HARMFUL = "HARMFUL-ANSWER-TEXT describes violence in detail."
 UNGROUNDED = "UNGROUNDED-ANSWER-TEXT claims something no chunk says."
 CLEAN = "Backups run nightly at two in the morning, every day of the week."
@@ -244,7 +247,10 @@ async def test_a_fast_citation_failure_fails_before_any_response_bytes() -> None
 
     with pytest.raises(CitationValidationError):
         await stream_chat(
-            ChatRequest(message="q"), context(), workflow(agent, HarmChecker()), release=SCREENED
+            ChatRequest(message="q"),
+            context(),
+            workflow(agent, HarmChecker()),
+            release=SCREENED_FAST,
         )
 
 
