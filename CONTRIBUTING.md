@@ -25,6 +25,12 @@ TLS enabled, for example:
 TEST_POSTGRES_DSN=postgresql://postgres:password@127.0.0.1:5432/postgres make check
 ```
 
+Ingestion queue and blob tests run against the Azurite emulator when
+`TEST_AZURITE_CONNECTION_STRING` is set (`UseDevelopmentStorage=true` for Azurite
+on its default ports, which CI starts). The cross-scope Azure AI Search test
+runs only when `TEST_AZURE_SEARCH_ENDPOINT` is set; see
+`apps/api/src/accelerator/infrastructure/search/tests/test_live_isolation.py`.
+
 `make check` runs Python linting, strict type-checking and tests, then the web
 workspace's API-client generation, linting, formatting check, type-checking and
 tests. The build commands produce Python distributions and the standalone

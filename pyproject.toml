@@ -67,4 +67,5 @@ testpaths = [
     "packages/security_core/tests",
     "packages/security_core/redaction",
     "packages/observability_core/tests",
+    "workers/ingestion/tests",
 ]
