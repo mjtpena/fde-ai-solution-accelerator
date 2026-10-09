@@ -113,8 +113,10 @@ the same stages after its OIDC sign-in.
 Set `AZURE_SUBSCRIPTION_ID`, `AZURE_LOCATION`, the three
 `AZURE_POSTGRES_ADMIN_*` values, `API_ENTRA_TENANT_ID`, `API_ENTRA_AUDIENCE`,
 `WEB_ENTRA_CLIENT_ID` and `WEB_ENTRA_API_SCOPE`. Set
-`AZURE_DEPLOYMENT_PRINCIPAL_ID` to your own object ID so the `index` stage may
-create the index. The database bootstrap (below) runs once, between the
+`AZURE_DEPLOYMENT_PRINCIPAL_ID` to your own object ID, and
+`AZURE_DEPLOYMENT_PRINCIPAL_TYPE=User`, so the `index` stage may create the index
+(the type defaults to `ServicePrincipal`, which fits the workflow's OIDC
+principal; a role assignment with the wrong principal type fails). The database bootstrap (below) runs once, between the
 `infrastructure` and `migrate` stages, from a VNet-connected machine.
 
 The workflow's full evaluation runs on the VNet runner: the evaluation principal's

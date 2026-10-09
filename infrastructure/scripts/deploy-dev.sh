@@ -12,6 +12,7 @@
 # AZURE_POSTGRES_ADMIN_NAME, AZURE_POSTGRES_ADMIN_PRINCIPAL_TYPE, API_ENTRA_TENANT_ID,
 # API_ENTRA_AUDIENCE, WEB_ENTRA_CLIENT_ID, WEB_ENTRA_API_SCOPE.
 # Optional: AZURE_DEPLOYMENT_PRINCIPAL_ID (granted Search Service Contributor),
+# AZURE_DEPLOYMENT_PRINCIPAL_TYPE (User for a developer login; default ServicePrincipal),
 # DEPLOYMENT_NAME (default fde-dev-<git sha>), IMAGE_TAG (default the git sha),
 # SMOKE_ATTEMPTS (default 30), SMOKE_INTERVAL_SECONDS (default 10).
 #

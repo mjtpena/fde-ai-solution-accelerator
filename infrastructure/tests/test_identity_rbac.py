@@ -104,6 +104,20 @@ def test_only_the_deployer_may_manage_search_index_definitions() -> None:
     assert "principalId: deploymentPrincipalId" in main
 
 
+def test_deployer_principal_type_is_configurable_for_a_developer_login() -> None:
+    parameters = (MODULES.parent / "parameters" / "dev.example.bicepparam").read_text(
+        encoding="utf-8"
+    )
+    deployer = main_modules_granting("deploymentPrincipalId")["deployerSearchAccess"]
+
+    # A developer's own object ID is a User; the workflow's OIDC principal is not.
+    assert (
+        "param deploymentPrincipalType = "
+        "readEnvironmentVariable('AZURE_DEPLOYMENT_PRINCIPAL_TYPE', 'ServicePrincipal')"
+    ) in parameters
+    assert "principalType: deploymentPrincipalType" in deployer
+
+
 def test_api_has_no_storage_access_and_worker_storage_access_is_split() -> None:
     main = MAIN.read_text(encoding="utf-8")
 

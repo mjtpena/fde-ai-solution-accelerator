@@ -99,6 +99,7 @@ environment variables):
 | `API_ENTRA_TENANT_ID`, `API_ENTRA_AUDIENCE` | yes | API token validation; the tenant is also compiled into the web bundle |
 | `WEB_ENTRA_CLIENT_ID`, `WEB_ENTRA_API_SCOPE` | yes | Compiled into the web bundle (`NEXT_PUBLIC_*`); not secrets |
 | `AZURE_DEPLOYMENT_PRINCIPAL_ID` | no | Your own object ID (or the OIDC principal's), granted Search Service Contributor for the `index` stage |
+| `AZURE_DEPLOYMENT_PRINCIPAL_TYPE` | no | Principal type of `AZURE_DEPLOYMENT_PRINCIPAL_ID`: `User` for your own login, default `ServicePrincipal` for the OIDC principal |
 | `AZURE_EVALUATION_PRINCIPAL_ID` | no | Object ID of the identity that runs the full evaluation |
 | `DEPLOYMENT_NAME` | no | Default `fde-dev-<12-char git SHA>`; the migration and app deployments are `<name>-migrations` and `<name>-apps` |
 | `IMAGE_TAG` | no | Default the git SHA |
@@ -125,6 +126,7 @@ export AZURE_POSTGRES_ADMIN_OBJECT_ID=... AZURE_POSTGRES_ADMIN_NAME=... AZURE_PO
 export API_ENTRA_TENANT_ID=... API_ENTRA_AUDIENCE=...
 export WEB_ENTRA_CLIENT_ID=... WEB_ENTRA_API_SCOPE=...
 export AZURE_DEPLOYMENT_PRINCIPAL_ID="$(az ad signed-in-user show --query id --output tsv)"
+export AZURE_DEPLOYMENT_PRINCIPAL_TYPE=User
 export DEPLOYMENT_NAME=fde-dev-initial
 ```
 
