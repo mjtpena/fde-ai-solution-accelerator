@@ -50,3 +50,22 @@ def validate_citations(
     if unknown_ids:
         raise CitationValidationError(result)
     return result
+
+
+class SameTurnCitationValidator:
+    """``CitationValidator`` for the grounded-answer workflow.
+
+    Raises ``CitationValidationError`` (a ``ValueError``) when any cited chunk ID was
+    not retrieved in this turn, so a fabricated citation fails the whole response.
+    """
+
+    def __init__(self, span_factory: "SpanFactory | None" = None) -> None:
+        self._span_factory = span_factory
+
+    def validate(self, citations: Iterable[str], retrieved_chunk_ids: frozenset[str]) -> None:
+        span = self._span_factory() if self._span_factory is not None else None
+        validate_citations(citations, retrieved_chunk_ids, span=span)
+
+
+class SpanFactory(Protocol):
+    def __call__(self) -> CitationValidationSpan: ...

@@ -1,3 +1,4 @@
+from .checker import EvidenceSufficiencyChecker, ScoreField
 from .policy import (
     AbstentionResponse,
     SufficiencyDecision,
@@ -6,6 +7,8 @@ from .policy import (
 )
 
 __all__ = [
+    "EvidenceSufficiencyChecker",
+    "ScoreField",
     "AbstentionResponse",
     "SufficiencyDecision",
     "SufficiencyPolicy",
