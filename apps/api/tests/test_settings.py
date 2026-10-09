@@ -18,8 +18,11 @@ def production_values(**overrides: Any) -> dict[str, Any]:
         "web_origin": "https://app.example.test",
         "database_url": "postgresql+asyncpg://api-identity@db.example.test:5432/accelerator",
         "database_auth_mode": "managed_identity",
+        "managed_identity_client_id": "00000000-0000-0000-0000-0000000000c1",
         "foundry_project_endpoint": "https://foundry.example.test/api/projects/p",
         "foundry_model_deployment": "chat-model",
+        "foundry_embedding_deployment": "embedding-model",
+        "search_vector_dimensions": 1536,
         "search_endpoint": "https://search.example.test",
         "search_index_name": "chunks",
         "applicationinsights_connection_string": "InstrumentationKey=test",
@@ -49,11 +52,14 @@ def test_production_accepts_complete_managed_identity_configuration() -> None:
 @pytest.mark.parametrize(
     "missing",
     [
+        "managed_identity_client_id",
         "database_url",
         "foundry_project_endpoint",
         "foundry_model_deployment",
+        "foundry_embedding_deployment",
         "search_endpoint",
         "search_index_name",
+        "search_vector_dimensions",
         "applicationinsights_connection_string",
     ],
 )
@@ -132,3 +138,13 @@ def test_blank_application_insights_string_counts_as_missing_in_production(varia
         ValidationError, match="APPLICATIONINSIGHTS_CONNECTION_STRING"
     ):
         Settings()  # type: ignore[call-arg]
+
+
+def test_reranker_gate_requires_semantic_ranking() -> None:
+    with pytest.raises(ValidationError, match="SEMANTIC_RANKING"):
+        Settings.model_validate(production_values(search_semantic_ranking=False))
+
+    settings = Settings.model_validate(
+        production_values(search_semantic_ranking=False, sufficiency_score_field="score")
+    )
+    assert settings.azure_services_configured

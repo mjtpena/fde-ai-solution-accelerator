@@ -32,6 +32,16 @@ run without a database, in which case persistence-backed routes return 503;
 production settings validation refuses to start without one. A route whose
 workflow is not configured still returns 503, never a synthetic answer.
 
+When Foundry and Azure AI Search are configured (always, in production), the
+composition root builds the grounded-answer workflow from
+`accelerator.infrastructure.grounded_answer`: the scope-injecting
+`AzureSearchRetriever` with Foundry query embeddings, the threshold
+`EvidenceSufficiencyChecker` (`API_SUFFICIENCY_*`, gating on the semantic
+reranker score by default), a tool-less Foundry agent created by `AgentFactory`
+from `instructions/grounded_answer.md` as the answer generator, and
+`SameTurnCitationValidator`. All Azure clients share one `DefaultAzureCredential`
+for the user-assigned identity in `AZURE_CLIENT_ID` and are closed on shutdown.
+
 `AuditRecorder` exposes async `auth_failure`, `approval`, and `tool_execution`
 hooks. Call approval/tool hooks from trusted API application code with the
 authenticated execution context, after the decision or execution result is known.

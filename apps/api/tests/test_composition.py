@@ -211,3 +211,39 @@ def test_importing_the_entry_point_builds_nothing() -> None:
 
     assert callable(main.create_application)
     assert not hasattr(main, "app")
+
+
+def azure_settings(**overrides: Any) -> Settings:
+    return settings(
+        foundry_project_endpoint="https://foundry.example.test/api/projects/p",
+        foundry_model_deployment="chat-model",
+        foundry_embedding_deployment="embedding-model",
+        search_endpoint="https://search.example.test",
+        search_index_name="chunks",
+        search_vector_dimensions=3,
+        **overrides,
+    )
+
+
+def test_development_without_azure_services_has_no_chat_workflow() -> None:
+    app = build_application(settings())
+
+    assert not hasattr(app.state, "chat_turn")
+
+
+def test_configured_azure_services_wire_the_grounded_answer_workflow() -> None:
+    from accelerator.agent_core.workflows.grounded_answer import GroundedAnswerWorkflow
+
+    credential = FakeCredential()
+    app = build_application(azure_settings(), credential=credential)
+
+    assert isinstance(app.state.chat_turn, GroundedAnswerWorkflow)
+    # The Search and embedding clients are closed with the app.
+    assert len(app.state.shutdown_callbacks) == 2
+
+
+def test_azure_workflow_refuses_to_build_without_a_credential() -> None:
+    from accelerator.api.composition import default_chat_turn
+
+    with pytest.raises(ValueError, match="credential"):
+        default_chat_turn(azure_settings(), None, [])

@@ -5,6 +5,7 @@ from urllib.parse import urlsplit
 from agent_framework import Agent
 from agent_framework.foundry import FoundryChatClient
 from azure.core.credentials import TokenCredential
+from azure.core.credentials_async import AsyncTokenCredential
 from azure.identity import DefaultAzureCredential
 
 
@@ -13,7 +14,7 @@ class AgentFrameworkFoundryRuntime:
         self,
         project_endpoint: str,
         *,
-        credential: TokenCredential | None = None,
+        credential: TokenCredential | AsyncTokenCredential | None = None,
     ) -> None:
         endpoint = urlsplit(project_endpoint)
         if (
@@ -26,7 +27,9 @@ class AgentFrameworkFoundryRuntime:
         ):
             raise ValueError("project_endpoint must be an HTTPS URL without credentials or query data")
         self._project_endpoint = project_endpoint
-        self._credential = credential if credential is not None else DefaultAzureCredential()
+        self._credential: TokenCredential | AsyncTokenCredential = (
+            credential if credential is not None else DefaultAzureCredential()
+        )
 
     def create_agent(
         self,

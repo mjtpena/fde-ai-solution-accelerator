@@ -3,7 +3,9 @@
 Builds the app through ``accelerator.api.main:create_application`` exactly as
 ``uvicorn --factory`` does, against a migrated
 PostgreSQL database. Only the Azure edges are replaced: the managed-identity
-credential (no Azure in CI) and the Entra JWKS endpoint (a local signing key).
+credential and Entra JWKS endpoint, and the three SDK clients the grounded-answer
+workflow talks to (Search, Foundry embeddings, Foundry chat agent). Everything
+between them (scope injection, sufficiency, citation validation, SSE) is real.
 """
 
 import importlib
@@ -76,8 +78,11 @@ def production_environment(database_url: str) -> dict[str, str]:
         # Production verifies the server certificate; the test server's CA.
         "API_DATABASE_TLS_CA_FILE": tls_ca_file(),
         "API_DATABASE_AUTH_MODE": "managed_identity",
+        "AZURE_CLIENT_ID": "00000000-0000-0000-0000-0000000000c1",
         "API_FOUNDRY_PROJECT_ENDPOINT": "https://foundry.example.test/api/projects/boot",
         "API_FOUNDRY_MODEL_DEPLOYMENT": "chat-model",
+        "API_FOUNDRY_EMBEDDING_DEPLOYMENT": "embedding-model",
+        "API_SEARCH_VECTOR_DIMENSIONS": "3",
         "API_SEARCH_ENDPOINT": "https://search.example.test",
         "API_SEARCH_INDEX_NAME": "chunks",
         "APPLICATIONINSIGHTS_CONNECTION_STRING": "InstrumentationKey=00000000-0000-0000-0000-000000000000",
@@ -126,9 +131,71 @@ async def grant_scope(database_url: str) -> None:
         await engine.dispose()
 
 
+class FakeSearchClient:
+    """Returns one hit per authorized scope from the scope filter it was given."""
+
+    filters: list[str] = []
+
+    def __init__(self, *args: object, **kwargs: object) -> None:
+        del args, kwargs
+
+    async def search(self, **kwargs: Any) -> AsyncIterator[dict[str, Any]]:
+        FakeSearchClient.filters.append(kwargs["filter"])
+
+        async def hits() -> AsyncIterator[dict[str, Any]]:
+            yield {
+                "scope_id": "scope-a",
+                "chunk_id": "chunk-a",
+                "document_id": "document-a",
+                "document_title": "Operations guide",
+                "version": "1",
+                "text": "Backups run nightly.",
+                "source_uri": "https://documents.example.test/a",
+                "@search.score": 0.03,
+                "@search.reranker_score": 3.2,
+            }
+
+        return hits()
+
+    async def close(self) -> None:
+        return None
+
+
+class FakeEmbeddingClient:
+    def __init__(self, *args: object, **kwargs: object) -> None:
+        del args, kwargs
+
+    async def get_embeddings(self, values: list[str], *, options: Any = None) -> list[Any]:
+        return [type("Embedding", (), {"vector": [0.1] * options["dimensions"]})()]
+
+    async def close(self) -> None:
+        return None
+
+
+class FakeAgent:
+    async def run(self, messages: str, *, options: Any) -> Any:
+        assert 'chunk_id="chunk-a"' in messages
+        return type("Response", (), {"text": "Backups run nightly. [cite:chunk-a]"})()
+
+
+def fake_create_agent(self: object, **kwargs: object) -> FakeAgent:
+    del self, kwargs
+    return FakeAgent()
+
+
 @pytest.fixture
 def production_app(migrated_database_url: str) -> Iterator[FastAPI]:
     with (
+        patch("accelerator.infrastructure.grounded_answer.SearchClient", FakeSearchClient),
+        patch(
+            "accelerator.infrastructure.grounded_answer.FoundryEmbeddingClient",
+            FakeEmbeddingClient,
+        ),
+        patch(
+            "accelerator.infrastructure.foundry.agent_runtime."
+            "AgentFrameworkFoundryRuntime.create_agent",
+            fake_create_agent,
+        ),
         patch.dict("os.environ", production_environment(migrated_database_url), clear=True),
         patch(
             "azure.identity.aio.DefaultAzureCredential",
@@ -188,10 +255,6 @@ async def test_production_app_boots_and_serves_authenticated_routes(
     assert checks["identity_provider"]["status"] == "ok", ready.text
 
 
-@pytest.mark.xfail(
-    strict=True,
-    reason="The production grounded-answer workflow is wired with retrieval in Phase 2.",
-)
 async def test_production_chat_stream_is_configured_and_ready(
     production_app: FastAPI, migrated_database_url: str
 ) -> None:
@@ -204,4 +267,9 @@ async def test_production_chat_stream_is_configured_and_ready(
         )
 
     assert ready.status_code == 200, ready.text
-    assert response.status_code != 503, response.text
+    assert response.status_code == 200, response.text
+    assert "event: token" in response.text
+    assert '"chunk_id":"chunk-a"' in response.text
+    assert "[cite:" not in response.text
+    # The scope filter came from the database membership, not from the request.
+    assert FakeSearchClient.filters[-1].startswith("(search.in(scope_id, 'scope-a'")

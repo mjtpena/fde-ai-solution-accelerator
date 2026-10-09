@@ -55,13 +55,34 @@ class Settings(BaseSettings):
     # Extra CA bundle for verifying the server certificate (private CAs, test servers).
     database_tls_ca_file: str | None = Field(default=None, min_length=1)
 
-    # Microsoft Foundry project and chat-model deployment.
+    # User-assigned managed identity used for every Azure dependency in production.
+    # DefaultAzureCredential reads the same AZURE_CLIENT_ID variable.
+    managed_identity_client_id: str | None = Field(
+        default=None,
+        min_length=1,
+        validation_alias=AliasChoices(
+            "API_MANAGED_IDENTITY_CLIENT_ID", "AZURE_CLIENT_ID", "managed_identity_client_id"
+        ),
+    )
+
+    # Microsoft Foundry project, chat-model and embedding-model deployments.
     foundry_project_endpoint: HttpUrl | None = None
     foundry_model_deployment: str | None = Field(default=None, min_length=1)
+    foundry_embedding_deployment: str | None = Field(default=None, min_length=1)
+    generation_max_output_tokens: int = Field(default=1024, ge=1, le=32_768)
 
-    # Azure AI Search.
+    # Azure AI Search. Vector dimensions must match the embedding deployment and index.
     search_endpoint: HttpUrl | None = None
     search_index_name: str | None = Field(default=None, min_length=1)
+    search_vector_dimensions: int | None = Field(default=None, ge=2, le=4096)
+    search_semantic_ranking: bool = True
+    search_vector_candidates: int = Field(default=50, ge=50, le=1000)
+    search_top_k: int = Field(default=5, ge=1, le=20)
+
+    # Evidence sufficiency gate. The default scale is the semantic reranker (0-4).
+    sufficiency_score_field: Literal["score", "reranker_score"] = "reranker_score"
+    sufficiency_min_score: float = Field(default=2.0, allow_inf_nan=False)
+    sufficiency_min_evidence: int = Field(default=1, ge=1, le=20)
 
     # Application Insights. The standard Azure Monitor variable name is accepted
     # so platform-injected configuration works unchanged.
@@ -97,11 +118,14 @@ class Settings(BaseSettings):
         missing = [
             name
             for name in (
+                "managed_identity_client_id",
                 "database_url",
                 "foundry_project_endpoint",
                 "foundry_model_deployment",
+                "foundry_embedding_deployment",
                 "search_endpoint",
                 "search_index_name",
+                "search_vector_dimensions",
                 "applicationinsights_connection_string",
             )
             if getattr(self, name) is None
@@ -117,7 +141,25 @@ class Settings(BaseSettings):
             url: HttpUrl | None = getattr(self, name)
             if url is not None and url.scheme != "https":
                 raise ValueError(f"API_{name.upper()} must use HTTPS in production.")
+        if self.sufficiency_score_field == "reranker_score" and not self.search_semantic_ranking:
+            raise ValueError(
+                "API_SUFFICIENCY_SCORE_FIELD=reranker_score requires API_SEARCH_SEMANTIC_RANKING."
+            )
         return self
+
+    @property
+    def azure_services_configured(self) -> bool:
+        return all(
+            value is not None
+            for value in (
+                self.foundry_project_endpoint,
+                self.foundry_model_deployment,
+                self.foundry_embedding_deployment,
+                self.search_endpoint,
+                self.search_index_name,
+                self.search_vector_dimensions,
+            )
+        )
 
 
 @lru_cache
