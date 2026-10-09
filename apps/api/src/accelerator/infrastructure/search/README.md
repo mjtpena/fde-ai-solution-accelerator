@@ -91,4 +91,4 @@ fixed queries/scopes and k, a baseline/candidate retrieval runner, and operation
 semantic-enabled Azure AI Search with matching embeddings and managed-identity
 access. The controlled-transport tests prescribe responses and cannot measure
 ranking quality. Until these prerequisites are supplied, the ranking acceptance
-gate is blocked; passing unit tests or the placeholder does not satisfy it.
+gate is blocked; passing unit tests or the offline smoke gate does not satisfy it.

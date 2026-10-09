@@ -21,7 +21,7 @@ checks as relevant. Writes, if included, need approved args-bound approvals.
 ## Decision procedure
 
 Run the agreed checks against the frozen baseline. Store redacted outputs and
-actual command results; a placeholder smoke command is not model evaluation.
+actual command results; the offline smoke gate is not model evaluation.
 Missing evidence is pending, not passed. Failed mandatory safety gates block
 acceptance. Record other deviations with an owner, expiry and explicit reviewer
 decision before any conditional acceptance.

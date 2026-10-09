@@ -30,10 +30,10 @@ outputs. Evaluation reviewer reviews functional evidence, Security reviewer
 reviews safety, Operations owner reviews operational evidence. All eight gates
 must pass before Sponsor authorises this staging demonstration.
 
-Record `make check` and `make eval-smoke` results at execution. If the smoke
-target is still a placeholder, it supplies no quality evidence: separately run
-the frozen 50-case set before any acceptance claim. Target compliance is not
-established by this document or by a successful placeholder command.
+Record `make check` and `make eval-smoke` results at execution. The smoke gate
+checks the control plane offline and supplies no model-quality evidence:
+separately run the frozen 50-case set before any acceptance claim. Target
+compliance is not established by this document or by a passing smoke gate.
 
 - Deviations / remedial actions: none recorded; all execution evidence is pending.
 - Final decision / date / reference: pending actual execution and reviewer concurrence.
