@@ -68,6 +68,53 @@ def test_invalid_documents_are_rejected_permanently(
         build_job(message(**overrides), content, max_bytes=100, chunking=CHUNKING)
 
 
+def _pdf(*objects: bytes) -> bytes:
+    """A structurally valid PDF file around ``objects`` (numbered from 1)."""
+    out = bytearray(b"%PDF-1.4\n")
+    offsets = []
+    for number, body in enumerate(objects, start=1):
+        offsets.append(len(out))
+        out += b"%d 0 obj\n%s\nendobj\n" % (number, body)
+    xref = len(out)
+    out += b"xref\n0 %d\n0000000000 65535 f \n" % (len(objects) + 1)
+    out += b"".join(b"%010d 00000 n \n" % offset for offset in offsets)
+    out += b"trailer\n<< /Size %d /Root 1 0 R >>\nstartxref\n%d\n%%%%EOF\n" % (
+        len(objects) + 1,
+        xref,
+    )
+    return bytes(out)
+
+
+@pytest.mark.parametrize(
+    "content",
+    [
+        pytest.param(b"MZ\x90\x00 an executable, not a PDF", id="wrong-magic-bytes"),
+        pytest.param(b"%PDF-1.4\ntruncated", id="truncated"),
+        pytest.param(
+            _pdf(
+                b"<< /Type /Catalog /Pages 2 0 R >>",
+                b"<< /Type /Pages /Kids [2 0 R] /Count 1 >>",
+            ),
+            id="cyclic-page-tree",
+        ),
+        pytest.param(
+            _pdf(b"<< /Type /Catalog /X " + b"[" * 5_000 + b"]" * 5_000 + b" >>"),
+            id="deeply-nested",
+        ),
+    ],
+)
+def test_malformed_pdfs_are_rejected_permanently_not_retried(content: bytes) -> None:
+    # pypdf raises PdfReadError, which is not a ValueError: before the fix these
+    # escaped as transient failures and were retried with backoff.
+    with pytest.raises(RejectedDocument, match="could not be parsed"):
+        build_job(
+            message(content_type="application/pdf"),
+            content,
+            max_bytes=1_000_000,
+            chunking=CHUNKING,
+        )
+
+
 @pytest.mark.parametrize(
     "overrides",
     [

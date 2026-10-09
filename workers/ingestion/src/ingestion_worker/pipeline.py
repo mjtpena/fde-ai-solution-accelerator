@@ -105,7 +105,11 @@ def build_job(
         raise RejectedDocument(f"source document exceeds {max_bytes} bytes")
     try:
         parsed = PARSERS[message.content_type]().parse(content)
-    except (ValueError, UnicodeDecodeError) as error:
+    except Exception as error:
+        # Parsing is a pure function of bytes the worker already holds, so any parser
+        # failure is permanent. Parsers raise their own types (pypdf raises
+        # PdfReadError and LimitReachedError, neither a ValueError); treating those
+        # as transient would retry a malformed or hostile upload with backoff.
         raise RejectedDocument(
             f"source document could not be parsed ({type(error).__name__})"
         ) from error
