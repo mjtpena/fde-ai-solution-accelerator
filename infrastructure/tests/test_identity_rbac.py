@@ -227,9 +227,8 @@ def test_hosted_agent_identity_gets_only_content_safety_user() -> None:
 
 
 def test_hosted_agent_deployment_passes_the_content_safety_endpoint() -> None:
-    from infrastructure.hosted_agent.configuration import DeploymentSettings
-
-    assert "content_safety_endpoint" in DeploymentSettings.model_fields
+    # Dependency-free: the Bicep job runs this file with pytest alone. The settings
+    # model's field is asserted in infrastructure/hosted_agent/tests.
     example = (MODULES.parent / "hosted_agent" / "deployment.example.json").read_text(
         encoding="utf-8"
     )

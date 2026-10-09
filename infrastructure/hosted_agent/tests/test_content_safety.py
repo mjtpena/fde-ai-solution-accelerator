@@ -30,7 +30,7 @@ from accelerator.security_core.content_safety import (
     ScreenedDocument,
 )
 from infrastructure.hosted_agent import production
-from infrastructure.hosted_agent.configuration import ContentSafetySettings
+from infrastructure.hosted_agent.configuration import ContentSafetySettings, DeploymentSettings
 from infrastructure.hosted_agent.server import create_host
 from infrastructure.hosted_agent.tests.content_safety_fakes import FakeChecker, fake_screening
 
@@ -453,3 +453,8 @@ def test_hosted_abstentions_require_a_known_code() -> None:
     unknown: Any = "free text"
     with pytest.raises(ValidationError):
         HostedAbstention(reason="r", evidence_ids=(), code=unknown)
+
+
+def test_deployment_settings_carry_the_content_safety_endpoint() -> None:
+    assert "content_safety_endpoint" in DeploymentSettings.model_fields
+    assert DeploymentSettings.model_fields["content_safety_endpoint"].is_required()
