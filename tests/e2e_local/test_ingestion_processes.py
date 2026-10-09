@@ -93,9 +93,9 @@ def pipeline(
             WorkerProcess(f"ingestion-worker-{index}", settings, process_logs)
             for index in (1, 2)
         )
-        for worker in workers:
-            worker.start_and_wait()
         try:
+            for worker in workers:
+                worker.start_and_wait()
             yield Pipeline(
                 azurite_connection_string,
                 database_url,

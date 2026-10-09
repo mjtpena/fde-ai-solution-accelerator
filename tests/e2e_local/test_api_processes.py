@@ -104,8 +104,18 @@ def database_url(server_dsn: str, process_logs: Path) -> Iterator[str]:
         yield url
 
 
+def _stop_all_cleanly(*apis: ApiProcess) -> None:
+    """Stop every process first, so a failed check never leaves one running."""
+    codes = [api.stop() for api in apis]
+    for api, code in zip(apis, codes, strict=True):
+        _check_clean_exit(api, code)
+
+
 def _stop_cleanly(api: ApiProcess) -> None:
-    code = api.stop()
+    _stop_all_cleanly(api)
+
+
+def _check_clean_exit(api: ApiProcess, code: int) -> None:
     log = api.log()
     # Uvicorn finishes its graceful shutdown, then re-raises the captured SIGTERM.
     assert code in (0, -signal.SIGTERM), f"{api.name} exited with {code}:\n{log[-4000:]}"
@@ -126,11 +136,17 @@ def apis(
         ApiProcess("api-replica-a", settings, process_logs),
         ApiProcess("api-replica-b", settings, process_logs),
     )
-    for replica in replicas:
-        replica.start_and_wait()
-    yield replicas
-    for replica in replicas:
-        _stop_cleanly(replica)
+    try:
+        for replica in replicas:
+            replica.start_and_wait()
+    except BaseException:
+        for replica in replicas:
+            replica.stop()
+        raise
+    try:
+        yield replicas
+    finally:
+        _stop_all_cleanly(*replicas)
 
 
 @pytest.fixture
@@ -707,8 +723,10 @@ def slow_identity_api(
         process_logs,
     )
     api.start_and_wait()
-    yield api
-    _stop_cleanly(api)
+    try:
+        yield api
+    finally:
+        _stop_cleanly(api)
 
 
 async def test_a_hanging_identity_provider_hits_deadlines_not_the_whole_server(
@@ -758,8 +776,10 @@ def throttled_audit_api(
         process_logs,
     )
     api.start_and_wait()
-    yield api
-    _stop_cleanly(api)
+    try:
+        yield api
+    finally:
+        _stop_cleanly(api)
 
 
 async def test_unauthenticated_floods_get_401s_but_bounded_audit_writes(
@@ -786,8 +806,10 @@ def database_down_api(authority: SigningAuthority, process_logs: Path) -> Iterat
         process_logs,
     )
     api.start_and_wait()
-    yield api
-    _stop_cleanly(api)
+    try:
+        yield api
+    finally:
+        _stop_cleanly(api)
 
 
 async def test_an_unreachable_database_fails_closed_with_503s(
