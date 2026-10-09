@@ -1,14 +1,30 @@
 from functools import lru_cache
+from typing import Literal, Self
 from uuid import UUID
 
-from pydantic import Field
+from pydantic import (
+    AliasChoices,
+    Field,
+    HttpUrl,
+    PostgresDsn,
+    SecretStr,
+    model_validator,
+)
 from pydantic_settings import BaseSettings, SettingsConfigDict
+
+Environment = Literal["development", "test", "production"]
+DatabaseAuthMode = Literal["password", "managed_identity"]
+
+# Environments where local fakes (offline workflow, unconfigured adapters) may stand
+# in for Azure services. Every deployed environment, including an Azure "dev"
+# environment, runs with ``environment=production`` and gets strict validation.
+FAKE_FRIENDLY_ENVIRONMENTS: frozenset[str] = frozenset({"development", "test"})
 
 
 class Settings(BaseSettings):
     model_config = SettingsConfigDict(env_prefix="API_")
 
-    environment: str = Field(min_length=1)
+    environment: Environment
     request_token_budget: int = Field(default=8192, gt=0)
     request_rate_limit: int = Field(default=60, gt=0)
     request_rate_window_seconds: float = Field(default=60.0, gt=0, allow_inf_nan=False)
@@ -17,7 +33,73 @@ class Settings(BaseSettings):
     entra_audience: str = Field(min_length=1)
     web_origin: str = Field(default="http://localhost:3000", min_length=1)
 
+    # PostgreSQL. In production the DSN carries no password: the API authenticates
+    # with a Microsoft Entra token from its managed identity.
+    database_url: PostgresDsn | None = None
+    database_auth_mode: DatabaseAuthMode = "password"
+    database_pool_size: int = Field(default=5, ge=1, le=100)
+    database_max_overflow: int = Field(default=5, ge=0, le=100)
+    database_pool_timeout_seconds: float = Field(default=10.0, gt=0, allow_inf_nan=False)
+    database_pool_recycle_seconds: int = Field(default=1800, gt=0)
+    database_connect_timeout_seconds: float = Field(default=5.0, gt=0, allow_inf_nan=False)
+
+    # Microsoft Foundry project and chat-model deployment.
+    foundry_project_endpoint: HttpUrl | None = None
+    foundry_model_deployment: str | None = Field(default=None, min_length=1)
+
+    # Azure AI Search.
+    search_endpoint: HttpUrl | None = None
+    search_index_name: str | None = Field(default=None, min_length=1)
+
+    # Application Insights. The standard Azure Monitor variable name is accepted
+    # so platform-injected configuration works unchanged.
+    applicationinsights_connection_string: SecretStr | None = Field(
+        default=None,
+        validation_alias=AliasChoices(
+            "API_APPLICATIONINSIGHTS_CONNECTION_STRING",
+            "APPLICATIONINSIGHTS_CONNECTION_STRING",
+            "applicationinsights_connection_string",
+        ),
+    )
+
+    @property
+    def allows_fakes(self) -> bool:
+        return self.environment in FAKE_FRIENDLY_ENVIRONMENTS
+
+    @property
+    def is_production(self) -> bool:
+        return self.environment == "production"
+
+    @model_validator(mode="after")
+    def require_production_services(self) -> Self:
+        if self.allows_fakes:
+            return self
+        missing = [
+            name
+            for name in (
+                "database_url",
+                "foundry_project_endpoint",
+                "foundry_model_deployment",
+                "search_endpoint",
+                "search_index_name",
+                "applicationinsights_connection_string",
+            )
+            if getattr(self, name) is None
+        ]
+        if missing:
+            variables = ", ".join(f"API_{name.upper()}" for name in missing)
+            raise ValueError(f"Production requires these settings: {variables}.")
+        if self.database_auth_mode != "managed_identity":
+            raise ValueError("Production requires API_DATABASE_AUTH_MODE=managed_identity.")
+        if self.database_url is not None and self.database_url.hosts()[0].get("password"):
+            raise ValueError("Production database URLs must not embed a password.")
+        for name in ("foundry_project_endpoint", "search_endpoint"):
+            url: HttpUrl | None = getattr(self, name)
+            if url is not None and url.scheme != "https":
+                raise ValueError(f"API_{name.upper()} must use HTTPS in production.")
+        return self
+
 
 @lru_cache
 def get_settings() -> Settings:
-    return Settings()
+    return Settings()  # type: ignore[call-arg]  # values come from the environment
