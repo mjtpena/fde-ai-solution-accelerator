@@ -178,6 +178,88 @@ jobs:
           if-no-files-found: ignore
           retention-days: 7
 
+  # The API, two ingestion workers and the web app as real processes against
+  # PostgreSQL and Azurite (tests/e2e_local, docs/testing-strategy.md). E2E_LOCAL=1
+  # makes missing services a failure, never a skip.
+  e2e-local:
+    name: Real-process end-to-end (PostgreSQL, Azurite)
+    runs-on: ubuntu-latest
+    timeout-minutes: 25
+    env:
+      NEXT_TELEMETRY_DISABLED: "1"
+      CI: "true"
+    services:
+      postgres:
+        # postgres:16-alpine, pinned by digest.
+        image: postgres:16-alpine@sha256:721873c34ceb9f8d8fc265984940dc982404c105f19ad51be9fdc5970a6080ea
+        env:
+          POSTGRES_PASSWORD: ci-only-password
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U postgres -h 127.0.0.1"
+          --health-interval 5s
+          --health-timeout 3s
+          --health-retries 20
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          persist-credentials: false
+      - uses: astral-sh/setup-uv@c18668ad3cf93ea998bef934396af7bb5c839dc7 # v10.2.0
+        with:
+          enable-cache: true
+          cache-dependency-glob: |
+            uv.lock
+            **/pyproject.toml
+      - uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7
+        with:
+          python-version: "3.12"
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7
+        with:
+          node-version: "22"
+          cache: npm
+          cache-dependency-path: package-lock.json
+
+      # A step, not a service container: the storage SDKs are newer than the
+      # emulator, so it needs --skipApiVersionCheck, and service containers cannot
+      # be given command arguments. azurite:3.33.0, pinned by digest.
+      - name: Start Azurite
+        run: |
+          docker run --detach --name azurite --publish 10000:10000 --publish 10001:10001 \
+            mcr.microsoft.com/azure-storage/azurite:3.33.0@sha256:2628ee10a72833cc344b9d194cd8b245543892b307d16cf26a2cf55a15b816af \
+            azurite --blobHost 0.0.0.0 --queueHost 0.0.0.0 --skipApiVersionCheck --loose
+          for _ in $(seq 1 30); do
+            if curl --silent --output /dev/null http://127.0.0.1:10001/; then exit 0; fi
+            sleep 1
+          done
+          docker logs azurite
+          exit 1
+
+      - name: Install dependencies
+        run: |
+          uv sync --all-packages --frozen
+          npm ci
+      - name: Install Chromium
+        run: npx --workspace apps/web playwright install --with-deps chromium
+
+      - name: Run the real-process suite
+        env:
+          TEST_POSTGRES_DSN: postgresql://postgres:ci-only-password@127.0.0.1:5432/postgres
+          # The emulator's default local endpoints; no key is stored in the repository.
+          TEST_AZURITE_CONNECTION_STRING: UseDevelopmentStorage=true
+          E2E_LOCAL_LOG_DIR: ${{ runner.temp }}/e2e-local-logs
+        run: make e2e-local E2E_LOCAL_WEB=1
+
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        if: failure()
+        with:
+          name: e2e-local-logs
+          path: |
+            ${{ runner.temp }}/e2e-local-logs/
+            apps/web/test-results/
+          if-no-files-found: ignore
+          retention-days: 7
+
   docker:
     name: Docker build (${{ matrix.image }})
     runs-on: ubuntu-latest
