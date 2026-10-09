@@ -101,6 +101,12 @@ def test_python_warnings_are_logged_as_structured_json(capsys: pytest.CaptureFix
     """A dependency's import-time warning must not put an unstructured line on stderr."""
     root = logging.getLogger()
     saved_handlers, saved_level = root.handlers[:], root.level
+    # Other tests (Alembic's fileConfig) disable existing loggers and may already have
+    # captured warnings; start from a fresh process's state.
+    warnings_logger = logging.getLogger("py.warnings")
+    saved_disabled = warnings_logger.disabled
+    warnings_logger.disabled = False
+    logging.captureWarnings(False)
     try:
         configure_logging("INFO")
         with warnings.catch_warnings():
@@ -109,6 +115,7 @@ def test_python_warnings_are_logged_as_structured_json(capsys: pytest.CaptureFix
         lines = [line for line in capsys.readouterr().err.splitlines() if line.strip()]
     finally:
         logging.captureWarnings(False)
+        warnings_logger.disabled = saved_disabled
         root.handlers[:] = saved_handlers
         root.setLevel(saved_level)
 
