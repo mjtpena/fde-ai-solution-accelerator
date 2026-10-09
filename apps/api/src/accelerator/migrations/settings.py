@@ -17,3 +17,5 @@ class MigrationSettings(BaseSettings):
     # Runtime roles granted least-privilege table access after an upgrade (optional).
     database_api_role: str | None = Field(default=None, pattern=r"^[a-z_][a-z0-9_]{0,62}$")
     database_worker_role: str | None = Field(default=None, pattern=r"^[a-z_][a-z0-9_]{0,62}$")
+    # The PostgreSQL Entra administrator; may manage and read scope memberships.
+    database_operator_role: str | None = Field(default=None, min_length=1, max_length=63)

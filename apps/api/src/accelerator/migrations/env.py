@@ -19,12 +19,17 @@ def _run(connection: Connection, settings: MigrationSettings) -> None:
     context.configure(connection=connection, transaction_per_migration=True)
     with context.begin_transaction():
         context.run_migrations()
-    if settings.database_api_role or settings.database_worker_role:
+    if (
+        settings.database_api_role
+        or settings.database_worker_role
+        or settings.database_operator_role
+    ):
         with connection.begin():
             grant_runtime_privileges(
                 connection,
                 api_role=settings.database_api_role,
                 worker_role=settings.database_worker_role,
+                operator_role=settings.database_operator_role,
             )
 
 

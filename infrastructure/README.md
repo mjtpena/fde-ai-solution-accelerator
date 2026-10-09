@@ -34,7 +34,9 @@ Database privileges: only `accelerator_migrator` may create objects. After each
 upgrade it grants the runtime roles exactly their table privileges
 (`accelerator.migrations.grants`): the API gets `SELECT, INSERT` on the
 append-only audit tables and no access to ingestion tables; the worker gets the
-two ingestion tables only.
+two ingestion tables only; the PostgreSQL Entra administrator gets `SELECT, INSERT,
+DELETE` on `scope_memberships` (to manage memberships and run the full evaluation)
+and nothing else on application tables.
 
 Container settings match the application's typed settings (`API_*` and
 `INGESTION_*`, see `apps/api/src/accelerator/configuration/settings.py` and
