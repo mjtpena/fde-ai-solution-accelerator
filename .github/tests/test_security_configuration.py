@@ -1,7 +1,7 @@
 """Regression checks for the repository's merge-blocking scanner configuration."""
 
-from pathlib import Path
 import re
+from pathlib import Path
 from typing import Any
 
 import pytest
@@ -12,7 +12,9 @@ GITHUB = Path(__file__).resolve().parents[1]
 
 def load_config(path: Path) -> dict[str, Any]:
     # BaseLoader preserves the GitHub Actions `on` key instead of YAML 1.1 booleans.
-    config: dict[str, Any] = yaml.load(path.read_text(encoding="utf-8"), Loader=yaml.BaseLoader)
+    # BaseLoader only builds strings, lists and dicts, so it cannot construct objects.
+    text = path.read_text(encoding="utf-8")
+    config: dict[str, Any] = yaml.load(text, Loader=yaml.BaseLoader)  # noqa: S506
     return config
 
 
@@ -91,7 +93,9 @@ def test_dependency_review_rejects_high_severity_changes(
 ) -> None:
     job = workflow["jobs"]["dependency-review"]
     assert job["if"] == "github.event_name == 'pull_request'"
-    step = next(step for step in job["steps"] if "dependency-review-action@" in step.get("uses", ""))
+    step = next(
+        step for step in job["steps"] if "dependency-review-action@" in step.get("uses", "")
+    )
     assert step["with"]["fail-on-severity"] == "high"
 
 
