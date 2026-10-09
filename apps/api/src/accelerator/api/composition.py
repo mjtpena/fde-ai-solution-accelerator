@@ -5,19 +5,19 @@ alternative hosts keep using ``create_app`` with injected fakes.
 """
 
 import logging
-from collections.abc import AsyncGenerator, Awaitable, Callable
+from collections.abc import Awaitable, Callable
 
 from azure.core.credentials_async import AsyncTokenCredential
 from azure.identity.aio import DefaultAzureCredential
-from fastapi import FastAPI, HTTPException, Request
-from pydantic import BaseModel
+from fastapi import FastAPI
 
-from accelerator.agent_core.approvals import ApprovalService
 from accelerator.api.app import create_app
+from accelerator.api.approvals import get_approval_service
+
+__all__ = ["build_application", "default_chat_turn", "get_approval_service"]
 from accelerator.api.chat import ChatTurnPort
 from accelerator.configuration.settings import Settings
 from accelerator.identity.scope_resolver import get_execution_context
-from accelerator.infrastructure.approvals import SQLAlchemyApprovalRepository
 from accelerator.infrastructure.audit import PostgresAuditRepository
 from accelerator.infrastructure.database import create_database_engine
 from accelerator.infrastructure.grounded_answer import build_azure_grounded_answer
@@ -104,14 +104,3 @@ def build_application(
         on_shutdown=shutdown,
     )
     return app
-
-
-async def get_approval_service(
-    request: Request,
-) -> AsyncGenerator[ApprovalService[BaseModel, BaseModel]]:
-    """Yield an ``ApprovalService`` bound to one request-scoped database session."""
-    session_factory: SessionFactory | None = getattr(request.app.state, "session_factory", None)
-    if session_factory is None:
-        raise HTTPException(status_code=503, detail="Approval persistence is unavailable.")
-    async with session_factory() as session:
-        yield ApprovalService(SQLAlchemyApprovalRepository(session))

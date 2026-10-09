@@ -9,7 +9,9 @@ from sqlalchemy.pool import QueuePool
 from starlette.requests import Request
 
 from accelerator.agent_core.approvals import ApprovalService
-from accelerator.api.composition import build_application, get_approval_service
+from accelerator.api.approvals import get_approval_repository, get_approval_service
+from accelerator.api.composition import build_application
+from accelerator.infrastructure.approvals import SQLAlchemyApprovalRepository
 from accelerator.configuration.settings import Settings
 from accelerator.infrastructure.audit import PostgresAuditRepository
 from accelerator.infrastructure.database import (
@@ -141,12 +143,12 @@ def test_asyncpg_driver_is_pinned(url: str, expected: str) -> None:
     assert asyncpg_url(url) == expected
 
 
-async def test_approval_service_is_unavailable_without_database() -> None:
+async def test_approval_persistence_is_unavailable_without_database() -> None:
     app = build_application(settings())
     request = Request({"type": "http", "app": app})
 
     with pytest.raises(HTTPException) as raised:
-        await anext(get_approval_service(request))
+        await anext(get_approval_repository(request))
 
     assert raised.value.status_code == 503
 
@@ -155,10 +157,11 @@ async def test_approval_service_binds_a_request_scoped_session() -> None:
     app = build_application(settings(database_url="postgresql://u:p@localhost/db"))
     request = Request({"type": "http", "app": app})
 
-    dependency: AsyncGenerator[ApprovalService[Any, Any]] = get_approval_service(request)
-    service = await anext(dependency)
+    repositories: AsyncGenerator[SQLAlchemyApprovalRepository] = get_approval_repository(request)
+    repository = await anext(repositories)
+    service = await get_approval_service(repository)
     assert isinstance(service, ApprovalService)
-    await dependency.aclose()
+    await repositories.aclose()
 
 
 def test_managed_identity_connections_verify_the_server_certificate() -> None:

@@ -6,6 +6,7 @@ import httpx
 from fastapi import Depends, FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
+from accelerator.api.approvals import router as approvals_router
 from accelerator.api.audit import (
     AuthFailureAuditMiddleware,
     AuthFailureAuditThrottle,
@@ -128,6 +129,7 @@ def create_app(
     app.include_router(health_router)
     app.include_router(retrieval_diagnostics_router, **cost_guarded)
     app.include_router(audit_router, **AUTHENTICATED)
+    app.include_router(approvals_router, **AUTHENTICATED)
     if chat_turn is not None:
         app.state.chat_turn = chat_turn
     if scope_repository is not None:

@@ -1,5 +1,7 @@
 from .models import Approval, ApprovalAuditEvent, ApprovalStatus
 from .service import (
+    APPROVER_ROLE,
+    ApprovalAuthorizationError,
     ApprovalContext,
     ApprovalError,
     ApprovalExpiredError,
@@ -15,7 +17,9 @@ from .service import (
 )
 
 __all__ = [
+    "APPROVER_ROLE",
     "Approval",
+    "ApprovalAuthorizationError",
     "ApprovalAuditEvent",
     "ApprovalContext",
     "ApprovalError",

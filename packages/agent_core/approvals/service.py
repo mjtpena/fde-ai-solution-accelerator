@@ -46,6 +46,13 @@ class ApprovalReplayError(ApprovalStateError):
     pass
 
 
+class ApprovalAuthorizationError(ApprovalError):
+    """The caller may not decide this approval (role or separation of duties)."""
+
+
+APPROVER_ROLE = "Approver"
+
+
 class ApprovalRepository(Protocol):
     def transaction(self) -> AsyncContextManager[None]: ...
 
@@ -182,6 +189,7 @@ class ApprovalService(Generic[TArgs, TResult]):
         async with self._repository.transaction():
             approval = await self._locked_approval(approval_id)
             self._scope_matches(approval, ctx)
+            self._authorize_decision(approval, ctx)
             if approval.status == "pending" and approval.expires_at <= self._now():
                 expired_approval = approval.model_copy(update={"status": "expired"})
                 await self._repository.update(expired_approval)
@@ -212,6 +220,14 @@ class ApprovalService(Generic[TArgs, TResult]):
         self._single_scope(ctx)
         if approval.tool_name != tool_name or approval.args_hash != canonical_args_hash(args):
             raise ApprovalMismatchError("tool or arguments do not match the approval")
+
+    @staticmethod
+    def _authorize_decision(approval: Approval, ctx: ApprovalContext) -> None:
+        """Every write decision needs the Approver role and a second person."""
+        if APPROVER_ROLE not in ctx.roles:
+            raise ApprovalAuthorizationError("deciding an approval requires the Approver role")
+        if ctx.user_id == approval.requested_by:
+            raise ApprovalAuthorizationError("the requester cannot decide their own approval")
 
     @staticmethod
     def _scope_matches(approval: Approval, ctx: ApprovalContext) -> None:

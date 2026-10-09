@@ -15,6 +15,7 @@ from sqlalchemy import text
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker, create_async_engine
 
 from accelerator.agent_core.approvals import (
+    ApprovalAuthorizationError,
     Approval,
     ApprovalAuditEvent,
     ApprovalContext,
@@ -47,6 +48,9 @@ class Context:
     roles: frozenset[str] = frozenset()
     session_id: str | None = None
     deadline_utc: datetime = datetime(2030, 1, 1, tzinfo=UTC)
+
+
+APPROVER = Context(user_id="approver-1", roles=frozenset({"Approver"}))
 
 
 class Arguments(BaseModel):
@@ -167,7 +171,7 @@ async def _approved(
         ctx=context,
         expires_at=expires_at,
     )
-    return await service.approve(approval_id=approval.id, ctx=context)
+    return await service.approve(approval_id=approval.id, ctx=APPROVER)
 
 
 async def test_execute_with_matching_approval_succeeds_once(
@@ -301,7 +305,7 @@ async def test_expiry_at_decision_time_fails_before_any_approval_or_rejection(
     clock.now += timedelta(seconds=1)
 
     with pytest.raises(ApprovalExpiredError):
-        await getattr(service, decision)(approval_id=approval.id, ctx=context)
+        await getattr(service, decision)(approval_id=approval.id, ctx=APPROVER)
 
     assert repository.approvals[approval.id].status == "expired"
     assert repository.approvals[approval.id].decided_by is None
@@ -310,7 +314,7 @@ async def test_expiry_at_decision_time_fails_before_any_approval_or_rejection(
     # Rejecting an already-expired, never-decided approval must also fail the
     # same way, rather than silently transitioning to "rejected".
     with pytest.raises(ApprovalExpiredError):
-        await service.reject(approval_id=approval.id, ctx=context)
+        await service.reject(approval_id=approval.id, ctx=APPROVER)
 
     assert repository.approvals[approval.id].status == "expired"
 
@@ -484,7 +488,7 @@ async def test_validate_approval_receives_persisted_record_before_invocation(
     assert seen[0].id == approval.id
     assert seen[0].status == "approved"
     assert seen[0].requested_by == context.user_id
-    assert seen[0].decided_by == context.user_id
+    assert seen[0].decided_by == APPROVER.user_id
     assert seen[0].scope_id == next(iter(context.scope_ids))
 
 
@@ -593,7 +597,7 @@ async def test_concrete_server_context_and_enterprise_tool_are_compatible(
     assert ApprovalContext is ExecutionContextProtocol
     assert ApprovalTool is EnterpriseTool
     approval = await service.create(tool_name=tool.name, args=args, ctx=context)
-    await service.approve(approval_id=approval.id, ctx=context)
+    await service.approve(approval_id=approval.id, ctx=APPROVER)
     result = await service.execute(approval_id=approval.id, tool=tool, args=args, ctx=context)
     assert result == Result(completed=True)
     assert tool.calls == 1
@@ -701,7 +705,7 @@ async def test_postgresql_row_lock_serializes_concurrent_execute_across_two_sess
             tool = SlowTool()
 
             approval = await service_a.create(tool_name=tool.name, args=args, ctx=context)
-            approval = await service_a.approve(approval_id=approval.id, ctx=context)
+            approval = await service_a.approve(approval_id=approval.id, ctx=APPROVER)
 
             async def run(
                 service: ApprovalService[Arguments, Result],
@@ -733,3 +737,30 @@ async def test_postgresql_row_lock_serializes_concurrent_execute_across_two_sess
     finally:
         await engine_a.dispose()
         await engine_b.dispose()
+
+
+@pytest.mark.parametrize(
+    ("decider", "message"),
+    [
+        (Context(user_id="approver-1"), "Approver role"),
+        (Context(roles=frozenset({"Approver"})), "requester cannot decide"),
+    ],
+)
+@pytest.mark.parametrize("decision", ["approve", "reject"])
+async def test_decisions_need_an_approver_who_is_not_the_requester(
+    service: ApprovalService[Arguments, Result],
+    repository: InMemoryApprovalRepository,
+    tool: Tool,
+    args: Arguments,
+    context: Context,
+    decider: Context,
+    message: str,
+    decision: str,
+) -> None:
+    approval = await service.create(tool_name=tool.name, args=args, ctx=context)
+
+    with pytest.raises(ApprovalAuthorizationError, match=message):
+        await getattr(service, decision)(approval_id=approval.id, ctx=decider)
+
+    assert repository.approvals[approval.id].status == "pending"
+    assert [event.transition for event in repository.audit_events] == ["pending"]

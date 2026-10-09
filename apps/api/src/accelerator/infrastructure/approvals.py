@@ -3,12 +3,33 @@ from contextlib import asynccontextmanager
 from datetime import datetime
 from uuid import UUID, uuid4
 
-from sqlalchemy import CheckConstraint, DateTime, ForeignKey, Index, String, Uuid, select, update
+from sqlalchemy import (
+    CheckConstraint,
+    DateTime,
+    ForeignKey,
+    Index,
+    String,
+    Uuid,
+    insert,
+    literal,
+    null,
+    select,
+    update,
+)
 from sqlalchemy.engine import CursorResult
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import DeclarativeBase, Mapped, mapped_column
 
 from accelerator.agent_core.approvals import Approval, ApprovalAuditEvent
+from accelerator.infrastructure.audit import audit_event
+
+# Decisions and executions also go to the central append-only audit log, inside the
+# approval's own transaction, so the two logs can never disagree.
+_CENTRAL_AUDIT = {
+    "approved": ("approval", "approved"),
+    "rejected": ("approval", "denied"),
+    "executed": ("tool_execution", "succeeded"),
+}
 
 
 class ApprovalBase(DeclarativeBase):
@@ -125,7 +146,53 @@ class SQLAlchemyApprovalRepository:
         if result.rowcount != 1:
             raise LookupError(f"approval {approval.id} disappeared during its transaction")
 
+    async def list_pending(
+        self, scope_ids: frozenset[str], *, now: datetime, limit: int
+    ) -> list[Approval]:
+        """Unexpired pending approvals in the caller's server-resolved scopes."""
+        if not scope_ids:
+            return []
+        statement = (
+            select(ApprovalRecord)
+            .where(
+                ApprovalRecord.scope_id.in_(sorted(scope_ids)),
+                ApprovalRecord.status == "pending",
+                ApprovalRecord.expires_at > now,
+            )
+            .order_by(ApprovalRecord.expires_at, ApprovalRecord.id)
+            .limit(limit)
+        )
+        records = (await self._session.scalars(statement)).all()
+        return [record.to_approval() for record in records]
+
     async def add_audit_event(self, event: ApprovalAuditEvent) -> None:
+        central = _CENTRAL_AUDIT.get(event.transition)
+        if central is not None:
+            event_type, outcome = central
+            await self._session.execute(
+                insert(audit_event).from_select(
+                    [
+                        "event_id",
+                        "occurred_at",
+                        "event_type",
+                        "outcome",
+                        "correlation_id",
+                        "actor_id",
+                        "approval_id",
+                        "tool_name",
+                    ],
+                    select(
+                        literal(uuid4(), Uuid),
+                        literal(event.occurred_at, DateTime(timezone=True)),
+                        literal(event_type),
+                        literal(outcome),
+                        literal(event.correlation_id),
+                        literal(event.actor_id),
+                        literal(event.approval_id, Uuid) if event_type == "approval" else null(),
+                        ApprovalRecord.tool_name if event_type == "tool_execution" else null(),
+                    ).where(ApprovalRecord.id == event.approval_id),
+                )
+            )
         self._session.add(
             ApprovalAuditRecord(
                 id=uuid4(),
