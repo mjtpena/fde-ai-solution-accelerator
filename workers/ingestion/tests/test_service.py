@@ -21,6 +21,7 @@ class FakeDocument:
     document_id: str
     title: str
     source_uri: str
+    scope_id: str = "scope-a"
     version: str | None = None
     effective_date: date | None = None
 
@@ -132,10 +133,12 @@ class IngestionServiceTests(unittest.IsolatedAsyncioTestCase):
         source_content: bytes = b"document contents",
         version: str | None = "v1",
         chunks: tuple[Chunk, ...] | None = None,
+        scope_id: str = "scope-a",
     ) -> IngestionJob:
         return IngestionJob(
             document=FakeDocument(
                 document_id="doc-1",
+                scope_id=scope_id,
                 title="Document",
                 source_uri="blob://container/doc-1",
                 version=version,
@@ -175,6 +178,14 @@ class IngestionServiceTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(self.index.upsert_calls, 2)
         self.assertEqual(self.repository.documents["doc-1"].version, "v2")
         self.assertEqual(self.index.chunks["chunk-1"].version, "v2")
+
+    async def test_scope_change_reindexes_unchanged_content(self) -> None:
+        await self.service.ingest(self.make_job())
+        result = await self.service.ingest(self.make_job(scope_id="scope-b"))
+
+        self.assertFalse(result.skipped)
+        self.assertEqual(self.index.upsert_calls, 2)
+        self.assertEqual(self.repository.documents["doc-1"].scope_id, "scope-b")
 
     async def test_changed_chunk_set_upserts_by_id_and_removes_stale_chunks(self) -> None:
         await self.service.ingest(

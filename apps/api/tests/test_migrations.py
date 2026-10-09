@@ -17,6 +17,7 @@ from sqlalchemy.ext.asyncio import create_async_engine
 from accelerator.infrastructure import audit as _audit  # noqa: F401  registers audit_event
 from accelerator.infrastructure import cost_controls as _cost_controls  # noqa: F401
 from accelerator.infrastructure.approvals import ApprovalBase
+from accelerator.ingestion.infrastructure.repository import metadata as ingestion_metadata
 from accelerator.migrations import alembic_config
 from accelerator.security_core.infrastructure.database import Base
 from accelerator.security_core.infrastructure.memberships import (  # noqa: F401
@@ -29,6 +30,7 @@ def test_migration_history_is_linear() -> None:
 
     assert len(script.get_heads()) == 1
     assert [revision.revision for revision in script.walk_revisions()] == [
+        "0005_ingestion",
         "0004_cost_controls",
         "0003_approvals",
         "0002_scope_memberships",
@@ -38,7 +40,7 @@ def test_migration_history_is_linear() -> None:
 
 async def _schema_drift(url: str) -> list[object]:
     metadata = MetaData()
-    for source in (Base.metadata, ApprovalBase.metadata):
+    for source in (Base.metadata, ApprovalBase.metadata, ingestion_metadata):
         for table in source.tables.values():
             table.to_metadata(metadata)
     engine = create_async_engine(url)

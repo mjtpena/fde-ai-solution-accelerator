@@ -1,4 +1,4 @@
-"""Shared PostgreSQL fixtures.
+"""Shared PostgreSQL fixtures for every test tree in the workspace.
 
 Tests that need a real database request ``migrated_database_url``. They are
 collected everywhere and skipped unless TEST_POSTGRES_DSN names a server where

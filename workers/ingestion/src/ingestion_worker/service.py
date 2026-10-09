@@ -10,20 +10,45 @@ from typing import Protocol, Sequence
 
 
 class DocumentInput(Protocol):
-    document_id: str
-    title: str
-    source_uri: str
-    version: str | None
-    effective_date: date | None
+    @property
+    def document_id(self) -> str: ...
+
+    @property
+    def scope_id(self) -> str:
+        """Server-assigned authorization scope; every indexed chunk carries it."""
+        ...
+
+    @property
+    def title(self) -> str: ...
+
+    @property
+    def source_uri(self) -> str: ...
+
+    @property
+    def version(self) -> str | None: ...
+
+    @property
+    def effective_date(self) -> date | None: ...
 
 
 class Chunk(Protocol):
-    chunk_id: str
-    document_id: str
-    text: str
-    version: str | None
-    effective_date: date | None
-    section_heading: str | None
+    @property
+    def chunk_id(self) -> str: ...
+
+    @property
+    def document_id(self) -> str: ...
+
+    @property
+    def text(self) -> str: ...
+
+    @property
+    def version(self) -> str | None: ...
+
+    @property
+    def effective_date(self) -> date | None: ...
+
+    @property
+    def section_heading(self) -> str | None: ...
 
 
 class IngestionStatus(StrEnum):
@@ -35,6 +60,7 @@ class IngestionStatus(StrEnum):
 @dataclass(frozen=True, slots=True)
 class DocumentRecord:
     document_id: str
+    scope_id: str
     title: str
     source_uri: str
     content_hash: str
@@ -118,6 +144,7 @@ class IngestionService:
                 and existing.status is IngestionStatus.READY
                 and existing.content_hash == content_hash
                 and existing.version == job.document.version
+                and existing.scope_id == job.document.scope_id
             ):
                 return IngestionResult(content_hash, skipped=True, reindexed=False)
 
@@ -213,6 +240,7 @@ class IngestionService:
     ) -> DocumentRecord:
         return DocumentRecord(
             document_id=job.document.document_id,
+            scope_id=job.document.scope_id,
             title=job.document.title,
             source_uri=job.document.source_uri,
             content_hash=content_hash,
