@@ -70,7 +70,11 @@ async def _append_only_rejects_update(url: str) -> None:
 
 def test_upgrade_matches_orm_metadata_and_downgrade_is_clean(empty_database_url: str) -> None:
     config = alembic_config()
-    with patch.dict(os.environ, {"API_DATABASE_URL": empty_database_url}):
+    with patch.dict(
+        os.environ,
+        # Throwaway databases use the DSN's password, whatever the shell exports.
+        {"API_DATABASE_URL": empty_database_url, "API_DATABASE_AUTH_MODE": "password"},
+    ):
         command.upgrade(config, "head")
         assert asyncio.run(_schema_drift(empty_database_url)) == []
         asyncio.run(_append_only_rejects_update(empty_database_url))

@@ -1,11 +1,13 @@
 """Boot the real ASGI entry point with production-shaped settings.
 
-Imports ``accelerator.api.main:app`` exactly as uvicorn does, against a migrated
+Builds the app through ``accelerator.api.main:create_application`` exactly as
+``uvicorn --factory`` does, against a migrated
 PostgreSQL database. Only the Azure edges are replaced: the managed-identity
 credential (no Azure in CI) and the Entra JWKS endpoint (a local signing key).
 """
 
 import importlib
+import os
 import json
 import sys
 import time
@@ -53,6 +55,13 @@ def fake_managed_identity(token: str) -> type:
     return FakeManagedIdentity
 
 
+def tls_ca_file() -> str:
+    path = os.environ.get("TEST_POSTGRES_CA_FILE")
+    if not path:
+        pytest.skip("Set TEST_POSTGRES_CA_FILE to the test server's certificate to boot production.")
+    return path
+
+
 def production_environment(database_url: str) -> dict[str, str]:
     url = make_url(database_url)
     password_free = URL.create(
@@ -64,6 +73,8 @@ def production_environment(database_url: str) -> dict[str, str]:
         "API_ENTRA_AUDIENCE": AUDIENCE,
         "API_WEB_ORIGIN": "https://app.example.test",
         "API_DATABASE_URL": password_free.render_as_string(hide_password=False),
+        # Production verifies the server certificate; the test server's CA.
+        "API_DATABASE_TLS_CA_FILE": tls_ca_file(),
         "API_DATABASE_AUTH_MODE": "managed_identity",
         "API_FOUNDRY_PROJECT_ENDPOINT": "https://foundry.example.test/api/projects/boot",
         "API_FOUNDRY_MODEL_DEPLOYMENT": "chat-model",
@@ -129,7 +140,7 @@ def production_app(migrated_database_url: str) -> Iterator[FastAPI]:
         sys.modules.pop("accelerator.api.composition", None)
         main = importlib.import_module("accelerator.api.main")
         try:
-            yield main.app
+            yield main.create_application()
         finally:
             get_settings.cache_clear()
             sys.modules.pop("accelerator.api.main", None)

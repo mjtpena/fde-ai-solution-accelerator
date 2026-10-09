@@ -46,7 +46,9 @@ jobs:
           tls_dir="$RUNNER_TEMP/postgres-tls"
           mkdir -p "$tls_dir"
           openssl req -new -x509 -days 1 -nodes -subj "/CN=localhost" \
+            -addext "subjectAltName=DNS:localhost,IP:127.0.0.1" \
             -keyout "$tls_dir/server.key" -out "$tls_dir/server.crt"
+          cp "$tls_dir/server.crt" "$RUNNER_TEMP/postgres-ca.crt"
           sudo chown 70:70 "$tls_dir/server.key" "$tls_dir/server.crt"
           sudo chmod 600 "$tls_dir/server.key"
           docker run --detach --name postgres --publish 5432:5432 \
@@ -71,6 +73,7 @@ jobs:
       - name: Lint, type-check and test
         env:
           TEST_POSTGRES_DSN: postgresql://postgres:ci-only-password@127.0.0.1:5432/postgres
+          TEST_POSTGRES_CA_FILE: ${{ runner.temp }}/postgres-ca.crt
         run: make check
 
       - name: Build Python packages

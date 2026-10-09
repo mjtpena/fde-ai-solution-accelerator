@@ -55,6 +55,10 @@ def empty_database_url(postgres_dsn: str) -> Iterator[str]:
 
 @pytest.fixture
 def migrated_database_url(empty_database_url: str) -> str:
-    with patch.dict(os.environ, {"API_DATABASE_URL": empty_database_url}):
+    with patch.dict(
+        os.environ,
+        # Throwaway databases use the DSN's password, whatever the shell exports.
+        {"API_DATABASE_URL": empty_database_url, "API_DATABASE_AUTH_MODE": "password"},
+    ):
         command.upgrade(alembic_config(), "head")
     return empty_database_url
