@@ -53,10 +53,13 @@ eval-smoke:
 		--baseline evaluations/baselines/accepted.json --thresholds $(EVAL_THRESHOLDS)
 
 # Full evaluation composes the API's Azure workflow; override either to evaluate
-# a project's own dataset or composition.
+# a project's own dataset or composition. A project-owned evaluations/full-gates.yml
+# takes precedence over the shipped example gates.
 EVALUATION_WORKFLOW_FACTORY ?= accelerator.infrastructure.evaluation:create_full_evaluation_runtime
-EVALUATION_DATASET ?= evaluations/example-datasets/smoke.jsonl
+EVALUATION_DATASET ?= evaluations/example-datasets/full.jsonl
+EVALUATION_GATES ?= $(firstword $(wildcard evaluations/full-gates.yml) evaluations/full-gates.example.yml)
 export EVALUATION_WORKFLOW_FACTORY EVALUATION_DATASET
+export EVALUATION_GATES
 
 eval-full:
 	uv run --all-packages python -m accelerator.evaluation_core.evaluators

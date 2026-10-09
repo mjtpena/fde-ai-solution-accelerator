@@ -557,11 +557,12 @@ jobs:
           tenant-id: ${{ vars.AZURE_TENANT_ID }}
           subscription-id: ${{ vars.AZURE_SUBSCRIPTION_ID }}
 
-      # Defaults to evaluations/example-datasets/smoke.jsonl over the fixture corpus;
+      # Defaults to evaluations/example-datasets/full.jsonl over the fixture corpus,
+      # gated by evaluations/full-gates.example.yml (or a project's full-gates.yml);
       # set EVALUATION_DATASET in the environment for a project dataset.
       - name: Run full evaluation
         env:
-          EVALUATION_DATASET: ${{ vars.EVALUATION_DATASET || 'evaluations/example-datasets/smoke.jsonl' }}
+          EVALUATION_DATASET: ${{ vars.EVALUATION_DATASET || 'evaluations/example-datasets/full.jsonl' }}
         run: |
           uv sync --all-packages --frozen
           make eval-full

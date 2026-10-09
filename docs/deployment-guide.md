@@ -292,7 +292,7 @@ credentials in GitHub.
 | `API_ENTRA_TENANT_ID`, `API_ENTRA_AUDIENCE` | Read by the full evaluation |
 | `EVALUATION_PRINCIPAL_OBJECT_ID` | Principal whose scope memberships bound the evaluated turns |
 | `EVALUATION_JUDGE_AZURE_ENDPOINT`, `EVALUATION_JUDGE_AZURE_DEPLOYMENT` | Judge model |
-| `EVALUATION_DATASET` (optional) | Defaults to `evaluations/example-datasets/smoke.jsonl` |
+| `EVALUATION_DATASET` (optional) | Defaults to `evaluations/example-datasets/full.jsonl` |
 
 **`production`** (add required reviewers before using it)
 
@@ -449,7 +449,8 @@ private, run it from the VNet machine (the workflow uses the VNet runner).
 | `API_CONTENT_SAFETY_ENDPOINT` | Deployment output `contentSafetyEndpoint`. Without it a development-mode run is unscreened (logged as `content_safety_unscreened`) |
 | `EVALUATION_PRINCIPAL_OBJECT_ID` | Principal whose memberships bound every turn |
 | `EVALUATION_JUDGE_AZURE_ENDPOINT`, `EVALUATION_JUDGE_AZURE_DEPLOYMENT` | Judge model; `DefaultAzureCredential`, no API key |
-| `EVALUATION_DATASET` | Optional; defaults to `evaluations/example-datasets/smoke.jsonl` |
+| `EVALUATION_DATASET` | Optional; defaults to `evaluations/example-datasets/full.jsonl` |
+| `EVALUATION_GATES` | Optional; defaults to `evaluations/full-gates.yml`, else `evaluations/full-gates.example.yml` |
 | `EVALUATION_WORKFLOW_FACTORY` | Optional; a trusted `module:function` |
 
 The workflow connects as the administrator

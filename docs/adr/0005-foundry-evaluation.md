@@ -99,9 +99,11 @@ Negative / trade-offs:
 - The smoke gate does **not** measure model judgement, real retrieval ranking, or
   resistance to injections that stay inside their evidence element (stated in
   `runners/README.md`).
-- The full suite currently only **logs** aggregate metrics. It fails on workflow or
-  SDK errors, but it does not yet compare results with a baseline or write a
-  `full.json` report artefact. `accepted.json` holds only the `smoke` suite. The
+- The full suite applies absolute release gates (`evaluations/full-gates.example.yml`:
+  mean and pass rate per judge metric, abstention accuracy, no canary leaks) and
+  fails on workflow or SDK errors, but it does not yet compare results with a
+  baseline or write a `full.json` report artefact. The shipped gate values have not
+  been calibrated against a live run. `accepted.json` holds only the `smoke` suite. The
   reporting package already supports a `full` suite (`load_comparison_config(...,
   name="full")`, `write_report(..., name="full")`). Wiring it in is outstanding, so
   spec §9's "deploy to dev: compared to `baselines/accepted.json`" is not yet true.
@@ -110,9 +112,10 @@ Negative / trade-offs:
 - Spec §2 names `azure-ai-projects` for evaluation, but the implementation uses the
   `azure-ai-evaluation` SDK's local evaluator classes. Results are not published to a
   Foundry project's evaluation view.
-- The example dataset has 11 rows. That is enough to exercise every category, but it
-  is not a statistically meaningful quality sample. Projects must supply their own
-  dataset (`EVALUATION_DATASET`).
+- The smoke dataset has 119 rows (a red-team suite, `runners/README.md`) and the full
+  dataset (`evaluations/example-datasets/full.jsonl`) 54 rows over the fixture
+  corpus. They exercise every category, but they describe fixture documents, not a
+  project's. Projects must supply their own dataset (`EVALUATION_DATASET`).
 
 ## Alternatives considered
 

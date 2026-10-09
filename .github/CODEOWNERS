@@ -15,4 +15,5 @@
 /apps/api/src/accelerator/migrations/ @mjtpena
 /evaluations/baselines/             @mjtpena
 /evaluations/thresholds.example.yml @mjtpena
+/evaluations/full-gates.example.yml @mjtpena
 /threat-model/                      @mjtpena
