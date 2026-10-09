@@ -15,6 +15,16 @@ npm run build --workspace apps/web
 make eval-smoke
 ```
 
+Database-backed tests (migrations, audit persistence, the approval row lock and
+the production boot test) run when `TEST_POSTGRES_DSN` names a PostgreSQL server
+whose role can create databases; each test uses a throwaway, freshly migrated
+database. Without it they are reported as skipped. CI always provides one, with
+TLS enabled, for example:
+
+```sh
+TEST_POSTGRES_DSN=postgresql://postgres:password@127.0.0.1:5432/postgres make check
+```
+
 `make check` runs Python linting, strict type-checking and tests, then the web
 workspace's API-client generation, linting, formatting check, type-checking and
 tests. The build commands produce Python distributions and the standalone

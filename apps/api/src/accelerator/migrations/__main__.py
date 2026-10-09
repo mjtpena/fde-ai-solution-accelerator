@@ -2,9 +2,9 @@
 
 import logging
 import sys
-from importlib.resources import files
-
 from alembic.config import CommandLine, Config
+
+from accelerator.migrations import alembic_config
 
 
 def main(argv: list[str] | None = None) -> None:
@@ -13,8 +13,7 @@ def main(argv: list[str] | None = None) -> None:
     options = command_line.parser.parse_args(argv if argv is not None else sys.argv[1:])
     if not hasattr(options, "cmd"):
         command_line.parser.error("too few arguments")
-    config = Config(cmd_opts=options)
-    config.set_main_option("script_location", str(files("accelerator.migrations")))
+    config = alembic_config(Config(cmd_opts=options))
     command_line.run_cmd(config, options)
 
 

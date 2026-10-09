@@ -39,12 +39,38 @@ jobs:
           cache: npm
           cache-dependency-path: package-lock.json
 
+      # TLS on, because production database auth requires it and the boot test
+      # exercises the production path. The key never leaves this runner.
+      - name: Start PostgreSQL for database-backed tests
+        run: |
+          tls_dir="$RUNNER_TEMP/postgres-tls"
+          mkdir -p "$tls_dir"
+          openssl req -new -x509 -days 1 -nodes -subj "/CN=localhost" \
+            -keyout "$tls_dir/server.key" -out "$tls_dir/server.crt"
+          sudo chown 70:70 "$tls_dir/server.key" "$tls_dir/server.crt"
+          sudo chmod 600 "$tls_dir/server.key"
+          docker run --detach --name postgres --publish 5432:5432 \
+            --env POSTGRES_PASSWORD=ci-only-password \
+            --volume "$tls_dir:/tls:ro" \
+            postgres:16-alpine \
+            -c ssl=on -c ssl_cert_file=/tls/server.crt -c ssl_key_file=/tls/server.key
+          for attempt in $(seq 1 30); do
+            if docker exec postgres psql -U postgres -h 127.0.0.1 -c 'select 1' >/dev/null 2>&1; then
+              exit 0
+            fi
+            sleep 2
+          done
+          docker logs postgres
+          exit 1
+
       - name: Install dependencies
         run: |
           uv sync --all-packages --frozen
           npm ci
 
       - name: Lint, type-check and test
+        env:
+          TEST_POSTGRES_DSN: postgresql://postgres:ci-only-password@127.0.0.1:5432/postgres
         run: make check
 
       - name: Build Python packages
