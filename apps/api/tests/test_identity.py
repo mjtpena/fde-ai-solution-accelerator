@@ -61,7 +61,9 @@ def test_health_probes_do_not_require_a_token() -> None:
     app = create_app(make_settings())
 
     class OfflineValidator:
-        async def ensure_signing_keys(self, client: httpx.AsyncClient) -> None:
+        async def ensure_signing_keys(
+            self, client: httpx.AsyncClient, *, correlation_id: str | None = None
+        ) -> None:
             raise AuthProviderUnavailable
 
     app.state.token_validator = OfflineValidator()
@@ -132,7 +134,9 @@ def test_invalid_token_returns_401() -> None:
     app = protected_app(audit_repository=AsyncMock(spec=AuditRepository))
 
     class RejectingValidator:
-        async def validate(self, token: str, client: httpx.AsyncClient) -> Principal:
+        async def validate(
+            self, token: str, client: httpx.AsyncClient, *, correlation_id: str | None = None
+        ) -> Principal:
             raise ValueError("invalid token")
 
     app.state.token_validator = RejectingValidator()
@@ -147,7 +151,9 @@ def test_identity_provider_unavailable_returns_503() -> None:
     app = protected_app()
 
     class UnavailableValidator:
-        async def validate(self, token: str, client: httpx.AsyncClient) -> Principal:
+        async def validate(
+            self, token: str, client: httpx.AsyncClient, *, correlation_id: str | None = None
+        ) -> Principal:
             raise AuthProviderUnavailable
 
     app.state.token_validator = UnavailableValidator()

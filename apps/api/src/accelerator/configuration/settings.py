@@ -146,6 +146,14 @@ class Settings(BaseSettings):
         return self
 
     @model_validator(mode="after")
+    def require_consistent_jwks_cache(self) -> Self:
+        # Keys past the stale limit are unusable; a cache that outlives them would
+        # refuse every token until the cache timer finally triggers a refresh.
+        if self.jwks_max_stale_seconds < self.jwks_cache_seconds:
+            raise ValueError("API_JWKS_MAX_STALE_SECONDS cannot be less than API_JWKS_CACHE_SECONDS.")
+        return self
+
+    @model_validator(mode="after")
     def require_production_services(self) -> Self:
         if self.allows_fakes:
             return self
@@ -171,7 +179,12 @@ class Settings(BaseSettings):
             raise ValueError("Production requires API_DATABASE_AUTH_MODE=managed_identity.")
         if self.database_url is not None and self.database_url.hosts()[0].get("password"):
             raise ValueError("Production database URLs must not embed a password.")
-        for name in ("foundry_project_endpoint", "search_endpoint", "entra_authority_host"):
+        for name in (
+            "foundry_project_endpoint",
+            "search_endpoint",
+            "entra_authority_host",
+            "entra_jwks_uri",
+        ):
             url: HttpUrl | None = getattr(self, name)
             if url is not None and url.scheme != "https":
                 raise ValueError(f"API_{name.upper()} must use HTTPS in production.")

@@ -87,6 +87,24 @@ def test_production_rejects_plain_http_azure_endpoints() -> None:
         Settings.model_validate(production_values(search_endpoint="http://search.example.test"))
 
 
+def test_production_rejects_a_plain_http_jwks_override() -> None:
+    with pytest.raises(ValidationError, match="API_ENTRA_JWKS_URI must use HTTPS"):
+        Settings.model_validate(
+            production_values(entra_jwks_uri="http://keys.example.test/discovery/keys")
+        )
+
+
+def test_jwks_stale_limit_cannot_be_shorter_than_the_cache() -> None:
+    with pytest.raises(ValidationError, match="API_JWKS_MAX_STALE_SECONDS"):
+        Settings(
+            environment="test",
+            entra_tenant_id=TENANT,
+            entra_audience="api://accelerator",
+            jwks_cache_seconds=600,
+            jwks_max_stale_seconds=120,
+        )
+
+
 def test_unknown_environment_is_rejected() -> None:
     with pytest.raises(ValidationError):
         Settings.model_validate(

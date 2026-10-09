@@ -144,7 +144,9 @@ async def test_auth_failure_is_recorded_without_request_secrets(invalid_token: b
     app = make_app(repository)
 
     class RejectingValidator:
-        async def validate(self, token: str, client: httpx.AsyncClient) -> Principal:
+        async def validate(
+            self, token: str, client: httpx.AsyncClient, *, correlation_id: str | None = None
+        ) -> Principal:
             raise ValueError("secret-validator-detail")
 
     app.state.token_validator = RejectingValidator()

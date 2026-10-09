@@ -26,12 +26,16 @@ def make_test_settings() -> Settings:
 
 
 class KeysAvailable:
-    async def ensure_signing_keys(self, client: httpx.AsyncClient) -> None:
+    async def ensure_signing_keys(
+        self, client: httpx.AsyncClient, *, correlation_id: str | None = None
+    ) -> None:
         del client
 
 
 class KeysUnavailable:
-    async def ensure_signing_keys(self, client: httpx.AsyncClient) -> None:
+    async def ensure_signing_keys(
+        self, client: httpx.AsyncClient, *, correlation_id: str | None = None
+    ) -> None:
         del client
         raise AuthProviderUnavailable
 
@@ -134,7 +138,9 @@ async def test_readyz_reports_unconfigured_chat_workflow() -> None:
 
 async def test_readyz_times_out_a_hanging_dependency() -> None:
     class HangingValidator:
-        async def ensure_signing_keys(self, client: httpx.AsyncClient) -> None:
+        async def ensure_signing_keys(
+            self, client: httpx.AsyncClient, *, correlation_id: str | None = None
+        ) -> None:
             await asyncio.sleep(60)
 
     with patch.object(health, "READINESS_CHECK_TIMEOUT_SECONDS", 0.05):

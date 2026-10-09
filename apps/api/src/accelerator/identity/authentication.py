@@ -46,6 +46,7 @@ async def get_current_principal(
         return await validator.validate(
             credentials.credentials,
             request.app.state.http_client,
+            correlation_id=getattr(request.state, "correlation_id", None),
         )
     except AuthProviderUnavailable as exc:
         raise HTTPException(

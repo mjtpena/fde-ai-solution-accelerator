@@ -60,7 +60,10 @@ async def _check_database(request: Request) -> ReadinessCheck:
 async def _check_identity_provider(request: Request) -> ReadinessCheck:
     validator = request.app.state.token_validator
     try:
-        await validator.ensure_signing_keys(request.app.state.http_client)
+        await validator.ensure_signing_keys(
+            request.app.state.http_client,
+            correlation_id=getattr(request.state, "correlation_id", None),
+        )
     except AuthProviderUnavailable:
         return ReadinessCheck(status="failed", reason="Signing keys are unavailable.")
     return ReadinessCheck(status="ok")

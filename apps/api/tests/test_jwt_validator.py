@@ -253,3 +253,38 @@ async def test_sovereign_cloud_authority_sets_issuer_and_jwks_url() -> None:
     assert server.requests == [f"{authority}/{TENANT}/discovery/v2.0/keys"]
     with pytest.raises(ValueError):
         await validate(token(), server, validator=validator)  # public-cloud issuer
+
+
+async def test_unknown_kid_during_an_outage_is_unavailable_not_unauthorized() -> None:
+    clock = Clock()
+    rotated = new_key()
+    server = JwksServer({"keys": [jwk(KEY, "k1")]}, 503)
+    validator = EntraTokenValidator(settings(), clock=clock)
+    await validate(token(), server, validator=validator)
+
+    with pytest.raises(AuthProviderUnavailable):
+        await validate(token(rotated, kid="k2"), server, validator=validator)
+    assert await validate(token(), server, validator=validator)  # stale k1 still serves
+
+
+async def test_keys_restricted_from_verification_are_skipped() -> None:
+    encrypt_only = jwk(KEY, "k1") | {"key_ops": ["encrypt"]}
+    with pytest.raises(AuthProviderUnavailable):
+        await validate(token(), JwksServer({"keys": [encrypt_only]}))
+
+    verify = jwk(KEY, "k1") | {"key_ops": ["verify"]}
+    assert await validate(token(), JwksServer({"keys": [verify]}))
+
+
+async def test_jwks_warnings_carry_the_request_correlation_id(
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    validator = EntraTokenValidator(settings())
+    document = {"keys": [{"kty": "RSA", "kid": "broken", "n": "@@", "e": "AQAB"}]}
+    async with httpx.AsyncClient(transport=httpx.MockTransport(JwksServer(document))) as client:
+        with pytest.raises(AuthProviderUnavailable):
+            await validator.validate(token(), client, correlation_id="corr-1")
+
+    records = {record.message: record for record in caplog.records}
+    assert getattr(records["jwks_key_skipped"], "correlation_id") == "corr-1"
+    assert getattr(records["jwks_refresh_failed"], "correlation_id") == "corr-1"
