@@ -1,10 +1,10 @@
-FROM node:22-alpine AS dependencies
+FROM node:25-alpine AS dependencies
 WORKDIR /workspace
 COPY package.json package-lock.json ./
 COPY apps/web/package.json apps/web/package.json
 RUN npm ci --workspace=apps/web
 
-FROM node:22-alpine AS builder
+FROM node:25-alpine AS builder
 WORKDIR /workspace
 ARG NEXT_PUBLIC_ENTRA_TENANT_ID
 ARG NEXT_PUBLIC_ENTRA_CLIENT_ID
@@ -18,7 +18,7 @@ COPY apps/web ./apps/web
 COPY contracts/api/openapi.json ./contracts/api/openapi.json
 RUN npm run build --workspace=apps/web
 
-FROM node:22-alpine AS runner
+FROM node:25-alpine AS runner
 WORKDIR /workspace
 ENV NODE_ENV=production
 RUN rm -rf /usr/local/lib/node_modules/npm \
