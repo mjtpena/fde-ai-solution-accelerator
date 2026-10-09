@@ -73,7 +73,7 @@ jobs:
             core.setOutput('has_artifact', artifacts.some(a =>
               a.name === 'evaluation-report' && !a.expired
             ));
-      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
+      - uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
         if: steps.report.outputs.has_artifact == 'true'
         with:
           name: evaluation-report
