@@ -13,8 +13,6 @@ from fastapi import FastAPI
 
 from accelerator.api.app import create_app
 from accelerator.api.approvals import get_approval_service
-
-__all__ = ["build_application", "default_chat_turn", "get_approval_service"]
 from accelerator.api.chat import ChatTurnPort
 from accelerator.configuration.settings import Settings
 from accelerator.identity.scope_resolver import get_execution_context
@@ -28,6 +26,8 @@ from accelerator.security_core.infrastructure.database import (
 from accelerator.security_core.infrastructure.memberships import (
     SqlAlchemyScopeMembershipRepository,
 )
+
+__all__ = ["build_application", "default_chat_turn", "get_approval_service"]
 
 logger = logging.getLogger(__name__)
 

@@ -234,7 +234,7 @@ def test_blank_metadata_is_rejected(field: str) -> None:
         pass
 
     setattr(InvalidTool, field, " ")
-    with pytest.raises(ValueError, match="non-empty"):
+    with pytest.raises(ValueError, match="non-empty|Tool names must match"):
         ToolRegistry().register(InvalidTool())
 
 
@@ -337,3 +337,13 @@ def test_non_numeric_timeouts_cannot_register(timeout: object) -> None:
     setattr(InvalidTimeout, "timeout_seconds", timeout)
     with pytest.raises(ValueError, match="finite and positive"):
         ToolRegistry().register(InvalidTimeout())
+
+
+@pytest.mark.parametrize("name", ["has space", "x" * 129, "semi;colon", ""])
+def test_tool_names_outside_the_audit_contract_are_rejected(name: str) -> None:
+    class Named(SearchTool):
+        pass
+
+    Named.name = name
+    with pytest.raises(ValueError, match="Tool names must match"):
+        ToolRegistry().register(Named())
