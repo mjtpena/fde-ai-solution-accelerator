@@ -286,5 +286,5 @@ async def test_jwks_warnings_carry_the_request_correlation_id(
             await validator.validate(token(), client, correlation_id="corr-1")
 
     records = {record.message: record for record in caplog.records}
-    assert getattr(records["jwks_key_skipped"], "correlation_id") == "corr-1"
-    assert getattr(records["jwks_refresh_failed"], "correlation_id") == "corr-1"
+    assert records["jwks_key_skipped"].correlation_id == "corr-1"
+    assert records["jwks_refresh_failed"].correlation_id == "corr-1"

@@ -2,6 +2,7 @@
 
 import logging
 import sys
+
 from alembic.config import CommandLine, Config
 
 from accelerator.migrations import alembic_config

@@ -1,8 +1,8 @@
 import asyncio
 import json
 from typing import Any
-from uuid import UUID
 from unittest.mock import AsyncMock
+from uuid import UUID
 
 import httpx
 import jwt
@@ -166,9 +166,11 @@ def test_identity_provider_unavailable_returns_503() -> None:
 def test_insufficient_role_returns_403() -> None:
     app = FastAPI()
 
+    require_admin = require_any_role(AppRole.ADMIN)
+
     @app.get("/admin-check")
     async def admin_check(
-        _principal: Principal = Depends(require_any_role(AppRole.ADMIN)),
+        _principal: Principal = Depends(require_admin),
     ) -> dict[str, str]:
         return {"status": "ok"}
 

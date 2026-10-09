@@ -1,8 +1,9 @@
 """Azure SDK and authenticated HTTP calls behind the hosted-agent gateway."""
 
-from contextlib import asynccontextmanager
 from collections.abc import AsyncIterator
+from contextlib import asynccontextmanager
 
+import httpx
 from azure.ai.projects.aio import AIProjectClient
 from azure.ai.projects.models import (
     AgentEndpointProtocol,
@@ -12,10 +13,8 @@ from azure.ai.projects.models import (
 )
 from azure.core.credentials_async import AsyncTokenCredential
 from azure.identity.aio import AzureCliCredential, ManagedIdentityCredential
-import httpx
 
 from accelerator.agent_core.hosting.contracts import InvocationResult
-
 from infrastructure.hosted_agent.configuration import DeploymentSettings
 from infrastructure.hosted_agent.service import HostedVersion
 

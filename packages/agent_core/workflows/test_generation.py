@@ -99,7 +99,9 @@ async def test_model_calls_reserve_and_settle_the_request_token_budget() -> None
         async def run(
             self, messages: str, *, options: Any, tools: Any = None, stream: bool = False
         ) -> UsageResult:
-            return UsageResult("Ok. [cite:c-1]", {"input_token_count": 40, "output_token_count": 10})
+            return UsageResult(
+                "Ok. [cite:c-1]", {"input_token_count": 40, "output_token_count": 10}
+            )
 
     budget = TokenBudget(1_000)
     token = current_token_budget.set(budget)

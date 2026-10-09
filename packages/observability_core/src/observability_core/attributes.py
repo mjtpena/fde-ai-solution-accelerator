@@ -3,7 +3,6 @@ from typing import Annotated, Literal
 from opentelemetry.util.types import AttributeValue
 from pydantic import BaseModel, ConfigDict, Field
 
-
 Identifier = Annotated[str, Field(pattern=r"^[A-Za-z0-9][A-Za-z0-9_.-]{0,127}$")]
 Count = Annotated[int, Field(ge=0)]
 

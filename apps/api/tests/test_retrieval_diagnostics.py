@@ -1,14 +1,14 @@
 import asyncio
-from datetime import UTC, datetime
 import unittest
-from unittest.mock import AsyncMock
+from datetime import UTC, datetime
 from typing import Any, Protocol, runtime_checkable
+from unittest.mock import AsyncMock
 from uuid import UUID
 
-from fastapi import HTTPException
-from fastapi.testclient import TestClient
 import httpx
 import httpx2
+from fastapi import HTTPException
+from fastapi.testclient import TestClient
 
 from accelerator.api.app import create_app
 from accelerator.api.retrieval_diagnostics import (

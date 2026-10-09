@@ -87,7 +87,9 @@ _SIGNALS = {
     "role_change": re.compile(r"\byou are now\b|\bact as\b|\bnew instructions?\b", re.IGNORECASE),
     "system_prompt": re.compile(r"\bsystem prompt\b|\bdeveloper message\b", re.IGNORECASE),
     "tool_request": re.compile(r"\b(call|invoke|run|execute)\b.{0,20}\btools?\b", re.IGNORECASE),
-    "exfiltration": re.compile(r"\b(send|post|upload|exfiltrate)\b.{0,40}\bhttps?://", re.IGNORECASE),
+    "exfiltration": re.compile(
+        r"\b(send|post|upload|exfiltrate)\b.{0,40}\bhttps?://", re.IGNORECASE
+    ),
 }
 
 

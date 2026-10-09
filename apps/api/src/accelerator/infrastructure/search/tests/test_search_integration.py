@@ -1,10 +1,10 @@
 """Credential-free integration through the real async Azure Search SDK HTTP pipeline."""
 
 import asyncio
-import json
 import importlib
-from datetime import UTC, datetime, timedelta
+import json
 from collections.abc import AsyncIterator
+from datetime import UTC, datetime, timedelta
 from typing import Any
 from unittest.mock import AsyncMock, patch
 
@@ -109,12 +109,16 @@ async def test_hybrid_wire_query_is_scoped_before_vector_and_semantic_ranking() 
         requests.append(payload)
         # The test service enforces the exact expected predicate, not a substring approximation.
         assert payload["filter"] == "(search.in(scope_id, 'tenant-a', '|'))"
-        return Response(request, {"value": [row for row in corpus if row["scope_id"] == "tenant-a"]})
+        return Response(
+            request, {"value": [row for row in corpus if row["scope_id"] == "tenant-a"]}
+        )
 
     transport.send.side_effect = send
     async with client(transport) as sdk:
         adapter = AzureSearchRetriever(sdk, Embedder(), settings())
-        result = await adapter.retrieve(RetrievalRequest(query="policy", top_k=2), context("tenant-a"))
+        result = await adapter.retrieve(
+            RetrievalRequest(query="policy", top_k=2), context("tenant-a")
+        )
     assert [item.chunk_id for item in result] == ["chunk-a"]
     assert all(isinstance(item, Evidence) for item in result)
     assert result[0].score == 0.04

@@ -69,7 +69,9 @@ class AzureSearchRetriever:
         if len(vector) != self._settings.vector_dimensions or not all(
             math.isfinite(value) for value in vector
         ):
-            raise ValueError("Query embedding must match index dimensions and contain finite values")
+            raise ValueError(
+                "Query embedding must match index dimensions and contain finite values"
+            )
         results = await self._client.search(
             search_text=query.text,
             filter=query.filter,

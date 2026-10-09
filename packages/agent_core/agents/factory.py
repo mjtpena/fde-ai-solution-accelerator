@@ -61,11 +61,12 @@ class AgentFactory(Generic[AgentT]):
         if relative_path.is_absolute() or relative_path.suffix.lower() != ".md":
             raise ValueError("instructions_file must be a relative Markdown file path")
 
-        path = (self._instructions_directory / relative_path).resolve()
-        try:
-            path.relative_to(self._instructions_directory)
-        except ValueError as exc:
-            raise ValueError("instructions_file must stay inside the instructions directory") from exc
+        # Lexical containment: package installs (e.g. strict editable mode) may serve
+        # instruction files through symlinks into the source tree, so the check must
+        # not depend on where a file's symlink points, only on the configured name.
+        if ".." in relative_path.parts:
+            raise ValueError("instructions_file must stay inside the instructions directory")
+        path = self._instructions_directory / relative_path
         if not path.is_file():
             raise FileNotFoundError(f"Instructions file not found: {filename}")
         return path

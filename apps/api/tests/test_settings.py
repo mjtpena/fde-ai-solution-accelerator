@@ -143,7 +143,8 @@ def test_rejected_database_password_never_appears_in_the_error() -> None:
 
 
 @pytest.mark.parametrize(
-    "variable", ["APPLICATIONINSIGHTS_CONNECTION_STRING", "API_APPLICATIONINSIGHTS_CONNECTION_STRING"]
+    "variable",
+    ["APPLICATIONINSIGHTS_CONNECTION_STRING", "API_APPLICATIONINSIGHTS_CONNECTION_STRING"],
 )
 def test_blank_application_insights_string_counts_as_missing_in_production(variable: str) -> None:
     environment = {

@@ -5,9 +5,7 @@ from uuid import UUID, uuid4
 import pytest
 from pydantic import AliasChoices, AliasPath, BaseModel, ConfigDict, Field, ValidationError
 
-from .. import (
-    EnterpriseTool, ExecutionContextProtocol, IdempotentWriteTool, ToolRegistry, ToolRisk
-)
+from .. import EnterpriseTool, ExecutionContextProtocol, IdempotentWriteTool, ToolRegistry, ToolRisk
 
 
 class Args(BaseModel):
@@ -242,7 +240,7 @@ def test_string_risk_is_not_a_risk_declaration() -> None:
     class InvalidTool(SearchTool):
         pass
 
-    setattr(InvalidTool, "risk", "read_only")
+    InvalidTool.risk = "read_only"
     with pytest.raises(ValueError, match="ToolRisk"):
         ToolRegistry().register(InvalidTool())
 
@@ -251,7 +249,7 @@ def test_args_model_must_be_a_pydantic_model() -> None:
     class InvalidTool(SearchTool):
         pass
 
-    setattr(InvalidTool, "args_model", str)
+    InvalidTool.args_model = str
     with pytest.raises(ValueError, match="Pydantic"):
         ToolRegistry().register(InvalidTool())
 
@@ -334,7 +332,7 @@ def test_non_numeric_timeouts_cannot_register(timeout: object) -> None:
     class InvalidTimeout(SearchTool):
         pass
 
-    setattr(InvalidTimeout, "timeout_seconds", timeout)
+    InvalidTimeout.timeout_seconds = timeout
     with pytest.raises(ValueError, match="finite and positive"):
         ToolRegistry().register(InvalidTimeout())
 

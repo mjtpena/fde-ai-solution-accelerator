@@ -39,7 +39,11 @@ class FakeQueue:
         self.deleted.append(message.id)
 
     async def update_message(
-        self, message: Message, pop_receipt: str | None = None, *, visibility_timeout: int | None = None
+        self,
+        message: Message,
+        pop_receipt: str | None = None,
+        *,
+        visibility_timeout: int | None = None,
     ) -> None:
         assert visibility_timeout is not None
         self.delayed.append((message.id, visibility_timeout))
@@ -97,7 +101,9 @@ async def test_handled_message_is_deleted() -> None:
 
 async def test_transient_failures_back_off_exponentially_then_poison_with_failed_state() -> None:
     poison, recorder = FakeQueue(), Recorder(ConnectionError("search unavailable"))
-    queue = FakeQueue([Message(INGEST, 1), Message(INGEST, 2, id="m-2"), Message(INGEST, 3, id="m-3")])
+    queue = FakeQueue(
+        [Message(INGEST, 1), Message(INGEST, 2, id="m-2"), Message(INGEST, 3, id="m-3")]
+    )
 
     await consumer(recorder, queue, poison).drain_once()
 

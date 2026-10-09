@@ -9,8 +9,8 @@ between them (scope injection, sufficiency, citation validation, SSE) is real.
 """
 
 import importlib
-import os
 import json
+import os
 import sys
 import time
 from collections.abc import AsyncIterator, Iterator
@@ -23,10 +23,10 @@ import httpx
 import jwt
 import pytest
 from azure.core.credentials import AccessToken
-from opentelemetry.sdk.trace.export.in_memory_span_exporter import InMemorySpanExporter
-from opentelemetry.sdk.trace.sampling import ALWAYS_ON
 from cryptography.hazmat.primitives.asymmetric import rsa
 from fastapi import FastAPI
+from opentelemetry.sdk.trace.export.in_memory_span_exporter import InMemorySpanExporter
+from opentelemetry.sdk.trace.sampling import ALWAYS_ON
 from sqlalchemy import text
 from sqlalchemy.engine import URL, make_url
 from sqlalchemy.ext.asyncio import create_async_engine
@@ -62,7 +62,9 @@ def fake_managed_identity(token: str) -> type:
 def tls_ca_file() -> str:
     path = os.environ.get("TEST_POSTGRES_CA_FILE")
     if not path:
-        pytest.skip("Set TEST_POSTGRES_CA_FILE to the test server's certificate to boot production.")
+        pytest.skip(
+            "Set TEST_POSTGRES_CA_FILE to the test server's certificate to boot production."
+        )
     return path
 
 
@@ -87,7 +89,9 @@ def production_environment(database_url: str) -> dict[str, str]:
         "API_SEARCH_VECTOR_DIMENSIONS": "3",
         "API_SEARCH_ENDPOINT": "https://search.example.test",
         "API_SEARCH_INDEX_NAME": "chunks",
-        "APPLICATIONINSIGHTS_CONNECTION_STRING": "InstrumentationKey=00000000-0000-0000-0000-000000000000",
+        "APPLICATIONINSIGHTS_CONNECTION_STRING": (
+            "InstrumentationKey=00000000-0000-0000-0000-000000000000"
+        ),
     }
 
 

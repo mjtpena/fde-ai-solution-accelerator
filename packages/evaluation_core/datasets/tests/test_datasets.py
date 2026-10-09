@@ -5,7 +5,6 @@ import pytest
 
 from .. import DatasetRow, DatasetValidationError, load_dataset
 
-
 ROOT = Path(__file__).resolve().parents[4]
 CATEGORIES = ("factual", "synthesis", "conflict", "unsupported", "tool_selection", "injection")
 

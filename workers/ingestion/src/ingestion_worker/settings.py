@@ -69,13 +69,19 @@ class WorkerSettings(BaseSettings):
         if self.environment != "production":
             return self
         if self.storage_connection_string is not None:
-            raise ValueError("Production storage access uses managed identity, not a connection string.")
+            raise ValueError(
+                "Production storage access uses managed identity, not a connection string."
+            )
         if self.database_auth_mode != "managed_identity":
             raise ValueError("Production requires INGESTION_DATABASE_AUTH_MODE=managed_identity.")
         if not self.indexing_configured:
-            raise ValueError("Production requires storage, database, search and embedding settings.")
+            raise ValueError(
+                "Production requires storage, database, search and embedding settings."
+            )
         if self.database_url is not None and self.database_url.hosts()[0].get("password"):
-            raise ValueError("Production database access uses managed identity; remove the DSN password.")
+            raise ValueError(
+                "Production database access uses managed identity; remove the DSN password."
+            )
         endpoints = (
             self.blob_account_url,
             self.queue_account_url,

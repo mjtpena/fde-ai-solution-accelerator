@@ -129,7 +129,8 @@ async def test_approver_lists_and_approves_with_audit(migrated_database_url: str
     assert transitions == [("pending", "requester"), ("approved", "approver")]
     central = await rows(
         migrated_database_url,
-        f"SELECT event_type, outcome, actor_id FROM audit_event WHERE approval_id = '{approval_id}'",
+        "SELECT event_type, outcome, actor_id FROM audit_event "
+        f"WHERE approval_id = '{approval_id}'",
     )
     assert central == [("approval", "approved", "approver")]
 

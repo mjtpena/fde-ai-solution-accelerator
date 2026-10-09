@@ -5,8 +5,8 @@ import json
 import logging
 from pathlib import Path
 
-from pydantic import ValidationError
 import yaml
+from pydantic import ValidationError
 
 from ..runners import run_smoke
 from ..runners.smoke import DEFAULT_CORPUS, DEFAULT_DATASET
@@ -18,7 +18,9 @@ logger = logging.getLogger(__name__)
 
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("--baseline", type=Path, default=Path("evaluations/baselines/accepted.json"))
+    parser.add_argument(
+        "--baseline", type=Path, default=Path("evaluations/baselines/accepted.json")
+    )
     parser.add_argument("--thresholds", type=Path, default=Path("evaluations/thresholds.yml"))
     parser.add_argument("--output-dir", type=Path, default=Path("evaluations/reports"))
     parser.add_argument("--dataset", type=Path, default=DEFAULT_DATASET)

@@ -1,6 +1,6 @@
 from functools import lru_cache
-from urllib.parse import urlsplit
 from typing import Literal, Self
+from urllib.parse import urlsplit
 from uuid import UUID
 
 from pydantic import (
@@ -52,7 +52,9 @@ class Settings(BaseSettings):
     entra_jwks_uri: HttpUrl | None = None
     jwt_leeway_seconds: int = Field(default=60, ge=0, le=300)
     jwks_cache_seconds: float = Field(default=300.0, ge=30, le=86_400, allow_inf_nan=False)
-    jwks_max_stale_seconds: float = Field(default=86_400.0, ge=60, le=7 * 86_400, allow_inf_nan=False)
+    jwks_max_stale_seconds: float = Field(
+        default=86_400.0, ge=60, le=7 * 86_400, allow_inf_nan=False
+    )
     web_origin: str = Field(default="http://localhost:3000", min_length=1)
 
     # PostgreSQL. In production the DSN carries no password: the API authenticates
@@ -157,7 +159,11 @@ class Settings(BaseSettings):
         except ValueError as exc:
             raise ValueError("API_WEB_ORIGIN must be scheme://host[:port].") from exc
         serialized = f"{origin.scheme}://{origin.hostname}" + (f":{port}" if port else "")
-        if origin.scheme not in {"http", "https"} or not origin.hostname or self.web_origin != serialized:
+        if (
+            origin.scheme not in {"http", "https"}
+            or not origin.hostname
+            or self.web_origin != serialized
+        ):
             raise ValueError("API_WEB_ORIGIN must be scheme://host[:port], with nothing else.")
         return self
 
@@ -166,7 +172,9 @@ class Settings(BaseSettings):
         # Keys past the stale limit are unusable; a cache that outlives them would
         # refuse every token until the cache timer finally triggers a refresh.
         if self.jwks_max_stale_seconds < self.jwks_cache_seconds:
-            raise ValueError("API_JWKS_MAX_STALE_SECONDS cannot be less than API_JWKS_CACHE_SECONDS.")
+            raise ValueError(
+                "API_JWKS_MAX_STALE_SECONDS cannot be less than API_JWKS_CACHE_SECONDS."
+            )
         return self
 
     @model_validator(mode="after")

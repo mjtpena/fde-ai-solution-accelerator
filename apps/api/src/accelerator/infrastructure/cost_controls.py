@@ -8,8 +8,8 @@ per-turn tool-call limits in the database, using single-statement atomic upserts
 import hashlib
 import math
 from collections.abc import Callable
-from typing import Any
 from datetime import UTC, datetime, timedelta
+from typing import Any
 
 from sqlalchemy import (
     Column,
@@ -140,7 +140,7 @@ class PostgresToolCallCounter:
         # Raising inside the transaction rolls both increments back, so a refused
         # call consumes nothing.
         async with self._sessions() as session, session.begin():
-            session_total = (
+            session_total: int = (
                 await session.execute(self._increment(session_id, SESSION_TOTAL, now))
             ).scalar_one()
             if session_total == 1:
@@ -160,7 +160,7 @@ class PostgresToolCallCounter:
                     raise ToolCallLimitExceeded("tracked-session capacity exceeded")
             if session_total > limits.max_calls_per_session:
                 raise ToolCallLimitExceeded("per-session tool call limit exceeded")
-            turn_total = (
+            turn_total: int = (
                 await session.execute(self._increment(session_id, turn_id, now))
             ).scalar_one()
             if turn_total > limits.max_calls_per_turn:

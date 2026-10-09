@@ -27,32 +27,22 @@ import re
 from collections.abc import AsyncIterator, Mapping, Sequence
 from contextlib import asynccontextmanager
 from dataclasses import dataclass, field
-from typing import TYPE_CHECKING, Any, ClassVar, Literal
+from typing import Any, ClassVar, Literal
 from uuid import UUID
 
 from pydantic import BaseModel, ConfigDict, Field
 
+from accelerator.agent_core.approvals.models import Approval, ApprovalAuditEvent
+from accelerator.agent_core.tools import (
+    EnterpriseTool,
+    ExecutionContextProtocol,
+    IdempotentWriteTool,
+    ToolRisk,
+)
 from accelerator.retrieval_core.models import Evidence, RetrievalRequest
 from accelerator.security_core.data_boundaries.context import ExecutionContext
 
 from .corpus import CorpusChunk
-
-if TYPE_CHECKING:
-    from packages.agent_core.approvals.models import Approval, ApprovalAuditEvent
-    from packages.agent_core.tools import (
-        EnterpriseTool,
-        ExecutionContextProtocol,
-        IdempotentWriteTool,
-        ToolRisk,
-    )
-else:
-    from accelerator.agent_core.approvals.models import Approval, ApprovalAuditEvent
-    from accelerator.agent_core.tools import (
-        EnterpriseTool,
-        ExecutionContextProtocol,
-        IdempotentWriteTool,
-        ToolRisk,
-    )
 
 _STOPWORDS = frozenset(
     "a about an and any are as at be by can do does for from give how i in is it its "

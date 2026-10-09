@@ -14,7 +14,7 @@ if TYPE_CHECKING:
     from accelerator.identity.jwt_validator import EntraTokenValidator
 
 
-class AppRole(str, Enum):
+class AppRole(str, Enum):  # noqa: UP042 - str() of a member is part of the role contract
     READER = "Reader"
     CONTRIBUTOR = "Contributor"
     APPROVER = "Approver"

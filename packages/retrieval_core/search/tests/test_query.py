@@ -37,7 +37,8 @@ def test_context_scopes_are_escaped_and_metadata_only_narrows() -> None:
 def test_caller_cannot_supply_authorization_or_raw_filter(name: str) -> None:
     with pytest.raises(ValueError, match="Unsupported retrieval filter"):
         build_query(
-            RetrievalRequest(query="policy", top_k=5, filters={name: "tenant-b"}), context("tenant-a")
+            RetrievalRequest(query="policy", top_k=5, filters={name: "tenant-b"}),
+            context("tenant-a"),
         )
 
 

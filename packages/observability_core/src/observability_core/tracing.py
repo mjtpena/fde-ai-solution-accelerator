@@ -1,7 +1,7 @@
+import re
 from collections.abc import Iterator
 from contextlib import contextmanager
 from contextvars import ContextVar
-import re
 from time import perf_counter
 from typing import Literal, Protocol, get_args
 from uuid import UUID
@@ -16,7 +16,6 @@ from opentelemetry.util.types import AttributeValue
 
 from .attributes import SpanAttributes
 from .export import AttributeSanitizer, SanitizingSpanExporter
-
 
 Operation = Literal[
     "authz.resolve_scope",
@@ -110,7 +109,11 @@ class Telemetry:
         values = attributes.to_otel() if attributes is not None else {}
         if operation == "gen_ai.chat":
             values["gen_ai.operation.name"] = "chat"
-        kind = SpanKind.CLIENT if operation in {"retrieval.search", "gen_ai.chat"} else SpanKind.INTERNAL
+        kind = (
+            SpanKind.CLIENT
+            if operation in {"retrieval.search", "gen_ai.chat"}
+            else SpanKind.INTERNAL
+        )
         with self._span(span_name, values, kind) as span:
             yield span
 

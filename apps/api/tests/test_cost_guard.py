@@ -1,10 +1,10 @@
 import asyncio
+import json
+import unittest
 from concurrent.futures import ThreadPoolExecutor
 from copy import copy
 from dataclasses import dataclass
-import json
 from typing import Annotated, Any
-import unittest
 
 from fastapi import Depends
 from pydantic import ValidationError
@@ -73,7 +73,9 @@ def get_asgi_response(app: ASGIApp, path: str) -> AsgiResponse:
             send,
         )
 
-        response_start = next(message for message in messages if message["type"] == "http.response.start")
+        response_start = next(
+            message for message in messages if message["type"] == "http.response.start"
+        )
         response_body = b"".join(
             message.get("body", b"")  # type: ignore[arg-type]
             for message in messages
@@ -280,7 +282,9 @@ class CostGuardApiTests(unittest.TestCase):
 
     def test_rate_limit_uses_execution_context_and_returns_retry_after(self) -> None:
         first = get_asgi_response(self.app, "/protected?user_id=attacker&scope_id=other")
-        second = get_asgi_response(self.app, "/protected?user_id=another-user&scope_id=another-scope")
+        second = get_asgi_response(
+            self.app, "/protected?user_id=another-user&scope_id=another-scope"
+        )
 
         self.assertEqual(first.status_code, 200)
         self.assertEqual(first.body["user_id"], "user-1")

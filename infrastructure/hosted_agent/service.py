@@ -6,7 +6,6 @@ from typing import Protocol
 from pydantic import BaseModel, ConfigDict, Field
 
 from accelerator.agent_core.hosting.contracts import InvocationResult
-
 from infrastructure.hosted_agent.configuration import DeploymentSettings
 
 

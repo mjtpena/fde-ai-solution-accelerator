@@ -21,7 +21,7 @@ from accelerator.ingestion.infrastructure.search_index import (
     AzureSearchChunkIndex,
     IndexWriteError,
 )
-from accelerator.ingestion.pipeline import IngestionMessage, build_job
+from accelerator.ingestion.pipeline import ContentType, IngestionMessage, build_job
 from accelerator.retrieval_core.chunking.contracts import ChunkingConfig
 
 
@@ -160,13 +160,16 @@ class FakeEmbeddings:
         return [type("E", (), {"vector": [0.1] * self.dimensions})() for _ in values]
 
 
+SMALL_CHUNKS = ChunkingConfig(size=50, overlap=5)
+
+
 def job(
     document_id: str = "doc-1",
     text: bytes = b"First part. " * 20,
     *,
     version: str = "1",
-    content_type: str = "text/plain",
-    chunking: ChunkingConfig = ChunkingConfig(size=50, overlap=5),
+    content_type: ContentType = "text/plain",
+    chunking: ChunkingConfig = SMALL_CHUNKS,
 ) -> Any:
     return build_job(
         IngestionMessage(

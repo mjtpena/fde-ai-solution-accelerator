@@ -9,9 +9,9 @@ from sqlalchemy import (
     insert,
     select,
 )
+
 from accelerator.domain.audit import AuditEvent, AuditPage, EventType
 from accelerator.security_core.infrastructure.database import Base, SessionFactory
-
 
 audit_event = Table(
     "audit_event",

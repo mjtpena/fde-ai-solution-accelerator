@@ -4,7 +4,7 @@ import asyncio
 import math
 from collections.abc import Awaitable
 from dataclasses import dataclass
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from typing import TYPE_CHECKING, Generic, Protocol, TypeVar
 
 from pydantic import BaseModel
@@ -17,7 +17,6 @@ if TYPE_CHECKING:
     from ..tools import EnterpriseTool, ExecutionContextProtocol
 
 from ..tools import IdempotentWriteTool
-
 
 ArgsT = TypeVar("ArgsT", bound=BaseModel)
 ResultT = TypeVar("ResultT", bound=BaseModel)
@@ -110,7 +109,9 @@ class ToolPolicyMiddleware(Generic[ArgsT, ResultT]):
         self._policy = policy or ToolPolicy()
         self._limits = limits or ToolCallLimits()
         self._privileged_approver_roles = privileged_approver_roles
-        self._counter: ToolCallCounter = counter if counter is not None else InMemoryToolCallCounter()
+        self._counter: ToolCallCounter = (
+            counter if counter is not None else InMemoryToolCallCounter()
+        )
 
     async def release_session(self, session_id: str) -> None:
         """Release counters only when the trusted session lifecycle ends permanently.
@@ -250,7 +251,7 @@ class ToolPolicyMiddleware(Generic[ArgsT, ResultT]):
             raise ToolPolicyViolation("invalid_tool_timeout")
         if deadline_utc.tzinfo is None or deadline_utc.utcoffset() is None:
             raise ToolPolicyViolation("execution_deadline_timezone_missing")
-        remaining_seconds = (deadline_utc - datetime.now(timezone.utc)).total_seconds()
+        remaining_seconds = (deadline_utc - datetime.now(UTC)).total_seconds()
         if remaining_seconds <= 0:
             raise ToolExecutionTimeout("execution deadline has elapsed")
         return min(tool_timeout, remaining_seconds)

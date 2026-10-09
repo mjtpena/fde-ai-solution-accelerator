@@ -21,7 +21,9 @@ class Hit:
 
 
 def test_checker_uses_retrieval_score_by_default() -> None:
-    checker = EvidenceSufficiencyChecker(SufficiencyPolicy(minimum_score=0.5, minimum_evidence_count=1))
+    checker = EvidenceSufficiencyChecker(
+        SufficiencyPolicy(minimum_score=0.5, minimum_evidence_count=1)
+    )
 
     decision = asyncio.run(checker.evaluate([Hit("a", 0.6, None), Hit("b", 0.1, 3.9)]))
 

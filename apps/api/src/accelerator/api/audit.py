@@ -11,11 +11,10 @@ from starlette.types import ASGIApp, Message, Receive, Scope, Send
 from accelerator.application.audit import AuditRecorder
 from accelerator.domain.audit import AuditPage, AuditRepository, EventType
 from accelerator.identity.scope_resolver import get_execution_context
+from accelerator.infrastructure.audit import PostgresAuditRepository
 from accelerator.security_core.cost_guard import RateLimitExceeded, SlidingWindowRateLimiter
 from accelerator.security_core.data_boundaries.context import ExecutionContext
 from accelerator.security_core.infrastructure.database import SessionFactory
-from accelerator.infrastructure.audit import PostgresAuditRepository
-
 
 logger = logging.getLogger(__name__)
 router = APIRouter(prefix="/audit-events", tags=["audit"])

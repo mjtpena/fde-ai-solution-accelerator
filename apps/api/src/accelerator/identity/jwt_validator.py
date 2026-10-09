@@ -2,6 +2,7 @@ import asyncio
 import logging
 import time
 from collections.abc import Callable
+
 import httpx
 import jwt
 from pydantic import BaseModel, ConfigDict, Field, ValidationError

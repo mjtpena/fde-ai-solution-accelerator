@@ -1,4 +1,4 @@
-from datetime import datetime, timedelta, timezone
+from datetime import UTC, datetime, timedelta
 from typing import Literal
 from uuid import UUID, uuid4
 
@@ -9,8 +9,6 @@ from pydantic import ValidationError
 from sqlalchemy.exc import SQLAlchemyError
 
 from accelerator.api.app import create_app
-from accelerator.identity.scope_resolver import get_execution_context
-from accelerator.identity.authentication import AppRole, Principal, get_current_principal
 from accelerator.application.audit import AuditRecorder
 from accelerator.configuration.settings import Settings
 from accelerator.domain.audit import (
@@ -19,6 +17,8 @@ from accelerator.domain.audit import (
     EventOutcome,
     EventType,
 )
+from accelerator.identity.authentication import AppRole, Principal, get_current_principal
+from accelerator.identity.scope_resolver import get_execution_context
 from accelerator.security_core.data_boundaries.context import ExecutionContext
 
 
@@ -27,7 +27,7 @@ class Context(ExecutionContext):
     user_id: str = "user-1"
     roles: frozenset[str] = frozenset({"Admin"})
     scope_ids: frozenset[str] = frozenset()
-    deadline_utc: datetime = datetime(2100, 1, 1, tzinfo=timezone.utc)
+    deadline_utc: datetime = datetime(2100, 1, 1, tzinfo=UTC)
 
 
 def make_app(repository: "MemoryRepository | None" = None) -> FastAPI:
@@ -107,7 +107,7 @@ def test_event_is_frozen_and_disallows_arbitrary_payloads() -> None:
         event_type=EventType.AUTH_FAILURE, outcome=EventOutcome.FAILED, correlation_id="c"
     )
     with pytest.raises(ValidationError, match="frozen"):
-        setattr(event, "actor_id", "modified")
+        event.actor_id = "modified"
     with pytest.raises(ValidationError, match="Extra inputs"):
         AuditEvent.model_validate({**event.model_dump(), "token": "sensitive"})
     with pytest.raises(ValidationError):
@@ -150,7 +150,9 @@ async def test_auth_failure_is_recorded_without_request_secrets(invalid_token: b
             raise ValueError("secret-validator-detail")
 
     app.state.token_validator = RejectingValidator()
-    async with httpx.AsyncClient(transport=httpx.ASGITransport(app=app), base_url="http://test") as c:
+    async with httpx.AsyncClient(
+        transport=httpx.ASGITransport(app=app), base_url="http://test"
+    ) as c:
         app.state.http_client = c
         headers = {"X-Correlation-ID": str(uuid4())}
         if invalid_token:
@@ -173,7 +175,9 @@ async def test_auth_failure_is_recorded_without_request_secrets(invalid_token: b
 async def test_non_admin_cannot_read_events_or_forge_roles_in_headers() -> None:
     repository = MemoryRepository()
     app = app_with_context(repository, Context(roles=frozenset({"Reader"})))
-    async with httpx.AsyncClient(transport=httpx.ASGITransport(app=app), base_url="http://test") as c:
+    async with httpx.AsyncClient(
+        transport=httpx.ASGITransport(app=app), base_url="http://test"
+    ) as c:
         response = await c.get("/audit-events?roles=Admin", headers={"X-Roles": "Admin"})
     assert response.status_code == 403
     # The denial itself is audited (authorization_failure), nothing else is written.
@@ -188,7 +192,7 @@ async def test_admin_query_is_bounded_ordered_and_filterable() -> None:
     await recorder.auth_failure("first")
     await recorder.approval(Context(), approval_id=uuid4(), outcome=EventOutcome.APPROVED)
     await recorder.auth_failure("last")
-    start = datetime(2026, 1, 1, tzinfo=timezone.utc)
+    start = datetime(2026, 1, 1, tzinfo=UTC)
     repository.events = [
         AuditEvent.model_validate(
             {**event.model_dump(), "occurred_at": start + timedelta(seconds=index)}
@@ -196,7 +200,9 @@ async def test_admin_query_is_bounded_ordered_and_filterable() -> None:
         for index, event in enumerate(repository.events)
     ]
     app = app_with_context(repository, Context())
-    async with httpx.AsyncClient(transport=httpx.ASGITransport(app=app), base_url="http://test") as c:
+    async with httpx.AsyncClient(
+        transport=httpx.ASGITransport(app=app), base_url="http://test"
+    ) as c:
         first = await c.get("/audit-events?limit=1")
         second = await c.get("/audit-events?limit=1&offset=1")
         filtered = await c.get("/audit-events?event_type=auth_failure")
@@ -214,7 +220,9 @@ async def test_admin_query_is_bounded_ordered_and_filterable() -> None:
 )
 async def test_invalid_pagination_or_event_type_is_rejected(query: str) -> None:
     app = app_with_context(MemoryRepository(), Context())
-    async with httpx.AsyncClient(transport=httpx.ASGITransport(app=app), base_url="http://test") as c:
+    async with httpx.AsyncClient(
+        transport=httpx.ASGITransport(app=app), base_url="http://test"
+    ) as c:
         response = await c.get(f"/audit-events?{query}")
     assert response.status_code == 422
 
@@ -223,7 +231,9 @@ async def test_successful_health_requests_do_not_generate_audit_events() -> None
     repository = MemoryRepository()
     app = make_app(repository)
     app.dependency_overrides[get_current_principal] = principal
-    async with httpx.AsyncClient(transport=httpx.ASGITransport(app=app), base_url="http://test") as c:
+    async with httpx.AsyncClient(
+        transport=httpx.ASGITransport(app=app), base_url="http://test"
+    ) as c:
         assert (await c.get("/healthz")).status_code == 200
     assert repository.events == []
 
@@ -237,7 +247,9 @@ async def test_authentication_dependency_failures_are_audited() -> None:
         raise HTTPException(status_code=401, detail="Invalid credentials")
 
     app.dependency_overrides[get_execution_context] = invalid_token
-    async with httpx.AsyncClient(transport=httpx.ASGITransport(app=app), base_url="http://test") as c:
+    async with httpx.AsyncClient(
+        transport=httpx.ASGITransport(app=app), base_url="http://test"
+    ) as c:
         assert (await c.get("/audit-events")).status_code == 401
     assert len(repository.events) == 1
 
@@ -249,14 +261,18 @@ async def test_persistence_failure_propagates_instead_of_returning_success() -> 
 
     repository = FailingRepository()
     app = make_app(repository)
-    async with httpx.AsyncClient(transport=httpx.ASGITransport(app=app), base_url="http://test") as c:
+    async with httpx.AsyncClient(
+        transport=httpx.ASGITransport(app=app), base_url="http://test"
+    ) as c:
         with pytest.raises(RuntimeError, match="Persistence unavailable"):
             await c.get("/audit-events")
 
 
 async def test_missing_persistence_is_an_explicit_configuration_error() -> None:
     app = make_app()
-    async with httpx.AsyncClient(transport=httpx.ASGITransport(app=app), base_url="http://test") as c:
+    async with httpx.AsyncClient(
+        transport=httpx.ASGITransport(app=app), base_url="http://test"
+    ) as c:
         response = await c.get("/audit-events")
     assert response.status_code == 503
     assert response.json() == {"detail": "Audit persistence is unavailable."}
@@ -270,7 +286,9 @@ async def test_database_failure_replaces_401_with_correlated_503(
             raise SQLAlchemyError("secret-driver-detail")
 
     app = make_app(FailingRepository())
-    async with httpx.AsyncClient(transport=httpx.ASGITransport(app=app), base_url="http://test") as c:
+    async with httpx.AsyncClient(
+        transport=httpx.ASGITransport(app=app), base_url="http://test"
+    ) as c:
         response = await c.get("/audit-events")
     assert response.status_code == 503
     assert response.json() == {"detail": "Audit persistence is unavailable."}
@@ -292,7 +310,9 @@ async def test_query_database_failure_returns_correlated_503(
             raise SQLAlchemyError("secret-driver-detail")
 
     app = app_with_context(FailingRepository(), Context())
-    async with httpx.AsyncClient(transport=httpx.ASGITransport(app=app), base_url="http://test") as c:
+    async with httpx.AsyncClient(
+        transport=httpx.ASGITransport(app=app), base_url="http://test"
+    ) as c:
         response = await c.get("/audit-events")
     assert response.status_code == 503
     assert any(
@@ -410,7 +430,9 @@ async def test_forbidden_responses_are_audited_with_the_validated_actor() -> Non
 
     app.dependency_overrides[get_execution_context] = reader_context
     app.dependency_overrides[get_current_principal] = reader
-    async with httpx.AsyncClient(transport=httpx.ASGITransport(app=app), base_url="http://test") as c:
+    async with httpx.AsyncClient(
+        transport=httpx.ASGITransport(app=app), base_url="http://test"
+    ) as c:
         response = await c.get("/audit-events")
 
     assert response.status_code == 403

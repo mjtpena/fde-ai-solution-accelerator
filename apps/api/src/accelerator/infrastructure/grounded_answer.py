@@ -22,13 +22,13 @@ from accelerator.infrastructure.foundry.agent_runtime import AgentFrameworkFound
 from accelerator.infrastructure.foundry.embedder import EmbeddingClient, FoundryQueryEmbedder
 from accelerator.infrastructure.search.adapter import AzureSearchRetriever
 from accelerator.infrastructure.search.settings import SearchSettings
+from accelerator.observability_core import Telemetry
 from accelerator.retrieval_core.citations import SameTurnCitationValidator
 from accelerator.retrieval_core.models import Evidence, RetrievalRequest
 from accelerator.retrieval_core.sufficiency import (
     EvidenceSufficiencyChecker,
     SufficiencyPolicy,
 )
-from accelerator.observability_core import Telemetry
 from accelerator.security_core.data_boundaries.context import ExecutionContext
 from accelerator.telemetry.traced import (
     TracedAnswerGenerator,
@@ -57,13 +57,15 @@ def build_azure_grounded_answer(
     telemetry: Telemetry | None = None,
     capture_evaluation_context: bool = False,
 ) -> GroundedAnswer:
-    if not settings.azure_services_configured:
+    if (
+        not settings.azure_services_configured
+        or settings.search_endpoint is None
+        or settings.search_index_name is None
+        or settings.search_vector_dimensions is None
+        or settings.foundry_project_endpoint is None
+        or settings.foundry_model_deployment is None
+    ):
         raise ValueError("Foundry and Azure AI Search settings are incomplete.")
-    assert settings.search_endpoint is not None
-    assert settings.search_index_name is not None
-    assert settings.search_vector_dimensions is not None
-    assert settings.foundry_project_endpoint is not None
-    assert settings.foundry_model_deployment is not None
 
     search_client = SearchClient(
         endpoint=str(settings.search_endpoint),

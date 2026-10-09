@@ -92,7 +92,10 @@ async def test_first_token_is_sent_before_generation_finishes() -> None:
 async def test_invalid_citations_after_streaming_withdraw_the_answer() -> None:
     failure = CitationValidationError(
         CitationValidationResult(
-            valid=False, cited_chunk_ids=("fake",), unknown_chunk_ids=("fake",), retrieved_chunk_count=1
+            valid=False,
+            cited_chunk_ids=("fake",),
+            unknown_chunk_ids=("fake",),
+            retrieved_chunk_count=1,
         )
     )
     turn = GatedStreamingTurn(failure)

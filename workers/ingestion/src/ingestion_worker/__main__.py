@@ -11,7 +11,6 @@ from pathlib import Path
 from .composition import compose_consumer
 from .settings import WorkerSettings
 
-
 logger = logging.getLogger("ingestion_worker")
 
 HEARTBEAT_INTERVAL_SECONDS = 10.0
@@ -20,7 +19,8 @@ HEARTBEAT_MAX_AGE_SECONDS = 60.0
 
 
 def heartbeat_path() -> Path:
-    return Path(os.getenv("INGESTION_HEARTBEAT_FILE", "/tmp/ingestion-heartbeat"))
+    # Container-local liveness file, read only by the image's own healthcheck.
+    return Path(os.getenv("INGESTION_HEARTBEAT_FILE", "/tmp/ingestion-heartbeat"))  # noqa: S108
 
 
 def heartbeat_is_fresh(path: Path, *, max_age_seconds: float = HEARTBEAT_MAX_AGE_SECONDS) -> bool:
@@ -93,5 +93,7 @@ async def main() -> None:
 
 
 if __name__ == "__main__":
-    logging.basicConfig(level=os.getenv("INGESTION_LOG_LEVEL", "INFO").upper(), format="%(message)s")
+    logging.basicConfig(
+        level=os.getenv("INGESTION_LOG_LEVEL", "INFO").upper(), format="%(message)s"
+    )
     asyncio.run(main())

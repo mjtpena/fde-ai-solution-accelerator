@@ -16,6 +16,7 @@ import pytest
 from azure.storage.blob.aio import BlobServiceClient
 from azure.storage.queue.aio import QueueClient
 
+from accelerator.ingestion import DocumentRecord
 from accelerator.ingestion.consumer import QueueConsumer, RetryPolicy
 from accelerator.ingestion.handler import IngestionHandler
 from accelerator.ingestion.infrastructure.blob_store import AzureSourceReader
@@ -81,8 +82,8 @@ class NullRepository:
     async def get_document(self, document_id: str) -> None:
         return None
 
-    async def upsert_document(self, document: object) -> None:
-        self.failed.append(getattr(document, "failure_reason"))
+    async def upsert_document(self, document: DocumentRecord) -> None:
+        self.failed.append(document.failure_reason or "")
 
 
 def message(source_blob: str, document_id: str = "doc-1") -> str:

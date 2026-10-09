@@ -1,9 +1,7 @@
 """SDK-free chunk index definition shared with the Search infrastructure adapter."""
 
 from dataclasses import dataclass
-from typing import Literal
-
-from typing import Annotated
+from typing import Annotated, Literal
 
 from pydantic import AfterValidator, BaseModel, ConfigDict, Field
 

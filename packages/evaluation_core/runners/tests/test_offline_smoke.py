@@ -2,11 +2,14 @@
 
 import asyncio
 from pathlib import Path
-from typing import TYPE_CHECKING, Any
+from typing import Any
 from uuid import uuid4
 
 import pytest
 
+from accelerator.agent_core.middleware import ToolPolicyMiddleware
+from accelerator.agent_core.tools import IdempotentWriteTool
+from accelerator.agent_core.workflows import generation
 from accelerator.retrieval_core.citations import SameTurnCitationValidator
 from accelerator.retrieval_core.sufficiency import EvidenceSufficiencyChecker
 from accelerator.retrieval_core.sufficiency.policy import SufficiencyDecision
@@ -16,15 +19,6 @@ from ...datasets import load_dataset
 from ..corpus import load_corpus
 from ..offline import OfflineModel, OfflineRetriever
 from ..smoke import EvaluationResult, GateName, RowOutcome, measure_smoke
-
-if TYPE_CHECKING:
-    from packages.agent_core.middleware import ToolPolicyMiddleware
-    from packages.agent_core.tools import IdempotentWriteTool
-    from packages.agent_core.workflows import generation
-else:
-    from accelerator.agent_core.middleware import ToolPolicyMiddleware
-    from accelerator.agent_core.tools import IdempotentWriteTool
-    from accelerator.agent_core.workflows import generation
 
 ROOT = Path(__file__).resolve().parents[4]
 DATASET = ROOT / "evaluations/example-datasets/smoke.jsonl"

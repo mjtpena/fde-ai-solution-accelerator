@@ -1,6 +1,6 @@
 """PostgreSQL audit persistence against a freshly migrated database (TEST_POSTGRES_DSN)."""
 
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from uuid import UUID, uuid4
 
 import httpx
@@ -15,9 +15,9 @@ from accelerator.api.audit import configure_audit, get_audit_recorder
 from accelerator.application.audit import AuditRecorder
 from accelerator.configuration.settings import Settings
 from accelerator.domain.audit import AuditEvent, AuditPage, EventOutcome, EventType
-from accelerator.infrastructure.audit import PostgresAuditRepository
 from accelerator.identity.authentication import AppRole, Principal, get_current_principal
 from accelerator.identity.scope_resolver import configure_scope_resolver, get_execution_context
+from accelerator.infrastructure.audit import PostgresAuditRepository
 from accelerator.security_core.data_boundaries.context import ExecutionContext
 from accelerator.security_core.infrastructure.database import create_session_factory
 from accelerator.security_core.infrastructure.memberships import (
@@ -55,7 +55,9 @@ async def test_postgres_append_query_and_database_immutability(
                 await session.rollback()
         assert (await repository.query(limit=1, offset=0)).items == (event,)
         assert (await repository.query(limit=1, offset=1)).items == ()
-        assert (await repository.query(limit=1, offset=0, event_type=EventType.APPROVAL)).items == ()
+        assert (
+            await repository.query(limit=1, offset=0, event_type=EventType.APPROVAL)
+        ).items == ()
         with pytest.raises(ValueError):
             await repository.query(limit=101, offset=0)
         with pytest.raises(ValueError):
@@ -85,7 +87,8 @@ async def test_postgres_append_query_and_database_immutability(
                     await session.execute(
                         text(
                             "INSERT INTO audit_event "
-                            "(event_id, occurred_at, event_type, outcome, correlation_id, actor_id) "
+                            "(event_id, occurred_at, event_type, outcome, "
+                            "correlation_id, actor_id) "
                             "VALUES (:id, now(), 'tool_execution', :outcome, 'invalid', 'actor')"
                         ),
                         {"id": uuid4(), "outcome": invalid_outcome},
@@ -94,7 +97,7 @@ async def test_postgres_append_query_and_database_immutability(
         assert len((await repository.query(limit=100, offset=0)).items) == 3
 
         # Deliberately tie timestamps: the UUID ordering must break the tie consistently.
-        timestamp = datetime(2100, 1, 1, tzinfo=timezone.utc)
+        timestamp = datetime(2100, 1, 1, tzinfo=UTC)
         tied_events = sorted(
             (
                 AuditEvent(
@@ -150,7 +153,9 @@ async def test_http_audit_uses_shared_postgres_and_trusted_execution_context(
         assert context.user_id == actor_id
         assert context.scope_ids == frozenset({"allowed"})
         await recorder.approval(context, approval_id=uuid4(), outcome=EventOutcome.APPROVED)
-        await recorder.tool_execution(context, tool_name="read_document", outcome=EventOutcome.FAILED)
+        await recorder.tool_execution(
+            context, tool_name="read_document", outcome=EventOutcome.FAILED
+        )
 
     try:
         async with factory.begin() as session:

@@ -37,7 +37,9 @@ def test_tool_rows_name_a_tool_and_injection_rows_name_a_canary() -> None:
     for row in load_dataset(DATASET):
         assert (row.expected_tool is not None) == (row.category == "tool_selection"), row.id
         if row.category == "injection":
-            canaries = [tag.removeprefix("canary:") for tag in row.tags if tag.startswith("canary:")]
+            canaries = [
+                tag.removeprefix("canary:") for tag in row.tags if tag.startswith("canary:")
+            ]
             assert canaries, row.id
             assert all(canary in corpus_text for canary in canaries), row.id
 

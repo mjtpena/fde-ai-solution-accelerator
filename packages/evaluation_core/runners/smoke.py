@@ -13,10 +13,19 @@ from dataclasses import dataclass
 from datetime import UTC, datetime, timedelta
 from enum import StrEnum
 from pathlib import Path
-from typing import TYPE_CHECKING, Any
+from typing import Any
 
 from pydantic import BaseModel, ConfigDict, field_validator
 
+from accelerator.agent_core.approvals import APPROVER_ROLE, ApprovalService, canonical_args_hash
+from accelerator.agent_core.middleware import ToolCallLimits, ToolPolicyMiddleware
+from accelerator.agent_core.tools import ToolRegistry
+from accelerator.agent_core.tools.agent_bridge import ToolTurn, current_tool_turn
+from accelerator.agent_core.workflows.generation import AgentAnswerGenerator
+from accelerator.agent_core.workflows.grounded_answer import (
+    GroundedAnswerResult,
+    GroundedAnswerWorkflow,
+)
 from accelerator.retrieval_core.citations import SameTurnCitationValidator
 from accelerator.retrieval_core.models import RetrievalRequest
 from accelerator.retrieval_core.sufficiency import EvidenceSufficiencyChecker, SufficiencyPolicy
@@ -40,27 +49,6 @@ from .offline import (
     RecordingInvoker,
     RequestDocumentReviewTool,
 )
-
-if TYPE_CHECKING:
-    from packages.agent_core.approvals import APPROVER_ROLE, ApprovalService, canonical_args_hash
-    from packages.agent_core.middleware import ToolCallLimits, ToolPolicyMiddleware
-    from packages.agent_core.tools import ToolRegistry
-    from packages.agent_core.tools.agent_bridge import ToolTurn, current_tool_turn
-    from packages.agent_core.workflows.generation import AgentAnswerGenerator
-    from packages.agent_core.workflows.grounded_answer import (
-        GroundedAnswerResult,
-        GroundedAnswerWorkflow,
-    )
-else:
-    from accelerator.agent_core.approvals import APPROVER_ROLE, ApprovalService, canonical_args_hash
-    from accelerator.agent_core.middleware import ToolCallLimits, ToolPolicyMiddleware
-    from accelerator.agent_core.tools import ToolRegistry
-    from accelerator.agent_core.tools.agent_bridge import ToolTurn, current_tool_turn
-    from accelerator.agent_core.workflows.generation import AgentAnswerGenerator
-    from accelerator.agent_core.workflows.grounded_answer import (
-        GroundedAnswerResult,
-        GroundedAnswerWorkflow,
-    )
 
 logger = logging.getLogger(__name__)
 
@@ -197,7 +185,9 @@ class OfflineSmokeRuntime:
         selected_tool = invoker.invoked[0] if invoker.invoked else None
         canaries = [tag.removeprefix("canary:") for tag in row.tags if tag.startswith("canary:")]
         unexpected_tools = [name for name in invoker.invoked if name != row.expected_tool]
-        same_turn_ids = {item.chunk_id for item in (result.evaluation_context or ())} if result else set()
+        same_turn_ids = (
+            {item.chunk_id for item in (result.evaluation_context or ())} if result else set()
+        )
 
         checks = {
             GateName.CITATION_VALIDITY: error is None
@@ -205,7 +195,9 @@ class OfflineSmokeRuntime:
                 not answered
                 or (
                     bool(result and result.citations)
-                    and evaluate_citation_validity(same_turn_ids, result.citations if result else ())
+                    and evaluate_citation_validity(
+                        same_turn_ids, result.citations if result else ()
+                    )
                 )
             ),
             GateName.ABSTENTION: error is None

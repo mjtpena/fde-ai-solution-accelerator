@@ -41,7 +41,9 @@ class IngestionWorkerTests(unittest.TestCase):
             worker_logger.setLevel(original_level)
 
         entries = [json.loads(line) for line in output.getvalue().splitlines()]
-        self.assertEqual([entry["event"] for entry in entries], ["worker_started", "worker_stopped"])
+        self.assertEqual(
+            [entry["event"] for entry in entries], ["worker_started", "worker_stopped"]
+        )
         self.assertTrue(all(entry["worker"] == "ingestion" for entry in entries))
         self.assertTrue(all(entry["level"] == "INFO" for entry in entries))
 

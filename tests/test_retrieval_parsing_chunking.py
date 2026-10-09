@@ -1,9 +1,9 @@
 from io import BytesIO
 from pathlib import Path
 
+import pytest
 from pypdf import PdfWriter
 from pypdf.generic import DecodedStreamObject, DictionaryObject, NameObject
-import pytest
 
 from accelerator.retrieval_core.chunking import Chunker, ChunkingConfig, TextChunker
 from accelerator.retrieval_core.parsing import MarkdownParser, PdfParser, TextParser

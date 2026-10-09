@@ -2,6 +2,7 @@ import asyncio
 from collections.abc import Iterator
 from uuid import UUID, uuid4
 
+import pytest
 from asgiref.testing import ApplicationCommunicator
 from asgiref.typing import ASGIReceiveCallable, ASGISendCallable, Scope
 from opentelemetry import trace
@@ -10,7 +11,6 @@ from opentelemetry.sdk.trace.export import SimpleSpanProcessor
 from opentelemetry.sdk.trace.export.in_memory_span_exporter import InMemorySpanExporter
 from opentelemetry.trace import SpanKind, StatusCode
 from pydantic import ValidationError
-import pytest
 
 from accelerator.observability_core import SpanAttributes, Telemetry, TracingMiddleware
 

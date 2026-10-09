@@ -1,6 +1,7 @@
 from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
 from datetime import datetime
+from typing import cast
 from uuid import UUID, uuid4
 
 from sqlalchemy import (
@@ -20,7 +21,7 @@ from sqlalchemy.engine import CursorResult
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import DeclarativeBase, Mapped, mapped_column
 
-from accelerator.agent_core.approvals import Approval, ApprovalAuditEvent
+from accelerator.agent_core.approvals import Approval, ApprovalAuditEvent, ApprovalStatus
 from accelerator.infrastructure.audit import audit_event
 
 # Decisions and executions also go to the central append-only audit log, inside the
@@ -63,7 +64,7 @@ class ApprovalRecord(ApprovalBase):
             args_hash=self.args_hash,
             scope_id=self.scope_id,
             requested_by=self.requested_by,
-            status=self.status,  # validated by the Pydantic model
+            status=cast(ApprovalStatus, self.status),  # validated by the Pydantic model
             decided_by=self.decided_by,
             expires_at=self.expires_at,
             correlation_id=self.correlation_id,

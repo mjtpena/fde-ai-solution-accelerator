@@ -1,8 +1,8 @@
+import unittest
 from collections.abc import Sequence
 from pathlib import Path
 from tempfile import TemporaryDirectory
 from typing import Any
-import unittest
 
 from pydantic import ValidationError
 
@@ -54,7 +54,9 @@ class AgentFactoryTests(unittest.TestCase):
     def test_loads_instructions_and_resolves_tools_in_configured_order(self) -> None:
         with TemporaryDirectory() as directory:
             instructions_dir = Path(directory)
-            (instructions_dir / "assistant.md").write_text("Use the configured tools.", encoding="utf-8")
+            (instructions_dir / "assistant.md").write_text(
+                "Use the configured tools.", encoding="utf-8"
+            )
             tool_map = {"lookup": object(), "search": object()}
             runtime = FakeRuntime()
             factory = AgentFactory(runtime, tool_map.__getitem__, instructions_dir)
@@ -95,6 +97,30 @@ class AgentFactoryTests(unittest.TestCase):
                             instructions_file=filename,
                         )
                     )
+
+    def test_accepts_package_files_served_through_symlinks(self) -> None:
+        # Strict editable installs expose each source file as a symlink.
+        with TemporaryDirectory() as directory:
+            temporary_root = Path(directory)
+            source = temporary_root / "source.md"
+            source.write_text("Instructions.", encoding="utf-8")
+            root = temporary_root / "instructions"
+            root.mkdir()
+            (root / "assistant.md").symlink_to(source)
+            factory = AgentFactory(FakeRuntime(), lambda _: object(), root)
+
+            factory.create(
+                AgentConfig(name="assistant", model="deployment", instructions_file="assistant.md")
+            )
+
+            with self.assertRaisesRegex(ValueError, "stay inside"):
+                factory.create(
+                    AgentConfig(
+                        name="assistant",
+                        model="deployment",
+                        instructions_file="nested/../../source.md",
+                    )
+                )
 
     def test_rejects_missing_or_empty_instructions_and_missing_tools(self) -> None:
         with TemporaryDirectory() as directory:

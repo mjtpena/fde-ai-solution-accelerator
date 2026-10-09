@@ -81,9 +81,11 @@ def test_account_url_storage_needs_both_blob_and_queue_endpoints() -> None:
 
 def test_rejected_settings_do_not_echo_the_dsn() -> None:
     with pytest.raises(ValidationError) as raised:
-        WorkerSettings(
-            environment="production",
-            database_url="postgresql://worker:secret-value@db.example.test/accelerator",
+        WorkerSettings.model_validate(
+            {
+                "environment": "production",
+                "database_url": "postgresql://worker:secret-value@db.example.test/accelerator",
+            }
         )
 
     assert "secret-value" not in str(raised.value)

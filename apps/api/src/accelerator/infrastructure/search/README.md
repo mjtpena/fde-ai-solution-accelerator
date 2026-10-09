@@ -69,10 +69,10 @@ retrieval modules, rerun `uv sync --all-packages --reinstall-package fde-retriev
 to refresh that editable tree.
 
 The API `accelerator` package extends its namespace to include workspace packages.
-Strict type checks select retrieval through `--package accelerator.retrieval_core`
-so its installed public namespace is checked once; the file-based pass still checks
-the adapter and package-local search tests. Both passes run in `make check` and
-pre-commit without disabling or excluding any type errors.
+Strict type checks run over every workspace package by its installed import name
+(`accelerator.*`, see `[tool.mypy] packages` in the root `pyproject.toml`), so the
+adapter, retrieval and their package-local tests are each checked once, under the
+names callers use. `make check` and pre-commit run it without excluding any errors.
 
 The security-sensitive search test directories are included in root pytest
 `testpaths`, so standard `make check` and pre-commit collect them automatically.

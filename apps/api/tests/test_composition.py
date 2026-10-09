@@ -11,8 +11,8 @@ from starlette.requests import Request
 from accelerator.agent_core.approvals import ApprovalService
 from accelerator.api.approvals import get_approval_repository, get_approval_service
 from accelerator.api.composition import build_application
-from accelerator.infrastructure.approvals import SQLAlchemyApprovalRepository
 from accelerator.configuration.settings import Settings
+from accelerator.infrastructure.approvals import SQLAlchemyApprovalRepository
 from accelerator.infrastructure.audit import PostgresAuditRepository
 from accelerator.infrastructure.database import (
     POSTGRES_ENTRA_SCOPE,

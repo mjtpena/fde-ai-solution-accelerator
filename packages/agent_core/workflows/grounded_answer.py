@@ -13,7 +13,6 @@ from agent_framework import (
 
 from .base import Workflow
 
-
 RequestT = TypeVar("RequestT")
 ContextT = TypeVar("ContextT")
 EvidenceT = TypeVar("EvidenceT", bound="Evidence")

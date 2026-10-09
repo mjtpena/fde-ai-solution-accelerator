@@ -106,7 +106,9 @@ def build_job(
     try:
         parsed = PARSERS[message.content_type]().parse(content)
     except (ValueError, UnicodeDecodeError) as error:
-        raise RejectedDocument(f"source document could not be parsed ({type(error).__name__})") from error
+        raise RejectedDocument(
+            f"source document could not be parsed ({type(error).__name__})"
+        ) from error
     pieces = TextChunker(chunking).chunk(parsed)
     if not pieces:
         raise RejectedDocument("source document has no extractable text")

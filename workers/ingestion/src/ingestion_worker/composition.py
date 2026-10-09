@@ -32,10 +32,14 @@ async def compose_consumer(settings: WorkerSettings) -> AsyncIterator[QueueConsu
         logger.warning("ingestion_disabled", extra={"reason": "indexing settings incomplete"})
         yield None
         return
-    assert settings.database_url is not None
-    assert settings.search_endpoint is not None and settings.search_index_name is not None
-    assert settings.vector_dimensions is not None
-    assert settings.foundry_project_endpoint is not None
+    if (
+        settings.database_url is None
+        or settings.search_endpoint is None
+        or settings.search_index_name is None
+        or settings.vector_dimensions is None
+        or settings.foundry_project_endpoint is None
+    ):
+        raise ValueError("indexing_configured implies these settings are present")
 
     async with AsyncExitStack() as stack:
         credential = await stack.enter_async_context(
@@ -47,9 +51,12 @@ async def compose_consumer(settings: WorkerSettings) -> AsyncIterator[QueueConsu
             queue = QueueClient.from_connection_string(secret, settings.queue_name)
             poison = QueueClient.from_connection_string(secret, settings.poison_queue_name)
         else:
-            assert settings.blob_account_url is not None and settings.queue_account_url is not None
+            if settings.blob_account_url is None or settings.queue_account_url is None:
+                raise ValueError("indexing_configured implies both account URLs are present")
             blobs = BlobServiceClient(str(settings.blob_account_url), credential=credential)
-            queue = QueueClient(str(settings.queue_account_url), settings.queue_name, credential=credential)
+            queue = QueueClient(
+                str(settings.queue_account_url), settings.queue_name, credential=credential
+            )
             poison = QueueClient(
                 str(settings.queue_account_url), settings.poison_queue_name, credential=credential
             )

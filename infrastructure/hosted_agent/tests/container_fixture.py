@@ -8,7 +8,6 @@ from accelerator.agent_core.hosting.contracts import (
     InvocationUnauthorized,
 )
 
-
 OFFLINE_AUTHORIZATION = 'Bearer offline-container-test'
 
 

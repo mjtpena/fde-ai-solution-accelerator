@@ -1,8 +1,8 @@
 import json
 from collections.abc import AsyncIterator
 from datetime import UTC, datetime
-from uuid import UUID, uuid4
 from unittest.mock import AsyncMock
+from uuid import UUID, uuid4
 
 import httpx
 import jwt

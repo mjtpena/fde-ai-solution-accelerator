@@ -9,21 +9,17 @@ import logging
 from collections.abc import Awaitable, Callable, Sequence
 from dataclasses import dataclass
 from pathlib import Path
-from typing import TYPE_CHECKING, Literal, Protocol
+from typing import Literal, Protocol
 
 from pydantic import BaseModel, ConfigDict, Field
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
+from accelerator.agent_core.workflows.grounded_answer import GroundedAnswerResult
 from accelerator.security_core.data_boundaries.context import ExecutionContext
 
 from ..datasets import DatasetRow, load_dataset
 from .foundry import FoundryEvaluatorAdapters, MetricName
 from .settings import FoundryEvaluatorSettings
-
-if TYPE_CHECKING:
-    from packages.agent_core.workflows.grounded_answer import GroundedAnswerResult
-else:
-    from accelerator.agent_core.workflows.grounded_answer import GroundedAnswerResult
 
 
 class EvaluationWorkflow(Protocol):

@@ -1,8 +1,8 @@
 """Redaction helpers for sensitive values that may enter telemetry."""
 
-from collections.abc import Mapping, Sequence
 import re
-from typing import TYPE_CHECKING, Callable, overload
+from collections.abc import Callable, Mapping, Sequence
+from typing import TYPE_CHECKING, overload
 
 if TYPE_CHECKING:
     from opentelemetry.util.types import AttributeValue as OpenTelemetryAttributeValue

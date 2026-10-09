@@ -65,6 +65,9 @@ class RetryPolicy:
         return min(self.max_delay_seconds, delay)
 
 
+DEFAULT_RETRY = RetryPolicy()
+
+
 class QueueConsumer:
     def __init__(
         self,
@@ -73,7 +76,7 @@ class QueueConsumer:
         handle: Handler,
         record_failure: FailureRecorder,
         *,
-        retry: RetryPolicy = RetryPolicy(),
+        retry: RetryPolicy = DEFAULT_RETRY,
         idle_poll_seconds: float = 1.0,
         max_idle_poll_seconds: float = 30.0,
     ) -> None:
@@ -156,7 +159,13 @@ class QueueConsumer:
         if request is not None and request.operation == "ingest":
             await self._record_failure(request, reason[:500])
         await self._poison.send_message(
-            json.dumps({"message_id": message.id, "reason": reason[:500], "content": _text(message.content)})
+            json.dumps(
+                {
+                    "message_id": message.id,
+                    "reason": reason[:500],
+                    "content": _text(message.content),
+                }
+            )
         )
         await self._queue.delete_message(message, pop_receipt=message.pop_receipt)
 

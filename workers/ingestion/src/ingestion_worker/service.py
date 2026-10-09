@@ -2,12 +2,13 @@
 
 from __future__ import annotations
 
+import hashlib
+from collections.abc import Sequence
 from contextlib import AbstractAsyncContextManager
 from dataclasses import dataclass
 from datetime import date
 from enum import StrEnum
-import hashlib
-from typing import Protocol, Sequence
+from typing import Protocol
 
 
 class DocumentInput(Protocol):
@@ -210,7 +211,7 @@ class IngestionService:
                     )
                 )
             except Exception as state_error:
-                raise ExceptionGroup(
+                raise ExceptionGroup(  # noqa: B904 - the group carries both errors
                     "Ingestion failed and its failed state could not be persisted",
                     [error, state_error],
                 )

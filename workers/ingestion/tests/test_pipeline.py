@@ -38,7 +38,7 @@ def test_markdown_becomes_scoped_chunks_with_deterministic_ids() -> None:
     second = build_job(message(), content, max_bytes=10_000, chunking=CHUNKING)
 
     assert [chunk.chunk_id for chunk in first.chunks] == [c.chunk_id for c in second.chunks]
-    assert {chunk.scope_id for chunk in first.chunks} == {"scope-a"}  # type: ignore[attr-defined]
+    assert {chunk.scope_id for chunk in first.chunks} == {"scope-a"}
     assert {chunk.section_heading for chunk in first.chunks} == {"Retention", "Backups"}
     assert all(chunk.version == "3" for chunk in first.chunks)
     assert first.document.scope_id == "scope-a"

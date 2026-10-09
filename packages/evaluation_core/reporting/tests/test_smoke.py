@@ -163,7 +163,12 @@ def test_regression_artifacts_are_written_before_failure_exit(
 
 @pytest.mark.parametrize(
     "content",
-    ["metrics: [", "metrics: {}", "metrics:\n  unexpected: 1", "!!python/object/apply:os.system []"],
+    [
+        "metrics: [",
+        "metrics: {}",
+        "metrics:\n  unexpected: 1",
+        "!!python/object/apply:os.system []",
+    ],
 )
 def test_invalid_yaml_fails(tmp_path: Path, content: str) -> None:
     _, thresholds = configure(tmp_path)

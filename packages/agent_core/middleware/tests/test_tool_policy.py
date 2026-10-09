@@ -4,38 +4,38 @@ import asyncio
 from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
 from dataclasses import dataclass, field
-from datetime import datetime, timedelta, timezone
+from datetime import UTC, datetime, timedelta
 from typing import ClassVar
 from uuid import UUID
 
 import pytest
 from pydantic import BaseModel
 
-from ...approvals import (
-    Approval,
-    ApprovalAuthorizationError,
-    ApprovalAuditEvent,
-    ApprovalExpiredError,
-    ApprovalMismatchError,
-    ApprovalReplayError,
-    ApprovalService,
-    ApprovalScopeError,
-    ApprovalStateError,
-    canonical_args_hash,
-)
-from ..tool_policy import (
-    ToolCallLimitExceeded,
-    ToolCallLimits,
-    ToolExecutionTimeout,
-    ToolPolicyMiddleware,
-)
-from ...tools import EnterpriseTool, ExecutionContextProtocol, IdempotentWriteTool, ToolRisk
 from accelerator.security_core.data_boundaries.context import ExecutionContext
 from accelerator.security_core.tool_policy.models import (
     ApprovalRequired,
     ToolPolicyViolation,
 )
 
+from ...approvals import (
+    Approval,
+    ApprovalAuditEvent,
+    ApprovalAuthorizationError,
+    ApprovalExpiredError,
+    ApprovalMismatchError,
+    ApprovalReplayError,
+    ApprovalScopeError,
+    ApprovalService,
+    ApprovalStateError,
+    canonical_args_hash,
+)
+from ...tools import EnterpriseTool, ExecutionContextProtocol, IdempotentWriteTool, ToolRisk
+from ..tool_policy import (
+    ToolCallLimitExceeded,
+    ToolCallLimits,
+    ToolExecutionTimeout,
+    ToolPolicyMiddleware,
+)
 
 Risk = ToolRisk
 
@@ -56,7 +56,7 @@ class Context:
     scope_ids: frozenset[str] = frozenset({"scope-a"})
     session_id: str | None = "session-1"
     deadline_utc: datetime = field(
-        default_factory=lambda: datetime.now(timezone.utc) + timedelta(minutes=1)
+        default_factory=lambda: datetime.now(UTC) + timedelta(minutes=1)
     )
 
 
@@ -478,7 +478,7 @@ def _server_approver() -> ExecutionContext:
         roles=frozenset({"Approver"}),
         scope_ids=frozenset({"scope-a"}),
         session_id="session-2",
-        deadline_utc=datetime.now(timezone.utc) + timedelta(minutes=1),
+        deadline_utc=datetime.now(UTC) + timedelta(minutes=1),
     )
 
 
@@ -489,7 +489,7 @@ def _server_context() -> ExecutionContext:
         roles=frozenset(),
         scope_ids=frozenset({"scope-a"}),
         session_id="session-1",
-        deadline_utc=datetime.now(timezone.utc) + timedelta(minutes=1),
+        deadline_utc=datetime.now(UTC) + timedelta(minutes=1),
     )
 
 
@@ -528,7 +528,7 @@ async def test_public_contract_creates_card_and_executes_real_approval_once() ->
 @pytest.mark.parametrize("failure", ["changed_args", "expired", "wrong_scope"])
 async def test_real_approval_failures_never_invoke_tool(failure: str) -> None:
     repository = InMemoryApprovalRepository()
-    now = datetime.now(timezone.utc)
+    now = datetime.now(UTC)
     service = ApprovalService[ToolArgs, ToolResult](repository, clock=lambda: now)
     middleware = ToolPolicyMiddleware(approval_service=service)
     tool = WriteTool()
@@ -632,7 +632,7 @@ async def test_elapsed_deadline_prevents_approval_creation() -> None:
         await middleware.invoke(
             tool,
             ToolArgs(value="write"),
-            Context(deadline_utc=datetime.now(timezone.utc) - timedelta(seconds=1)),
+            Context(deadline_utc=datetime.now(UTC) - timedelta(seconds=1)),
             turn_id="turn",
         )
 
@@ -649,7 +649,7 @@ async def test_stalled_approval_creation_is_cancelled_at_policy_timeout(
     middleware = ToolPolicyMiddleware(approval_service=service)
     tool = FakeTool(Risk.LOW_IMPACT_WRITE, timeout_seconds=1 if use_deadline else 0.01)
     context = Context(
-        deadline_utc=datetime.now(timezone.utc) + timedelta(seconds=0.01 if use_deadline else 60)
+        deadline_utc=datetime.now(UTC) + timedelta(seconds=0.01 if use_deadline else 60)
     )
 
     with pytest.raises(ToolExecutionTimeout, match="policy timeout"):

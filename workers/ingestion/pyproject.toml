@@ -26,3 +26,6 @@ fde-retrieval-core = { workspace = true }
 [tool.setuptools]
 packages = ["accelerator.ingestion", "accelerator.ingestion.infrastructure"]
 package-dir = {"accelerator.ingestion" = "src/ingestion_worker"}
+
+[tool.setuptools.package-data]
+"accelerator.ingestion" = ["py.typed"]

@@ -7,13 +7,21 @@ from collections.abc import Sequence
 from dataclasses import dataclass, replace
 from datetime import UTC, datetime
 from pathlib import Path
-from typing import TYPE_CHECKING, Any
+from typing import Any
 
 import pytest
 from pydantic import ValidationError
 
+from accelerator.agent_core.workflows.grounded_answer import (
+    Abstention,
+    CitationSource,
+    GroundedAnswerResult,
+    GroundedAnswerWorkflow,
+    RetrievedEvidenceContext,
+)
 from accelerator.security_core.data_boundaries.context import ExecutionContext
 
+from ...datasets import DatasetRow
 from .. import FoundryEvaluatorAdapters, MetricName
 from ..full import (
     FullEvaluationRuntime,
@@ -23,24 +31,6 @@ from ..full import (
     run_full,
 )
 from ..settings import FoundryEvaluatorSettings
-from ...datasets import DatasetRow
-
-if TYPE_CHECKING:
-    from packages.agent_core.workflows.grounded_answer import (
-        Abstention,
-        CitationSource,
-        GroundedAnswerResult,
-        GroundedAnswerWorkflow,
-        RetrievedEvidenceContext,
-    )
-else:
-    from accelerator.agent_core.workflows.grounded_answer import (
-        Abstention,
-        CitationSource,
-        GroundedAnswerResult,
-        GroundedAnswerWorkflow,
-        RetrievedEvidenceContext,
-    )
 
 
 def row(row_id: str = "row", expected_answer: str | None = "Reference") -> DatasetRow:

@@ -1,17 +1,17 @@
 from dataclasses import dataclass
 from importlib.metadata import requires
-from packaging.requirements import Requirement
-from packaging.specifiers import SpecifierSet
 from pathlib import Path
 from unittest.mock import AsyncMock, MagicMock
 
+import httpx
+import pytest
 from azure.ai.projects.aio import AIProjectClient
 from azure.ai.projects.models import AgentEndpointProtocol, AgentVersionDetails
 from azure.core.credentials import AccessToken
 from azure.core.credentials_async import AsyncTokenCredential
-import httpx
+from packaging.requirements import Requirement
+from packaging.specifiers import SpecifierSet
 from pydantic import ValidationError
-import pytest
 
 from accelerator.agent_core.hosting.application import WorkflowHostedApplication, WorkflowResult
 from accelerator.agent_core.hosting.contracts import (
@@ -19,10 +19,9 @@ from accelerator.agent_core.hosting.contracts import (
     InvocationResult,
     InvocationUnauthorized,
 )
-
+from infrastructure.hosted_agent import production
 from infrastructure.hosted_agent.azure_adapter import AzureHostedAgentGateway
 from infrastructure.hosted_agent.configuration import DeploymentSettings, RuntimeSettings
-from infrastructure.hosted_agent import production
 from infrastructure.hosted_agent.server import MAX_REQUEST_BYTES, create_host, load_application
 from infrastructure.hosted_agent.service import HostedVersion, deploy, smoke
 from infrastructure.hosted_agent.tests.container_fixture import OFFLINE_AUTHORIZATION

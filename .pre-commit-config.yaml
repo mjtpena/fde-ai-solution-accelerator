@@ -11,9 +11,9 @@ repos:
         entry: uv run --all-packages mypy --strict
         language: system
         pass_filenames: false
-      - id: mypy-retrieval
-        name: mypy strict retrieval namespace
-        entry: uv run --all-packages mypy --strict --package accelerator.retrieval_core
+      - id: mypy-tests
+        name: mypy strict test modules outside packages
+        entry: uv run --all-packages mypy --strict workers/ingestion/tests apps/api/tests/test_scope_resolver.py
         language: system
         pass_filenames: false
       - id: pytest

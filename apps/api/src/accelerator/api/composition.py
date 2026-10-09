@@ -25,8 +25,6 @@ from accelerator.infrastructure.cost_controls import PostgresRateLimiter
 from accelerator.infrastructure.database import create_database_engine
 from accelerator.infrastructure.grounded_answer import build_azure_grounded_answer
 from accelerator.observability_core import Telemetry
-from accelerator.telemetry.traced import TracedChatTurn
-from accelerator.telemetry.tracing import build_telemetry
 from accelerator.security_core.infrastructure.database import (
     SessionFactory,
     create_session_factory,
@@ -34,6 +32,8 @@ from accelerator.security_core.infrastructure.database import (
 from accelerator.security_core.infrastructure.memberships import (
     SqlAlchemyScopeMembershipRepository,
 )
+from accelerator.telemetry.traced import TracedChatTurn
+from accelerator.telemetry.tracing import build_telemetry
 
 __all__ = ["build_application", "default_chat_turn", "get_approval_service"]
 

@@ -2,12 +2,12 @@ from collections.abc import Mapping
 from unittest.mock import MagicMock
 from uuid import uuid4
 
+import pytest
 from opentelemetry.sdk.trace import TracerProvider
 from opentelemetry.sdk.trace.export import SimpleSpanProcessor, SpanExportResult
 from opentelemetry.sdk.trace.export.in_memory_span_exporter import InMemorySpanExporter
 from opentelemetry.sdk.trace.sampling import ALWAYS_ON
 from opentelemetry.util.types import AttributeValue
-import pytest
 
 from accelerator.observability_core import SanitizingSpanExporter, Telemetry
 

@@ -10,14 +10,14 @@ from uuid import UUID
 
 import pytest
 from pydantic import BaseModel
-from sqlalchemy.dialects import postgresql
 from sqlalchemy import text
+from sqlalchemy.dialects import postgresql
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker, create_async_engine
 
 from accelerator.agent_core.approvals import (
-    ApprovalAuthorizationError,
     Approval,
     ApprovalAuditEvent,
+    ApprovalAuthorizationError,
     ApprovalContext,
     ApprovalExpiredError,
     ApprovalMismatchError,

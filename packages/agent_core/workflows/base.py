@@ -1,7 +1,6 @@
 from abc import ABC, abstractmethod
 from typing import Generic, TypeVar
 
-
 InputT = TypeVar("InputT")
 ContextT = TypeVar("ContextT")
 OutputT = TypeVar("OutputT")

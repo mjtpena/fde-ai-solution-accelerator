@@ -12,10 +12,13 @@ up:
 migrate:
 	uv run --all-packages python -m accelerator.migrations upgrade head
 
+# Test modules outside the workspace packages (the default run checks the packages).
+MYPY_TEST_FILES = workers/ingestion/tests apps/api/tests/test_scope_resolver.py
+
 check:
 	uv run --all-packages ruff check
 	uv run --all-packages mypy --strict
-	uv run --all-packages mypy --strict --package accelerator.retrieval_core
+	uv run --all-packages mypy --strict $(MYPY_TEST_FILES)
 	uv run --all-packages pytest
 	npm run check --workspaces --if-present
 

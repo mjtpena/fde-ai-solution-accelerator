@@ -1,7 +1,7 @@
 from collections.abc import Iterable
 
-from .contracts import ChunkContent, ChunkingConfig
 from ..parsing.contracts import ParsedDocument, ParsedSection
+from .contracts import ChunkContent, ChunkingConfig
 
 
 class TextChunker:

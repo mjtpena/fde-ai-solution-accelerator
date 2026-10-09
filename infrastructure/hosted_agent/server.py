@@ -1,7 +1,7 @@
 """Foundry Invocations adapter; application logic and identity live behind a port."""
 
-from importlib import import_module
 import logging
+from importlib import import_module
 from uuid import uuid4
 
 from azure.ai.agentserver.invocations import InvocationAgentServerHost
@@ -14,7 +14,6 @@ from accelerator.agent_core.hosting.contracts import (
     InvocationRequest,
     InvocationUnauthorized,
 )
-
 from infrastructure.hosted_agent.configuration import RuntimeSettings
 
 logger = logging.getLogger(__name__)
@@ -66,7 +65,8 @@ def load_application(settings: RuntimeSettings) -> HostedApplication:
 def main() -> None:
     logging.basicConfig(level=logging.INFO)
     settings = RuntimeSettings()
-    create_host(load_application(settings)).run(host="0.0.0.0", port=8088)
+    # The hosted-agent container must accept traffic from the platform ingress.
+    create_host(load_application(settings)).run(host="0.0.0.0", port=8088)  # noqa: S104
 
 
 if __name__ == "__main__":

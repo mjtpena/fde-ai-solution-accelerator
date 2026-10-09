@@ -1,14 +1,14 @@
 import hashlib
 import json
 from collections.abc import Callable
+from contextlib import AbstractAsyncContextManager
 from datetime import UTC, datetime, timedelta
-from typing import AsyncContextManager, Generic, Literal, Protocol, TypeVar
+from typing import Generic, Literal, Protocol, TypeVar
 from uuid import UUID, uuid4
 
 from pydantic import BaseModel
 
 from ..tools import EnterpriseTool, ExecutionContextProtocol, IdempotentWriteTool
-
 from .models import Approval, ApprovalAuditEvent
 
 TArgs = TypeVar("TArgs", bound=BaseModel)
@@ -54,7 +54,7 @@ APPROVER_ROLE = "Approver"
 
 
 class ApprovalRepository(Protocol):
-    def transaction(self) -> AsyncContextManager[None]: ...
+    def transaction(self) -> AbstractAsyncContextManager[None]: ...
 
     async def get_for_update(self, approval_id: UUID) -> Approval | None: ...
 
@@ -198,7 +198,9 @@ class ApprovalService(Generic[TArgs, TResult]):
             else:
                 if approval.status != "pending":
                     self._require_pending(approval)
-                decided = approval.model_copy(update={"status": decision, "decided_by": ctx.user_id})
+                decided = approval.model_copy(
+                    update={"status": decision, "decided_by": ctx.user_id}
+                )
                 await self._repository.update(decided)
                 await self._audit(decided, decision, ctx.user_id)
         if expired:

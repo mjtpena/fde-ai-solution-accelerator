@@ -12,22 +12,21 @@ from __future__ import annotations
 
 import argparse
 import ast
-from dataclasses import dataclass
 import json
 import keyword
 import logging
 import os
-from pathlib import Path, PurePosixPath, PureWindowsPath
 import re
 import shutil
 import subprocess
 import sys
 import tempfile
 import tomllib
-from typing import Mapping
 import unittest
+from collections.abc import Mapping
+from dataclasses import dataclass
+from pathlib import Path, PurePosixPath, PureWindowsPath
 from unittest.mock import patch
-
 
 ROOT = Path(__file__).resolve().parents[1]
 LOGGER = logging.getLogger(__name__)
@@ -210,6 +209,28 @@ def renamed_path(relative: Path, renames: Mapping[str, str]) -> Path:
     return relative
 
 
+def relax_line_length(pyproject: Path, growth: int) -> None:
+    """Allow E501 exactly the extra width the rename added to any Python line.
+
+    Longer project names lengthen lines that fit the accelerator's limit; this keeps
+    a generated project lint-clean without loosening anything else.
+    """
+    if growth <= 0 or not pyproject.is_file():
+        return
+    text = pyproject.read_text(encoding="utf-8")
+    ruff = tomllib.loads(text).get("tool", {}).get("ruff", {})
+    if not ruff:
+        return
+    limit = int(ruff.get("line-length", 88)) + growth
+    pyproject.write_text(
+        text.rstrip("\n")
+        + "\n\n[tool.ruff.lint.pycodestyle]\n"
+        + "# Widened by the project generator: the rename lengthened some lines.\n"
+        + f"max-line-length = {limit}\n",
+        encoding="utf-8",
+    )
+
+
 def generated_makefile(text: str) -> str:
     if text.count(BEGIN_GENERATOR) != 1 or text.count(END_GENERATOR) != 1:
         raise ValueError("Makefile must contain exactly one project generator block")
@@ -325,6 +346,7 @@ def generate(source: Path, destination: Path, name: str, display: str) -> None:
         raise ValueError("Accelerator version must be a semantic version string")
 
     destination.mkdir()
+    line_growth = 0
     for directory in sorted(directories, key=lambda path: len(path.parts)):
         (destination / directory).mkdir(parents=True, exist_ok=True)
     for original, target in files:
@@ -355,7 +377,21 @@ def generate(source: Path, destination: Path, name: str, display: str) -> None:
                 )
             if original == Path("docs/spec.md"):
                 text = generated_spec(text)
-            output.write_text(replace_text(text, text_replacements), encoding="utf-8")
+            renamed = replace_text(text, text_replacements)
+            if original.suffix == ".py":
+                line_growth = max(
+                    line_growth,
+                    max(
+                        (
+                            len(new) - len(old)
+                            for old, new in zip(
+                                text.splitlines(), renamed.splitlines(), strict=True
+                            )
+                        ),
+                        default=0,
+                    ),
+                )
+            output.write_text(renamed, encoding="utf-8")
             shutil.copymode(source / original, output)
         else:
             shutil.copy2(source / original, output)
@@ -385,8 +421,11 @@ def generate(source: Path, destination: Path, name: str, display: str) -> None:
         "version used. Inspect the checked-in implementation before relying on them.\n",
         encoding="utf-8",
     )
+    relax_line_length(destination / "pyproject.toml", line_growth)
     for command in (
         ["uv", "sync", "--all-packages", "--frozen"],
+        # Renamed imports sort and wrap differently; let isort settle them once.
+        ["uv", "run", "--all-packages", "ruff", "check", "--fix", "--select", "I", "--quiet"],
         ["npm.cmd" if os.name == "nt" else "npm", "ci"],
         ["make", "check"],
     ):
@@ -492,6 +531,10 @@ class GeneratorTests(unittest.TestCase):
             [call.args[0] for call in run.call_args_list],
             [
                 ["uv", "sync", "--all-packages", "--frozen"],
+                [
+                    "uv", "run", "--all-packages", "ruff", "check", "--fix", "--select", "I",
+                    "--quiet",
+                ],
                 ["npm.cmd" if os.name == "nt" else "npm", "ci"],
                 ["make", "check"],
             ],
@@ -602,6 +645,22 @@ class GeneratorTests(unittest.TestCase):
         )
         self.assertEqual(ast.literal_eval(python_source.split("=", 1)[1].strip()), display)
 
+    def test_line_limit_grows_only_by_what_the_rename_added(self) -> None:
+        pyproject = self.root / "pyproject.toml"
+        pyproject.write_text("[tool.ruff]\nline-length = 100\n", encoding="utf-8")
+        relax_line_length(pyproject, 0)
+        self.assertNotIn("pycodestyle", pyproject.read_text())
+
+        relax_line_length(pyproject, 7)
+        settings = tomllib.loads(pyproject.read_text())
+        self.assertEqual(settings["tool"]["ruff"]["line-length"], 100)
+        self.assertEqual(settings["tool"]["ruff"]["lint"]["pycodestyle"]["max-line-length"], 107)
+
+        # Same-length names leave the generated configuration untouched.
+        with patch("subprocess.run"):
+            self.run_generator()
+        self.assertNotIn("pycodestyle", (self.destination / "pyproject.toml").read_text())
+
     def test_rejects_invalid_starter_schema(self) -> None:
         self.manifest["starter_row"]["expected_abstain"] = False
         self.write("accelerator.manifest.yml", json.dumps(self.manifest))
@@ -645,7 +704,7 @@ class GeneratorTests(unittest.TestCase):
 
     def test_check_failure_is_propagated_and_output_is_preserved_for_diagnosis(self) -> None:
         error = subprocess.CalledProcessError(9, ["make", "check"])
-        with patch("subprocess.run", side_effect=[None, None, error]):
+        with patch("subprocess.run", side_effect=[None, None, None, error]):
             with self.assertRaises(subprocess.CalledProcessError):
                 self.run_generator()
         self.assertTrue((self.destination / "ACCELERATOR_VERSION").exists())

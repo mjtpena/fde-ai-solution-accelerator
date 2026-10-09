@@ -25,7 +25,9 @@ class AgentFrameworkFoundryRuntime:
             or endpoint.query
             or endpoint.fragment
         ):
-            raise ValueError("project_endpoint must be an HTTPS URL without credentials or query data")
+            raise ValueError(
+                "project_endpoint must be an HTTPS URL without credentials or query data"
+            )
         self._project_endpoint = project_endpoint
         self._credential: TokenCredential | AsyncTokenCredential = (
             credential if credential is not None else DefaultAzureCredential()

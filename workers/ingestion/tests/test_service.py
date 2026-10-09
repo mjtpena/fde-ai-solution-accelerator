@@ -1,13 +1,12 @@
 from __future__ import annotations
 
 import asyncio
-from collections.abc import AsyncIterator
+import hashlib
+import unittest
+from collections.abc import AsyncIterator, Sequence
 from contextlib import asynccontextmanager
 from dataclasses import dataclass
 from datetime import date
-import hashlib
-import unittest
-from typing import Sequence
 
 from accelerator.ingestion import (
     Chunk,

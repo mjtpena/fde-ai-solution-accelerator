@@ -1,6 +1,6 @@
-from collections.abc import Awaitable, Callable, Sequence
+from collections.abc import AsyncIterator, Awaitable, Callable, Sequence
 from contextlib import asynccontextmanager
-from typing import Any, AsyncIterator
+from typing import Any
 
 import httpx
 from fastapi import Depends, FastAPI
@@ -10,35 +10,41 @@ from accelerator.api.approvals import router as approvals_router
 from accelerator.api.audit import (
     AuthFailureAuditMiddleware,
     AuthFailureAuditThrottle,
+)
+from accelerator.api.audit import (
     router as audit_router,
 )
-from accelerator.api.chat import ChatTurnPort, router as chat_router
+from accelerator.api.chat import ChatTurnPort
+from accelerator.api.chat import router as chat_router
 from accelerator.api.cost_guard import (
     ContextDependency,
     create_cost_guard_dependency,
     handle_token_budget_exceeded,
 )
 from accelerator.api.health import router as health_router
-from accelerator.api.security_headers import SecurityHeadersMiddleware
 from accelerator.api.retrieval_diagnostics import (
     InMemoryRetrievalDiagnosticsStore,
     RetrievalDiagnosticsStore,
+)
+from accelerator.api.retrieval_diagnostics import (
     router as retrieval_diagnostics_router,
 )
+from accelerator.api.security_headers import SecurityHeadersMiddleware
 from accelerator.configuration.settings import Settings
 from accelerator.domain.audit import AuditRepository
 from accelerator.identity.authentication import AppRole, require_any_role
 from accelerator.identity.jwt_validator import EntraTokenValidator
 from accelerator.identity.scope_resolver import (
     configure_scope_resolver,
-    get_execution_context as resolve_execution_context,
     install_scope_boundary,
 )
+from accelerator.identity.scope_resolver import (
+    get_execution_context as resolve_execution_context,
+)
+from accelerator.observability_core import Telemetry, TracingMiddleware
 from accelerator.security_core.authorisation.memberships import ScopeMembershipRepository
 from accelerator.security_core.cost_guard import RateLimiter, TokenBudgetExceeded
-from accelerator.observability_core import Telemetry, TracingMiddleware
 from accelerator.security_core.infrastructure.database import SessionFactory
-
 
 require_app_role = require_any_role(*AppRole)
 
@@ -145,6 +151,6 @@ def create_app(
         app.state.telemetry = telemetry
         # Inside the correlation boundary, which owns X-Correlation-ID: every request
         # span carries the same validated ID the client sees.
-        app.add_middleware(TracingMiddleware, telemetry=telemetry)  # type: ignore[arg-type]
+        app.add_middleware(TracingMiddleware, telemetry=telemetry)
     install_scope_boundary(app)
     return app

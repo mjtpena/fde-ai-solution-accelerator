@@ -1,8 +1,8 @@
 from __future__ import annotations
 
+import math
 from collections import deque
 from collections.abc import Awaitable, Callable
-import math
 from threading import Lock
 from time import monotonic
 from typing import Protocol

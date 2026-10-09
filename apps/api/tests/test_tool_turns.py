@@ -114,7 +114,10 @@ async def test_read_runs_and_write_becomes_a_persisted_pending_approval(
         ("lookup", {"value": "a"}), ("update_record", {"value": "b", "scope_id": "scope-b"})
     )
     turn = PolicyEnforcedChatTurn(
-        workflow, registry(), session_factory=create_session_factory(engine), limits=ToolCallLimits()
+        workflow,
+        registry(),
+        session_factory=create_session_factory(engine),
+        limits=ToolCallLimits(),
     )
     try:
         result = await turn.run("Please update the record", context())

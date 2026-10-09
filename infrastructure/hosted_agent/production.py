@@ -12,7 +12,6 @@ from accelerator.agent_core.hosting.application import (
     WorkflowHostedApplication,
 )
 from accelerator.agent_core.hosting.contracts import HostedApplication
-
 from infrastructure.hosted_agent.configuration import RuntimeSettings
 
 

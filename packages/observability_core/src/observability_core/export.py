@@ -4,7 +4,6 @@ from opentelemetry.sdk.trace import Event, ReadableSpan
 from opentelemetry.sdk.trace.export import SpanExporter, SpanExportResult
 from opentelemetry.util.types import AttributeValue
 
-
 AttributeSanitizer = Callable[
     [Mapping[str, AttributeValue]], Mapping[str, AttributeValue]
 ]
