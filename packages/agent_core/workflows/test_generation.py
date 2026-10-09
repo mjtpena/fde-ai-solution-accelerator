@@ -96,7 +96,9 @@ async def test_model_calls_reserve_and_settle_the_request_token_budget() -> None
     from .generation import current_token_budget
 
     class Agent:
-        async def run(self, messages: str, *, options: Any, tools: Any = None) -> UsageResult:
+        async def run(
+            self, messages: str, *, options: Any, tools: Any = None, stream: bool = False
+        ) -> UsageResult:
             return UsageResult("Ok. [cite:c-1]", {"input_token_count": 40, "output_token_count": 10})
 
     budget = TokenBudget(1_000)
@@ -174,9 +176,34 @@ async def test_streamed_tokens_never_contain_citation_markers(chunks: list[str])
 
 def test_marker_filter_releases_brackets_that_are_not_markers() -> None:
     markers = CitationMarkerFilter()
+    streamed = [
+        markers.feed("see [note"),
+        markers.feed(" [ci"),
+        markers.feed("ty]"),
+        markers.feed(" end ["),
+        markers.flush(),
+    ]
 
-    assert markers.feed("see [note") == "see [note"
-    assert markers.feed(" [ci") == " "
-    assert markers.feed("ty]") == "[city]"
-    assert markers.feed(" end [") == " end "
-    assert markers.flush() == "["
+    assert "".join(streamed) == "see [note [city] end ["
+
+
+@pytest.mark.parametrize(
+    "text",
+    [
+        "Retention is 30 days [cite:c-1]. Backups run nightly. [cite:c-2]",
+        "  Leading space [cite:a] , then   runs  [cite:b]  and [notes] [cite:c].  ",
+        "Line one [cite:x].\nLine two [cite:y]  !",
+        "Unclosed [cite:never",
+    ],
+)
+def test_streamed_text_always_equals_the_final_answer(text: str) -> None:
+    import random
+
+    expected, _ = extract_citations(text)
+    rng = random.Random(7)
+    for _ in range(200):
+        cuts = sorted(rng.sample(range(1, len(text)), k=min(5, len(text) - 1)))
+        chunks = [text[a:b] for a, b in zip([0, *cuts], [*cuts, len(text)], strict=True)]
+        markers = CitationMarkerFilter()
+        streamed = "".join(markers.feed(chunk) for chunk in chunks) + markers.flush()
+        assert streamed == expected, chunks

@@ -86,23 +86,36 @@ class ChatAgent(Protocol):
 
 
 class CitationMarkerFilter:
-    """Remove ``[cite:...]`` markers from streamed text, even when split across chunks."""
+    """Stream text exactly as ``extract_citations`` will report the final answer.
+
+    Markers are removed even when split across chunks. Trailing whitespace is held
+    back until the next chunk shows whether it precedes punctuation or a marker, so
+    spacing is normalised identically and the streamed text equals the final answer.
+    """
 
     def __init__(self) -> None:
         self._pending = ""
+        self._started = False
 
     def feed(self, text: str) -> str:
-        data = CITATION_MARKER.sub("", self._pending + text)
-        start = data.rfind("[")
-        if start != -1 and self._could_become_marker(data[start:]):
-            self._pending = data[start:]
-            return data[:start]
-        self._pending = ""
-        return data
+        data = _normalise_answer(self._pending + text)
+        hold = len(data)
+        bracket = data.rfind("[")
+        if bracket != -1 and self._could_become_marker(data[bracket:]):
+            hold = bracket
+        hold = len(data[:hold].rstrip(" \t\r\n"))
+        visible, self._pending = data[:hold], data[hold:]
+        return self._emit(visible)
 
     def flush(self) -> str:
         pending, self._pending = self._pending, ""
-        return pending
+        return self._emit(_normalise_answer(pending).rstrip())
+
+    def _emit(self, visible: str) -> str:
+        if not self._started:
+            visible = visible.lstrip()
+            self._started = bool(visible)
+        return visible
 
     @staticmethod
     def _could_become_marker(tail: str) -> bool:
@@ -113,6 +126,12 @@ class CitationMarkerFilter:
             and len(tail) < _MAX_MARKER_LENGTH
             and not any(char in tail[1:] for char in "[] \t\r\n")
         )
+
+
+def _normalise_answer(text: str) -> str:
+    """Drop markers, then the spacing they leave before punctuation and in runs."""
+    without_markers = re.sub(r"[ \t]+([.,;:!?])", r"\1", CITATION_MARKER.sub("", text))
+    return re.sub(r"[ \t]{2,}", " ", without_markers)
 
 
 @dataclass(frozen=True, slots=True)
@@ -147,8 +166,7 @@ def build_prompt(query: str, evidence: Sequence[EvidenceForGeneration]) -> str:
 def extract_citations(text: str) -> tuple[str, tuple[str, ...]]:
     """Return the answer without citation markers, and cited chunk IDs in first-use order."""
     citations = tuple(dict.fromkeys(CITATION_MARKER.findall(text)))
-    answer = re.sub(r"[ \t]+([.,;:!?])", r"\1", CITATION_MARKER.sub("", text))
-    return re.sub(r"[ \t]{2,}", " ", answer).strip(), citations
+    return _normalise_answer(text).strip(), citations
 
 
 class AgentAnswerGenerator:

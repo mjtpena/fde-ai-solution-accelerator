@@ -104,9 +104,8 @@ function parseEvent(frame: string): ChatStreamEvent | null {
         return { type: "error", message: value.message };
       break;
     default:
-      throw new Error(
-        `The chat stream returned an unknown event: ${eventName}.`,
-      );
+      // Forward compatibility: the API may add event types; older clients skip them.
+      return null;
   }
 
   throw new Error(`The chat stream returned an invalid ${eventName} event.`);
