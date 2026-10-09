@@ -110,4 +110,5 @@ testpaths = [
     "packages/observability_core/tests",
     "workers/ingestion/tests",
     "infrastructure/hosted_agent/tests",
+    "infrastructure/tests",
 ]

@@ -4,22 +4,34 @@ param searchServiceName string
 @description('Entra service principal object ID of the managed identity.')
 param principalId string
 
-@description('Choose query-only access or index document ingestion access.')
+@description('Query-only access, index document ingestion, or index definition management.')
 @allowed([
   'reader'
   'indexContributor'
+  'serviceContributor'
 ])
 param accessLevel string
+
+@description('ServicePrincipal for workload identities; User or Group for operators.')
+@allowed([
+  'ServicePrincipal'
+  'User'
+  'Group'
+])
+param principalType string = 'ServicePrincipal'
 
 resource searchService 'Microsoft.Search/searchServices@2023-11-01' existing = {
   name: searchServiceName
 }
 
+var roleIds = {
+  reader: '1407120a-92aa-4202-b7e9-c0e197c71c8f' // Search Index Data Reader
+  indexContributor: '8ebe5a00-799e-43f5-93ac-243d3dce84a7' // Search Index Data Contributor
+  serviceContributor: '7ca78c08-252a-4471-8644-bb5ff32d4ba0' // Search Service Contributor
+}
 var roleDefinitionId = subscriptionResourceId(
   'Microsoft.Authorization/roleDefinitions',
-  accessLevel == 'reader'
-    ? '1407120a-92aa-4202-b7e9-c0e197c71c8f'
-    : '8ebe5a00-799e-43f5-93ac-243d3dce84a7'
+  roleIds[accessLevel]
 )
 
 resource searchRoleAssignment 'Microsoft.Authorization/roleAssignments@2022-04-01' = {
@@ -28,7 +40,7 @@ resource searchRoleAssignment 'Microsoft.Authorization/roleAssignments@2022-04-0
   properties: {
     roleDefinitionId: roleDefinitionId
     principalId: principalId
-    principalType: 'ServicePrincipal'
+    principalType: principalType
   }
 }
 

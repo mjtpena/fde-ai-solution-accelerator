@@ -11,10 +11,12 @@ param tags = {
 param logAnalyticsSkuName = 'PerGB2018'
 param logAnalyticsRetentionInDays = 30
 param storageSkuName = 'Standard_LRS'
-param blobContainerName = 'documents'
 param searchSkuName = 'basic'
 param searchReplicaCount = 1
 param searchPartitionCount = 1
+param searchSemanticSearch = 'free'
+param searchIndexName = 'chunks'
+param searchVectorDimensions = 1536
 
 param postgresSkuName = 'Standard_B1ms'
 param postgresSkuTier = 'Burstable'
@@ -32,6 +34,12 @@ param modelVersion = readEnvironmentVariable('AZURE_MODEL_VERSION', '2025-08-07'
 param modelFormat = 'OpenAI'
 param modelSkuName = 'GlobalStandard'
 param modelCapacity = 1
+param embeddingDeploymentName = 'embedding-model'
+param embeddingModelName = readEnvironmentVariable('AZURE_EMBEDDING_MODEL_NAME', 'text-embedding-3-small')
+param embeddingModelVersion = readEnvironmentVariable('AZURE_EMBEDDING_MODEL_VERSION', '1')
+param embeddingSkuName = 'GlobalStandard'
+param embeddingCapacity = 1
+param deploymentPrincipalId = readEnvironmentVariable('AZURE_DEPLOYMENT_PRINCIPAL_ID', '')
 
 param keyVaultSkuName = 'standard'
 param containerRegistrySkuName = 'Basic'

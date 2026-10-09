@@ -8,6 +8,12 @@ param modelVersion string
 param modelFormat string
 param modelSkuName string
 param modelCapacity int
+@description('Embedding deployment used for indexing and query vectors.')
+param embeddingDeploymentName string
+param embeddingModelName string
+param embeddingModelVersion string
+param embeddingSkuName string
+param embeddingCapacity int
 param logAnalyticsWorkspaceId string
 param tags object
 
@@ -58,6 +64,26 @@ resource modelDeployment 'Microsoft.CognitiveServices/accounts/deployments@2024-
   }
 }
 
+resource embeddingDeployment 'Microsoft.CognitiveServices/accounts/deployments@2024-10-01' = {
+  parent: account
+  name: embeddingDeploymentName
+  sku: {
+    name: embeddingSkuName
+    capacity: embeddingCapacity
+  }
+  properties: {
+    model: {
+      format: modelFormat
+      name: embeddingModelName
+      version: embeddingModelVersion
+    }
+  }
+  // An account applies one deployment change at a time.
+  dependsOn: [
+    modelDeployment
+  ]
+}
+
 resource diagnostics 'Microsoft.Insights/diagnosticSettings@2021-05-01-preview' = {
   name: 'foundry-to-log-analytics'
   scope: account
@@ -84,3 +110,4 @@ output projectId string = project.id
 output projectEndpoint string = 'https://${account.name}.services.ai.azure.com/api/projects/${project.name}'
 output projectPrincipalId string = project.identity.principalId
 output modelDeploymentName string = modelDeployment.name
+output embeddingDeploymentName string = embeddingDeployment.name

@@ -10,16 +10,19 @@ param(
     [Parameter(Mandatory)]
     [guid] $WorkerPrincipalId,
     [Parameter(Mandatory)]
+    [guid] $MigratorPrincipalId,
+    [Parameter(Mandatory)]
     [string] $CaCertificatePath,
     [switch] $VerifyOnly
 )
 
 $ErrorActionPreference = 'Stop'
-if ($ApiPrincipalId -eq [guid]::Empty -or $WorkerPrincipalId -eq [guid]::Empty) {
+$principals = @($ApiPrincipalId, $WorkerPrincipalId, $MigratorPrincipalId)
+if ($principals -contains [guid]::Empty) {
     throw 'Workload principal IDs cannot be empty GUIDs.'
 }
-if ($ApiPrincipalId -eq $WorkerPrincipalId) {
-    throw 'API and worker must use distinct managed identities.'
+if (@($principals | Select-Object -Unique).Count -ne $principals.Count) {
+    throw 'API, worker and migrator must use distinct managed identities.'
 }
 if (-not (Test-Path -LiteralPath $CaCertificatePath -PathType Leaf)) {
     throw 'Supply the trusted PostgreSQL CA certificate bundle.'
@@ -43,7 +46,8 @@ try {
         '--set', 'ON_ERROR_STOP=1',
         '--set', "database_name=$DatabaseName",
         '--set', "api_principal_id=$ApiPrincipalId",
-        '--set', "worker_principal_id=$WorkerPrincipalId"
+        '--set', "worker_principal_id=$WorkerPrincipalId",
+        '--set', "migrator_principal_id=$MigratorPrincipalId"
     )
     if (-not $VerifyOnly) {
         & psql @arguments --dbname postgres --file (Join-Path $PSScriptRoot 'bootstrap-postgres.sql')

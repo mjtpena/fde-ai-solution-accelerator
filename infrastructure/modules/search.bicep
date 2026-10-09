@@ -3,6 +3,13 @@ param searchServiceName string
 param searchSkuName string
 param searchReplicaCount int
 param searchPartitionCount int
+@description('Semantic ranker plan; the API gates sufficiency on reranker scores by default.')
+@allowed([
+  'disabled'
+  'free'
+  'standard'
+])
+param semanticSearch string
 param logAnalyticsWorkspaceId string
 param tags object
 
@@ -19,6 +26,7 @@ resource search 'Microsoft.Search/searchServices@2023-11-01' = {
     hostingMode: 'default'
     publicNetworkAccess: 'enabled'
     disableLocalAuth: true
+    semanticSearch: semanticSearch
   }
 }
 

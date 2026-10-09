@@ -2,7 +2,45 @@
 
 `main.bicep` targets a subscription and creates the resource group. Core resource
 modules compose the identity/RBAC modules from issue #33. No keys, database
-passwords, or connection strings are supplied or emitted.
+passwords, or connection strings are supplied or emitted; every service has local
+(key) authentication disabled and is reached with a user-assigned identity.
+
+## What gets deployed
+
+| Resource | Notes |
+| --- | --- |
+| Container Apps | `api` (internal ingress only), `web` (public), `worker` (no ingress), and a manual `migrate` job |
+| PostgreSQL Flexible Server | Entra-only auth, private VNet access, no public endpoint |
+| Storage | `incoming` and `documents` containers, `ingestion` and `ingestion-poison` queues, shared keys off |
+| Azure AI Search | Local auth off; semantic ranker plan `searchSemanticSearch` (default `free`) |
+| Foundry | Chat deployment (`modelName`) and embedding deployment (`embeddingModelName`) |
+| Key Vault, Log Analytics, Application Insights | RBAC vault; App Insights ingestion requires Entra |
+| User-assigned identities | One each for api, web, worker and migrator |
+
+Search and Foundry SKUs are parameters (`searchSkuName`, `searchReplicaCount`,
+`searchPartitionCount`, `foundrySkuName`, `modelSkuName`, `embeddingSkuName`).
+
+### Least-privilege access
+
+| Identity | Grants |
+| --- | --- |
+| api | AcrPull; Search Index Data Reader; Foundry project user; Monitoring Metrics Publisher; database role `accelerator_api` |
+| worker | AcrPull; Search Index Data Contributor; Foundry project user; Blob Data Reader on `incoming`; Blob Data Contributor on `documents`; Queue Message Processor on `ingestion`; Queue Message Sender on `ingestion-poison`; database role `accelerator_worker` |
+| migrator | AcrPull; Monitoring Metrics Publisher; database role `accelerator_migrator` |
+| web | AcrPull only; it calls the API over the environment's internal network |
+| deployer (`deploymentPrincipalId`) | Search Service Contributor, to create the index (optional) |
+
+Database privileges: only `accelerator_migrator` may create objects. After each
+upgrade it grants the runtime roles exactly their table privileges
+(`accelerator.migrations.grants`): the API gets `SELECT, INSERT` on the
+append-only audit tables and no access to ingestion tables; the worker gets the
+two ingestion tables only.
+
+Container settings match the application's typed settings (`API_*` and
+`INGESTION_*`, see `apps/api/src/accelerator/configuration/settings.py` and
+`workers/ingestion/src/ingestion_worker/settings.py`): production mode, managed
+identity for every dependency, verified TLS to PostgreSQL, and
+`APPLICATIONINSIGHTS_CONNECTION_STRING` for Entra-authenticated telemetry.
 
 ## Deployment order
 
@@ -12,21 +50,24 @@ passwords, or connection strings are supplied or emitted.
    `-BuildOnly`, with `DEPLOY_APPLICATIONS=false`, then deploy the same parameter
    file. This creates the registry, private database/network, managed identities,
    Foundry resources, and Container Apps environment.
-2. Publish real API, web, and worker images. The API image must be supplied by the
-   operator; this repository does not provide an API Dockerfile. Set `API_IMAGE`,
-   `WEB_IMAGE`, and `WORKER_IMAGE` to trusted, immutable registry digest references
-   (`registry/repository@sha256:<digest>`). Images must be pullable by the app
+2. Build and publish the API, web, and worker images from this repository
+   (`apps/api/Dockerfile`, `apps/web/Dockerfile`, `workers/ingestion/Dockerfile`).
+   Set `API_IMAGE`, `WEB_IMAGE`, and `WORKER_IMAGE` to trusted, immutable registry
+   digest references (`registry/repository@sha256:<digest>`). Images must be pullable by the app
    identities: root grants AcrPull on the newly created registry only. Also set
    `API_ENTRA_TENANT_ID` and `API_ENTRA_AUDIENCE`.
 3. From a VNet-connected runner signed in as the configured PostgreSQL Entra
    administrator, run `bootstrap-postgres.ps1` with the root outputs
-   `postgresFqdn`, `postgresDatabaseName`, `apiIdentityPrincipalId`, and
-   `workerIdentityPrincipalId`. Supply the trusted CA bundle for `verify-full`.
+   `postgresFqdn`, `postgresDatabaseName`, `apiIdentityPrincipalId`,
+   `workerIdentityPrincipalId`, and `migratorIdentityPrincipalId`. Supply the trusted CA bundle for `verify-full`.
    Run the same command with `-VerifyOnly` as a required deployment gate.
 4. Set `DEPLOY_APPLICATIONS=true`, run authenticated what-if again, then deploy
-   the same root/parameter file. Bicep creates all three real Container Apps,
-   attaches a distinct UAMI and registry pull identity to each, and emits
-   `apiUrl` and `webUrl`. The worker has no ingress and one minimum replica.
+   the same root/parameter file. Bicep creates all three real Container Apps and
+   the migration job, attaches a distinct UAMI and registry pull identity to each,
+   and emits `apiInternalUrl` and `webUrl`. The worker has no ingress and one
+   minimum replica.
+5. Start the migration job (`az containerapp job start`) and wait for it to
+   succeed before traffic reaches the new revision.
 
 ```powershell
 pwsh infrastructure/scripts/validate-deployment.ps1 `
@@ -38,6 +79,7 @@ pwsh infrastructure/scripts/bootstrap-postgres.ps1 `
   -HostName $postgresFqdn -DatabaseName $postgresDatabaseName `
   -AdministratorName $env:AZURE_POSTGRES_ADMIN_NAME `
   -ApiPrincipalId $apiIdentityPrincipalId -WorkerPrincipalId $workerIdentityPrincipalId `
+  -MigratorPrincipalId $migratorIdentityPrincipalId `
   -CaCertificatePath $trustedCaBundle -VerifyOnly
 ```
 
@@ -61,9 +103,9 @@ verification succeeded unless they actually ran.
 
 Bootstrap binds each fixed application role to its exact Entra object ID, rejects
 an existing mismatched/admin role, and grants only database CONNECT and schema
-USAGE. It deliberately grants no DDL, role-management, or blanket table privileges.
-The application migration owner must grant table-specific permissions consistent
-with append-only audit storage. Runtime images must implement Entra token renewal
+USAGE, plus schema CREATE for the migrator alone. It grants no role-management or
+blanket table privileges; table privileges come from the migrator after each
+upgrade, as described above. Runtime images must implement Entra token renewal
 and trusted certificate configuration; provisioning cannot supply that behavior.
 
 The bootstrap invokes `pgaadauth_create_principal_with_oid` in the `postgres`

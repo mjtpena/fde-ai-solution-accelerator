@@ -23,8 +23,15 @@ param logAnalyticsRetentionInDays int
 @description('Azure Storage account SKU.')
 param storageSkuName string
 
-@description('Private blob container for source documents.')
-param blobContainerName string
+@description('Private blob container that receives uploaded source documents.')
+param incomingContainerName string = 'incoming'
+
+@description('Private blob container holding the authoritative ingested documents.')
+param documentsContainerName string = 'documents'
+
+@description('Storage queue of ingestion requests, and its poison queue.')
+param queueName string = 'ingestion'
+param poisonQueueName string = 'ingestion-poison'
 
 @description('Azure AI Search SKU.')
 param searchSkuName string
@@ -34,6 +41,20 @@ param searchReplicaCount int
 
 @description('Azure AI Search partition count.')
 param searchPartitionCount int
+
+@description('Azure AI Search semantic ranker plan (the API gates on reranker scores).')
+@allowed([
+  'disabled'
+  'free'
+  'standard'
+])
+param searchSemanticSearch string = 'free'
+
+@description('Search index the API queries and the worker writes.')
+param searchIndexName string = 'chunks'
+
+@description('Vector dimensions; must match the embedding deployment.')
+param searchVectorDimensions int = 1536
 
 @description('PostgreSQL Flexible Server SKU name.')
 param postgresSkuName string
@@ -83,6 +104,23 @@ param modelSkuName string
 
 @description('Model deployment capacity.')
 param modelCapacity int
+
+@description('Embedding model deployment used for indexing and queries.')
+param embeddingDeploymentName string = 'embedding-model'
+param embeddingModelName string = 'text-embedding-3-small'
+param embeddingModelVersion string = '1'
+param embeddingSkuName string = 'GlobalStandard'
+param embeddingCapacity int = 1
+
+@description('Object ID of the deployment principal; granted Search Service Contributor to provision the index. Empty skips the grant.')
+param deploymentPrincipalId string = ''
+
+@allowed([
+  'ServicePrincipal'
+  'User'
+  'Group'
+])
+param deploymentPrincipalType string = 'ServicePrincipal'
 
 @description('Azure Key Vault SKU.')
 param keyVaultSkuName string
@@ -140,7 +178,10 @@ module storage './modules/storage.bicep' = {
     location: location
     storageAccountName: storageAccountName
     storageSkuName: storageSkuName
-    blobContainerName: blobContainerName
+    incomingContainerName: incomingContainerName
+    documentsContainerName: documentsContainerName
+    queueName: queueName
+    poisonQueueName: poisonQueueName
     logAnalyticsWorkspaceId: monitoring.outputs.workspaceId
     tags: tags
   }
@@ -155,6 +196,7 @@ module search './modules/search.bicep' = {
     searchSkuName: searchSkuName
     searchReplicaCount: searchReplicaCount
     searchPartitionCount: searchPartitionCount
+    semanticSearch: searchSemanticSearch
     logAnalyticsWorkspaceId: monitoring.outputs.workspaceId
     tags: tags
   }
@@ -210,6 +252,11 @@ module foundry './modules/foundry.bicep' = {
     modelFormat: modelFormat
     modelSkuName: modelSkuName
     modelCapacity: modelCapacity
+    embeddingDeploymentName: embeddingDeploymentName
+    embeddingModelName: embeddingModelName
+    embeddingModelVersion: embeddingModelVersion
+    embeddingSkuName: embeddingSkuName
+    embeddingCapacity: embeddingCapacity
     logAnalyticsWorkspaceId: monitoring.outputs.workspaceId
     tags: tags
   }
@@ -269,6 +316,25 @@ module workerIdentity './modules/user-assigned-identity.bicep' = {
   }
 }
 
+module migratorIdentity './modules/user-assigned-identity.bicep' = {
+  name: 'migrator-identity-${take(suffix, 8)}'
+  scope: environmentResourceGroup
+  params: {
+    identityName: '${resourcePrefix}-migrator-id-${take(suffix, 6)}'
+    location: location
+    tags: tags
+  }
+}
+
+module migratorRegistryPull './modules/acr-pull-role-assignment.bicep' = {
+  name: 'migrator-acr-pull-${take(suffix, 8)}'
+  scope: environmentResourceGroup
+  params: {
+    registryName: containerRegistry.outputs.registryName
+    principalId: migratorIdentity.outputs.principalId
+  }
+}
+
 module apiRegistryPull './modules/acr-pull-role-assignment.bicep' = {
   name: 'api-acr-pull-${take(suffix, 8)}'
   scope: environmentResourceGroup
@@ -325,25 +391,88 @@ module workerSearchAccess './modules/search-index-role-assignment.bicep' = {
   }
 }
 
-module apiBlobAccess './modules/storage-container-role-assignment.bicep' = {
-  name: 'api-blob-contributor-${take(suffix, 8)}'
+// The worker reads uploads, writes the authoritative copy, consumes the work queue
+// and can only add to the poison queue. The API has no storage access.
+module workerIncomingAccess './modules/storage-container-role-assignment.bicep' = {
+  name: 'worker-incoming-reader-${take(suffix, 8)}'
   scope: environmentResourceGroup
   params: {
     storageAccountName: storage.outputs.storageAccountName
-    blobContainerName: blobContainerName
-    principalId: apiIdentity.outputs.principalId
+    blobContainerName: incomingContainerName
+    principalId: workerIdentity.outputs.principalId
+    accessLevel: 'reader'
+  }
+}
+
+module workerDocumentsAccess './modules/storage-container-role-assignment.bicep' = {
+  name: 'worker-documents-contributor-${take(suffix, 8)}'
+  scope: environmentResourceGroup
+  params: {
+    storageAccountName: storage.outputs.storageAccountName
+    blobContainerName: documentsContainerName
+    principalId: workerIdentity.outputs.principalId
     accessLevel: 'contributor'
   }
 }
 
-module workerBlobAccess './modules/storage-container-role-assignment.bicep' = {
-  name: 'worker-blob-reader-${take(suffix, 8)}'
+module workerQueueAccess './modules/storage-queue-role-assignment.bicep' = {
+  name: 'worker-queue-processor-${take(suffix, 8)}'
   scope: environmentResourceGroup
   params: {
     storageAccountName: storage.outputs.storageAccountName
-    blobContainerName: blobContainerName
+    queueName: queueName
     principalId: workerIdentity.outputs.principalId
-    accessLevel: 'reader'
+    accessLevel: 'processor'
+  }
+}
+
+module workerPoisonQueueAccess './modules/storage-queue-role-assignment.bicep' = {
+  name: 'worker-poison-sender-${take(suffix, 8)}'
+  scope: environmentResourceGroup
+  params: {
+    storageAccountName: storage.outputs.storageAccountName
+    queueName: poisonQueueName
+    principalId: workerIdentity.outputs.principalId
+    accessLevel: 'sender'
+  }
+}
+
+module workerFoundryAccess './modules/foundry-agent-consumer-role-assignment.bicep' = {
+  name: 'worker-foundry-consumer-${take(suffix, 8)}'
+  scope: environmentResourceGroup
+  params: {
+    foundryAccountName: foundry.outputs.accountName
+    foundryProjectName: foundry.outputs.projectName
+    principalId: workerIdentity.outputs.principalId
+  }
+}
+
+module apiTelemetryAccess './modules/monitoring-publisher-role-assignment.bicep' = {
+  name: 'api-telemetry-publisher-${take(suffix, 8)}'
+  scope: environmentResourceGroup
+  params: {
+    applicationInsightsName: monitoring.outputs.applicationInsightsName
+    principalId: apiIdentity.outputs.principalId
+  }
+}
+
+module migratorTelemetryAccess './modules/monitoring-publisher-role-assignment.bicep' = {
+  name: 'migrator-telemetry-publisher-${take(suffix, 8)}'
+  scope: environmentResourceGroup
+  params: {
+    applicationInsightsName: monitoring.outputs.applicationInsightsName
+    principalId: migratorIdentity.outputs.principalId
+  }
+}
+
+module deployerSearchAccess './modules/search-index-role-assignment.bicep' = if (!empty(deploymentPrincipalId)) {
+  name: 'deployer-search-service-${take(suffix, 8)}'
+  scope: environmentResourceGroup
+  params: {
+    searchServiceName: search.outputs.searchServiceName
+    principalId: deploymentPrincipalId
+    principalType: deploymentPrincipalType
+    accessLevel: 'serviceContributor'
   }
 }
 
@@ -367,6 +496,7 @@ module containerApps './modules/container-apps.bicep' = {
     apiAppName: '${resourcePrefix}-api-${take(suffix, 6)}'
     webAppName: '${resourcePrefix}-web-${take(suffix, 6)}'
     workerAppName: '${resourcePrefix}-worker-${take(suffix, 6)}'
+    migrationJobName: '${resourcePrefix}-migrate-${take(suffix, 6)}'
     infrastructureSubnetId: network.outputs.containerAppsSubnetId
     deployApplications: deployApplications
     apiImage: apiImage
@@ -379,19 +509,32 @@ module containerApps './modules/container-apps.bicep' = {
     webIdentityClientId: webIdentity.outputs.clientId
     workerIdentityId: workerIdentity.outputs.identityId
     workerIdentityClientId: workerIdentity.outputs.clientId
+    migratorIdentityId: migratorIdentity.outputs.identityId
+    migratorIdentityClientId: migratorIdentity.outputs.clientId
     apiEntraTenantId: apiEntraTenantId
     apiEntraAudience: apiEntraAudience
     postgresHost: postgres.outputs.fullyQualifiedDomainName
     postgresDatabaseName: postgresDatabaseName
     blobEndpoint: storage.outputs.blobEndpoint
+    queueEndpoint: storage.outputs.queueEndpoint
+    incomingContainerName: incomingContainerName
+    documentsContainerName: documentsContainerName
+    queueName: queueName
+    poisonQueueName: poisonQueueName
     searchEndpoint: search.outputs.searchEndpoint
+    searchIndexName: searchIndexName
+    searchVectorDimensions: searchVectorDimensions
     projectEndpoint: foundry.outputs.projectEndpoint
+    modelDeploymentName: foundry.outputs.modelDeploymentName
+    embeddingDeploymentName: foundry.outputs.embeddingDeploymentName
+    applicationInsightsConnectionString: monitoring.outputs.applicationInsightsConnectionString
     tags: tags
   }
   dependsOn: [
     apiRegistryPull
     webRegistryPull
     workerRegistryPull
+    migratorRegistryPull
   ]
 }
 
@@ -429,7 +572,16 @@ output workerIdentityId string = workerIdentity.outputs.identityId
 output workerIdentityPrincipalId string = workerIdentity.outputs.principalId
 output workerIdentityClientId string = workerIdentity.outputs.clientId
 output virtualNetworkId string = network.outputs.networkId
-output apiUrl string = containerApps.outputs.apiUrl
+output apiInternalUrl string = containerApps.outputs.apiInternalUrl
 output webUrl string = containerApps.outputs.webUrl
+output queueEndpoint string = storage.outputs.queueEndpoint
+output incomingContainerName string = incomingContainerName
+output queueName string = queueName
+output searchIndexName string = searchIndexName
+output searchVectorDimensions int = searchVectorDimensions
+output embeddingDeploymentName string = foundry.outputs.embeddingDeploymentName
+output migratorIdentityPrincipalId string = migratorIdentity.outputs.principalId
+output migratorIdentityClientId string = migratorIdentity.outputs.clientId
+output migratorDatabaseRoleName string = 'accelerator_migrator'
 output apiDatabaseRoleName string = 'accelerator_api'
 output workerDatabaseRoleName string = 'accelerator_worker'

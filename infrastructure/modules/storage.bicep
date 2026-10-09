@@ -1,7 +1,14 @@
 param location string
 param storageAccountName string
 param storageSkuName string
-param blobContainerName string
+@description('Container that receives uploaded source documents.')
+param incomingContainerName string
+@description('Container holding the authoritative copy of each ingested document.')
+param documentsContainerName string
+@description('Queue of ingestion requests.')
+param queueName string
+@description('Queue receiving messages that exhausted their retries.')
+param poisonQueueName string
 param logAnalyticsWorkspaceId string
 param tags object
 
@@ -35,13 +42,27 @@ resource blobService 'Microsoft.Storage/storageAccounts/blobServices@2023-05-01'
   }
 }
 
-resource blobContainer 'Microsoft.Storage/storageAccounts/blobServices/containers@2023-05-01' = {
-  parent: blobService
-  name: blobContainerName
-  properties: {
-    publicAccess: 'None'
+resource blobContainers 'Microsoft.Storage/storageAccounts/blobServices/containers@2023-05-01' = [
+  for name in [incomingContainerName, documentsContainerName]: {
+    parent: blobService
+    name: name
+    properties: {
+      publicAccess: 'None'
+    }
   }
+]
+
+resource queueService 'Microsoft.Storage/storageAccounts/queueServices@2023-05-01' = {
+  parent: storage
+  name: 'default'
 }
+
+resource queues 'Microsoft.Storage/storageAccounts/queueServices/queues@2023-05-01' = [
+  for name in [queueName, poisonQueueName]: {
+    parent: queueService
+    name: name
+  }
+]
 
 resource diagnostics 'Microsoft.Insights/diagnosticSettings@2021-05-01-preview' = {
   name: 'storage-to-log-analytics'
@@ -65,3 +86,4 @@ resource diagnostics 'Microsoft.Insights/diagnosticSettings@2021-05-01-preview' 
 
 output storageAccountName string = storage.name
 output blobEndpoint string = storage.properties.primaryEndpoints.blob
+output queueEndpoint string = storage.properties.primaryEndpoints.queue
