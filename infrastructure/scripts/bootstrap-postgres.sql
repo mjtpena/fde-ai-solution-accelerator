@@ -20,5 +20,9 @@ $$;
 
 SELECT pg_temp.ensure_workload_principal('accelerator_api', :'api_principal_id');
 SELECT pg_temp.ensure_workload_principal('accelerator_worker', :'worker_principal_id');
-SELECT format('GRANT CONNECT ON DATABASE %I TO accelerator_api, accelerator_worker', :'database_name') \gexec
+SELECT pg_temp.ensure_workload_principal('accelerator_migrator', :'migrator_principal_id');
+SELECT format(
+    'GRANT CONNECT ON DATABASE %I TO accelerator_api, accelerator_worker, accelerator_migrator',
+    :'database_name'
+) \gexec
 COMMIT;

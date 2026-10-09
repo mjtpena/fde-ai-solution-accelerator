@@ -1,6 +1,5 @@
-from pathlib import Path
 import unittest
-
+from pathlib import Path
 
 MODULES = Path(__file__).resolve().parents[1] / "modules"
 
@@ -58,11 +57,41 @@ class IdentityRbacContractTests(unittest.TestCase):
         self.assertIn("scope: foundryProject", assignment)
         self.assertNotIn("Foundry User", assignment)
 
+    def test_queue_roles_are_limited_to_one_queue(self) -> None:
+        assignment = self.read_module("storage-queue-role-assignment.bicep")
+
+        self.assertIn("'8a0f0c08-91a1-4084-bc3d-661d67233fed'", assignment)  # processor
+        self.assertIn("'c6a89b2d-59bc-44d0-9896-0f6e12d7b80a'", assignment)  # sender
+        self.assertIn("scope: queue", assignment)
+
+    def test_telemetry_publisher_is_scoped_to_application_insights(self) -> None:
+        assignment = self.read_module("monitoring-publisher-role-assignment.bicep")
+
+        self.assertIn("'3913510d-42f4-4b42-8a1d-c0b25e3be3c6'", assignment)
+        self.assertIn("scope: applicationInsights", assignment)
+
+    def test_only_the_deployer_may_manage_search_index_definitions(self) -> None:
+        assignment = self.read_module("search-index-role-assignment.bicep")
+        main = (MODULES.parent / "main.bicep").read_text(encoding="utf-8")
+
+        self.assertIn("'7ca78c08-252a-4471-8644-bb5ff32d4ba0'", assignment)
+        self.assertEqual(main.count("accessLevel: 'serviceContributor'"), 1)
+        self.assertIn("principalId: deploymentPrincipalId", main)
+
+    def test_api_has_no_storage_access_and_worker_storage_access_is_split(self) -> None:
+        main = (MODULES.parent / "main.bicep").read_text(encoding="utf-8")
+
+        self.assertNotIn("module apiBlobAccess", main)
+        self.assertIn("blobContainerName: incomingContainerName", main)
+        self.assertIn("blobContainerName: documentsContainerName", main)
+
     def test_role_assignment_modules_expose_resource_ids(self) -> None:
         module_names = (
             "acr-pull-role-assignment.bicep",
             "search-index-role-assignment.bicep",
             "storage-container-role-assignment.bicep",
+            "storage-queue-role-assignment.bicep",
+            "monitoring-publisher-role-assignment.bicep",
             "foundry-agent-consumer-role-assignment.bicep",
         )
 

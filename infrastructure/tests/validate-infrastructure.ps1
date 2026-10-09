@@ -28,6 +28,13 @@ $appTemplate = $modules.properties.template | Where-Object {
     @($_.resources | Where-Object type -eq 'Microsoft.App/containerApps').Count -gt 0
 }
 Assert-Condition ($appTemplate.variables.workloads.Count -eq 3) 'Expected API, web, and worker.'
+$apiWorkload = $appTemplate.variables.workloads | Where-Object kind -eq 'api'
+Assert-Condition ($apiWorkload.external -eq $false) 'The API must only be reachable inside the environment.'
+$migration = $modules.properties.template.resources | Where-Object type -eq 'Microsoft.App/jobs'
+Assert-Condition ($migration.properties.configuration.triggerType -eq 'Manual') 'Migrations run as a manually started job.'
+Assert-Condition (($migration.properties.template.containers[0].command -join ' ') -eq 'python -m accelerator.migrations upgrade head') 'The migration job must run the packaged migrations.'
+$insights = $modules.properties.template.resources | Where-Object type -eq 'Microsoft.Insights/components'
+Assert-Condition ($insights.properties.DisableLocalAuth -eq $true) 'Application Insights must require Entra ingestion.'
 Assert-Condition ($appResources[0].identity.type -eq 'UserAssigned') 'Workload UAMIs must be attached.'
 Assert-Condition ($appResources[0].properties.configuration.registries[0].identity -match 'identityId') 'Registry must use the workload identity.'
 $postgres = $modules.properties.template.resources | Where-Object type -eq 'Microsoft.DBforPostgreSQL/flexibleServers'
@@ -125,6 +132,7 @@ try {
         AdministratorName = 'test-admin'
         ApiPrincipalId = '11111111-2222-3333-4444-555555555555'
         WorkerPrincipalId = '22222222-3333-4444-5555-666666666666'
+        MigratorPrincipalId = '33333333-4444-5555-6666-777777777777'
         CaCertificatePath = $certificate
     }
     $env:PGPASSWORD = 'previous-value'
@@ -137,6 +145,13 @@ try {
     & $bootstrap @bootstrapArguments -VerifyOnly
     Assert-Condition ($global:FdeInfrastructureTest.psqlCalls.Count -eq 2) 'VerifyOnly must execute only verification SQL.'
     Assert-Condition (@($global:FdeInfrastructureTest.psqlCalls | Where-Object { $_ -match '(bootstrap-postgres.sql|grant-postgres-schema.sql)' }).Count -eq 0) 'VerifyOnly must not mutate roles.'
+    $duplicate = $bootstrapArguments.Clone()
+    $duplicate.MigratorPrincipalId = $duplicate.ApiPrincipalId
+    Assert-Failure { & $bootstrap @duplicate -VerifyOnly } 'distinct managed identities'
+    Assert-Condition (@($global:FdeInfrastructureTest.psqlCalls | Where-Object { $_ -notmatch 'migrator_principal_id=33333333' }).Count -eq 0) 'Every psql call must bind the migrator principal.'
+    $grants = Get-Content -LiteralPath (Join-Path $root 'scripts/grant-postgres-schema.sql') -Raw
+    Assert-Condition ($grants -match 'GRANT CREATE ON SCHEMA public TO accelerator_migrator;') 'Only the migrator may create objects.'
+    Assert-Condition ($grants -notmatch 'GRANT CREATE ON SCHEMA public TO accelerator_(api|worker)') 'Runtime roles must not create objects.'
     $global:FdeInfrastructureTest.failPsql = $true
     Assert-Failure { & $bootstrap @bootstrapArguments -VerifyOnly } 'verification failed'
     Assert-Condition ($env:PGPASSWORD -eq 'previous-value') 'Failed verification must also clear the token.'

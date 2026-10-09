@@ -25,6 +25,8 @@ class WorkerSettings(BaseSettings):
 
     database_url: PostgresDsn | None = None
     database_auth_mode: Literal["password", "managed_identity"] = "password"
+    # Extra CA bundle for verifying the server certificate (private CAs, test servers).
+    database_tls_ca_file: str | None = Field(default=None, min_length=1)
 
     search_endpoint: HttpUrl | None = None
     search_index_name: str | None = None

@@ -48,22 +48,22 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 30
     steps:
-      - uses: actions/checkout@v7
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
         with:
           persist-credentials: false
 
-      - uses: astral-sh/setup-uv@v10.2.0
+      - uses: astral-sh/setup-uv@c18668ad3cf93ea998bef934396af7bb5c839dc7 # v10.2.0
         with:
           enable-cache: true
           cache-dependency-glob: |
             uv.lock
             **/pyproject.toml
 
-      - uses: actions/setup-python@v7
+      - uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7
         with:
           python-version: "3.12"
 
-      - uses: actions/setup-node@v7
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7
         with:
           node-version: "22"
           cache: npm
@@ -88,7 +88,7 @@ jobs:
 
       - name: Upload smoke evaluation report
         if: always()
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
         with:
           name: smoke-evaluation-${{ github.sha }}
           path: |
@@ -124,6 +124,7 @@ jobs:
       web_identity_principal_id: ${{ steps.outputs.outputs.web_identity_principal_id }}
       worker_identity_id: ${{ steps.outputs.outputs.worker_identity_id }}
       worker_identity_principal_id: ${{ steps.outputs.outputs.worker_identity_principal_id }}
+      migrator_identity_principal_id: ${{ steps.outputs.outputs.migrator_identity_principal_id }}
       project_endpoint: ${{ steps.outputs.outputs.project_endpoint }}
       foundry_project_id: ${{ steps.outputs.outputs.foundry_project_id }}
       foundry_project_name: ${{ steps.outputs.outputs.foundry_project_name }}
@@ -152,18 +153,18 @@ jobs:
       API_ENTRA_AUDIENCE: ${{ vars.API_ENTRA_AUDIENCE }}
       POSTGRES_RUNNER_LABEL: ${{ vars.POSTGRES_RUNNER_LABEL }}
     steps:
-      - uses: actions/checkout@v7
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
         with:
           persist-credentials: false
 
-      - uses: astral-sh/setup-uv@v10.2.0
+      - uses: astral-sh/setup-uv@c18668ad3cf93ea998bef934396af7bb5c839dc7 # v10.2.0
         with:
           enable-cache: true
           cache-dependency-glob: |
             uv.lock
             **/pyproject.toml
 
-      - uses: actions/setup-python@v7
+      - uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7
         with:
           python-version: "3.12"
 
@@ -197,7 +198,7 @@ jobs:
           fi
 
       - name: Sign in to Azure with OIDC
-        uses: azure/login@v2
+        uses: azure/login@7184910d9eb2b1c5e48f7073824a90609bb9b6d6 # v2
         with:
           client-id: ${{ env.AZURE_CLIENT_ID }}
           tenant-id: ${{ env.AZURE_TENANT_ID }}
@@ -215,7 +216,7 @@ jobs:
 
       - name: Upload successful what-if evidence
         if: steps.what_if.outcome == 'success'
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
         with:
           name: dev-bootstrap-what-if-${{ github.sha }}
           path: ${{ runner.temp }}/deployment-what-if.json
@@ -265,6 +266,7 @@ jobs:
             echo "web_identity_principal_id=$(jq -er '.webIdentityPrincipalId.value' <<< "$outputs")"
             echo "worker_identity_id=$(jq -er '.workerIdentityId.value' <<< "$outputs")"
             echo "worker_identity_principal_id=$(jq -er '.workerIdentityPrincipalId.value' <<< "$outputs")"
+            echo "migrator_identity_principal_id=$(jq -er '.migratorIdentityPrincipalId.value' <<< "$outputs")"
             echo "project_endpoint=$(jq -er '.projectEndpoint.value' <<< "$outputs")"
             echo "foundry_project_id=$(jq -er '.foundryProjectId.value' <<< "$outputs")"
             echo "foundry_project_name=$(jq -er '.foundryProjectName.value' <<< "$outputs")"
@@ -367,11 +369,11 @@ jobs:
       contents: read
       id-token: write
     steps:
-      - uses: actions/checkout@v7
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
         with:
           persist-credentials: false
 
-      - uses: azure/login@v2
+      - uses: azure/login@7184910d9eb2b1c5e48f7073824a90609bb9b6d6 # v2
         with:
           client-id: ${{ vars.AZURE_CLIENT_ID }}
           tenant-id: ${{ vars.AZURE_TENANT_ID }}
@@ -386,11 +388,13 @@ jobs:
           POSTGRES_CA: ${{ vars.POSTGRES_CA_CERTIFICATE_PATH }}
           API_PRINCIPAL: ${{ needs.deploy_dev.outputs.api_identity_principal_id }}
           WORKER_PRINCIPAL: ${{ needs.deploy_dev.outputs.worker_identity_principal_id }}
+          MIGRATOR_PRINCIPAL: ${{ needs.deploy_dev.outputs.migrator_identity_principal_id }}
         run: |
           ./infrastructure/scripts/bootstrap-postgres.ps1 `
             -HostName $env:POSTGRES_HOST -DatabaseName $env:POSTGRES_DATABASE `
             -AdministratorName $env:POSTGRES_ADMIN `
             -ApiPrincipalId $env:API_PRINCIPAL -WorkerPrincipalId $env:WORKER_PRINCIPAL `
+            -MigratorPrincipalId $env:MIGRATOR_PRINCIPAL `
             -CaCertificatePath $env:POSTGRES_CA -VerifyOnly
 
   deploy_applications:
@@ -418,14 +422,14 @@ jobs:
       HOSTED_AGENT_NAME: ${{ vars.HOSTED_AGENT_NAME }}
       HOSTED_APPLICATION_FACTORY: ${{ vars.HOSTED_APPLICATION_FACTORY }}
     steps:
-      - uses: actions/checkout@v7
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
         with:
           persist-credentials: false
-      - uses: astral-sh/setup-uv@v10.2.0
-      - uses: actions/setup-python@v7
+      - uses: astral-sh/setup-uv@c18668ad3cf93ea998bef934396af7bb5c839dc7 # v10.2.0
+      - uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7
         with:
           python-version: "3.12"
-      - uses: azure/login@v2
+      - uses: azure/login@7184910d9eb2b1c5e48f7073824a90609bb9b6d6 # v2
         with:
           client-id: ${{ vars.AZURE_CLIENT_ID }}
           tenant-id: ${{ vars.AZURE_TENANT_ID }}
@@ -442,7 +446,7 @@ jobs:
 
       - name: Upload successful application what-if evidence
         if: steps.what_if.outcome == 'success'
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
         with:
           name: dev-applications-what-if-${{ github.sha }}
           path: ${{ runner.temp }}/applications-what-if.json
@@ -514,23 +518,23 @@ jobs:
       EVALUATION_JUDGE_AZURE_DEPLOYMENT: ${{ vars.EVALUATION_JUDGE_AZURE_DEPLOYMENT }}
       EVALUATION_DATASET: ${{ vars.EVALUATION_DATASET }}
     steps:
-      - uses: actions/checkout@v7
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
         with:
           persist-credentials: false
 
-      - uses: astral-sh/setup-uv@v10.2.0
+      - uses: astral-sh/setup-uv@c18668ad3cf93ea998bef934396af7bb5c839dc7 # v10.2.0
         with:
           enable-cache: true
           cache-dependency-glob: |
             uv.lock
             **/pyproject.toml
 
-      - uses: actions/setup-python@v7
+      - uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7
         with:
           python-version: "3.12"
 
       - name: Sign in to Azure with OIDC
-        uses: azure/login@v2
+        uses: azure/login@7184910d9eb2b1c5e48f7073824a90609bb9b6d6 # v2
         with:
           client-id: ${{ env.AZURE_CLIENT_ID }}
           tenant-id: ${{ env.AZURE_TENANT_ID }}
@@ -567,23 +571,23 @@ jobs:
       HOSTED_PROJECT_ENDPOINT: ${{ vars.HOSTED_PROJECT_ENDPOINT }}
       HOSTED_MODEL_DEPLOYMENT: ${{ vars.HOSTED_MODEL_DEPLOYMENT }}
     steps:
-      - uses: actions/checkout@v7
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
         with:
           persist-credentials: false
 
-      - uses: astral-sh/setup-uv@v10.2.0
+      - uses: astral-sh/setup-uv@c18668ad3cf93ea998bef934396af7bb5c839dc7 # v10.2.0
         with:
           enable-cache: true
           cache-dependency-glob: |
             uv.lock
             **/pyproject.toml
 
-      - uses: actions/setup-python@v7
+      - uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7
         with:
           python-version: "3.12"
 
       - name: Sign in to Azure with OIDC
-        uses: azure/login@v2
+        uses: azure/login@7184910d9eb2b1c5e48f7073824a90609bb9b6d6 # v2
         with:
           client-id: ${{ env.AZURE_CLIENT_ID }}
           tenant-id: ${{ env.AZURE_TENANT_ID }}

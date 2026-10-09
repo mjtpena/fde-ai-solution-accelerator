@@ -6,14 +6,26 @@ from sqlalchemy import pool
 from sqlalchemy.engine import Connection
 from sqlalchemy.ext.asyncio import create_async_engine
 
-from accelerator.infrastructure.database import asyncpg_url, entra_password_provider
+from accelerator.infrastructure.database import (
+    asyncpg_url,
+    entra_password_provider,
+    verified_tls_context,
+)
+from accelerator.migrations.grants import grant_runtime_privileges
 from accelerator.migrations.settings import MigrationSettings
 
 
-def _run(connection: Connection) -> None:
+def _run(connection: Connection, settings: MigrationSettings) -> None:
     context.configure(connection=connection, transaction_per_migration=True)
     with context.begin_transaction():
         context.run_migrations()
+    if settings.database_api_role or settings.database_worker_role:
+        with connection.begin():
+            grant_runtime_privileges(
+                connection,
+                api_role=settings.database_api_role,
+                worker_role=settings.database_worker_role,
+            )
 
 
 async def _run_online() -> None:
@@ -23,7 +35,8 @@ async def _run_online() -> None:
     if settings.database_auth_mode == "managed_identity":
         credential = DefaultAzureCredential()
         connect_args["password"] = entra_password_provider(credential)
-        connect_args["ssl"] = "require"
+        # The token is the password: verify the server before sending it.
+        connect_args["ssl"] = verified_tls_context(settings.database_tls_ca_file)
     engine = create_async_engine(
         asyncpg_url(str(settings.database_url)),
         poolclass=pool.NullPool,
@@ -31,7 +44,7 @@ async def _run_online() -> None:
     )
     try:
         async with engine.connect() as connection:
-            await connection.run_sync(_run)
+            await connection.run_sync(_run, settings)
     finally:
         await engine.dispose()
         if credential is not None:

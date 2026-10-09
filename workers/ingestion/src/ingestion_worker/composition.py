@@ -70,6 +70,7 @@ async def compose_consumer(settings: WorkerSettings) -> AsyncIterator[QueueConsu
             str(settings.database_url),
             managed_identity=settings.database_auth_mode == "managed_identity",
             credential=credential,
+            tls_ca_file=settings.database_tls_ca_file,
         )
         stack.push_async_callback(engine.dispose)
         search = await stack.enter_async_context(
