@@ -510,8 +510,9 @@ make new-project NAME=northstar-delivery-assurance TITLE="Northstar Delivery Ass
 2. Renames the Python package `accelerator` → `<name>` and TypeScript namespaces.
 3. Removes `engagement/examples` and the generator itself, keeps only the CI
    workflows the manifest lists (`workflows`; deployment and accelerator-maintenance
-   workflows are dropped), and strips `# BEGIN/END ACCELERATOR ONLY` blocks from
-   every text file. The smoke dataset is kept (as `evaluations/datasets/smoke.jsonl`)
+   workflows are dropped), and strips `# BEGIN/END ACCELERATOR ONLY` blocks
+   (`<!-- BEGIN/END ACCELERATOR ONLY -->` in Markdown) from every UTF-8 text file,
+   extensionless ones such as `CODEOWNERS` included. The smoke dataset is kept (as `evaluations/datasets/smoke.jsonl`)
    because the evaluation gate measures the generated product with it.
 4. Creates empty project docs from `engagement/templates`.
 5. Creates starter `evaluations/datasets/*.jsonl` with schema-valid placeholders.

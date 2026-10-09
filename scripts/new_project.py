@@ -34,9 +34,14 @@ ROOT = Path(__file__).resolve().parents[1]
 LOGGER = logging.getLogger(__name__)
 BEGIN_GENERATOR = "# BEGIN PROJECT GENERATOR"
 END_GENERATOR = "# END PROJECT GENERATOR"
-# Lines between these markers (any text file) exist only in the accelerator.
+# Lines between these markers (any text file) exist only in the accelerator. Markdown
+# uses the HTML-comment form, which renders as nothing instead of a heading.
 BEGIN_ACCELERATOR_ONLY = "# BEGIN ACCELERATOR ONLY"
 END_ACCELERATOR_ONLY = "# END ACCELERATOR ONLY"
+BEGIN_ACCELERATOR_ONLY_MARKERS = frozenset(
+    {BEGIN_ACCELERATOR_ONLY, "<!-- BEGIN ACCELERATOR ONLY -->"}
+)
+END_ACCELERATOR_ONLY_MARKERS = frozenset({END_ACCELERATOR_ONLY, "<!-- END ACCELERATOR ONLY -->"})
 WORKFLOWS = Path(".github/workflows")
 TEXT_SUFFIXES = {
     ".py",
@@ -243,17 +248,17 @@ def relax_line_length(pyproject: Path, growth: int) -> None:
 
 def strip_accelerator_only(text: str, path: Path) -> str:
     """Drop every BEGIN/END ACCELERATOR ONLY block, markers included."""
-    if BEGIN_ACCELERATOR_ONLY not in text and END_ACCELERATOR_ONLY not in text:
+    if "ACCELERATOR ONLY" not in text:
         return text
     kept: list[str] = []
     inside = False
     for line in text.splitlines(keepends=True):
         marker = line.strip()
-        if marker == BEGIN_ACCELERATOR_ONLY:
+        if marker in BEGIN_ACCELERATOR_ONLY_MARKERS:
             if inside:
                 raise ValueError(f"Nested accelerator-only block in {path}")
             inside = True
-        elif marker == END_ACCELERATOR_ONLY:
+        elif marker in END_ACCELERATOR_ONLY_MARKERS:
             if not inside:
                 raise ValueError(f"Unmatched accelerator-only end marker in {path}")
             inside = False
@@ -262,6 +267,18 @@ def strip_accelerator_only(text: str, path: Path) -> str:
     if inside:
         raise ValueError(f"Unclosed accelerator-only block in {path}")
     return "".join(kept)
+
+
+def is_utf8_text(path: Path) -> bool:
+    """Treat a file without a known text suffix (CODEOWNERS, .gitignore) as text if it decodes."""
+    data = path.read_bytes()
+    if b"\x00" in data:
+        return False
+    try:
+        data.decode("utf-8")
+    except UnicodeDecodeError:
+        return False
+    return True
 
 
 def generated_makefile(text: str) -> str:
@@ -393,7 +410,11 @@ def generate(source: Path, destination: Path, name: str, display: str) -> None:
     for original, target in files:
         output = destination / target
         output.parent.mkdir(parents=True, exist_ok=True)
-        if original.suffix in TEXT_SUFFIXES or original.name in {"Makefile", "Dockerfile"}:
+        if (
+            original.suffix in TEXT_SUFFIXES
+            or original.name in {"Makefile", "Dockerfile"}
+            or is_utf8_text(source / original)
+        ):
             text = (source / original).read_text(encoding="utf-8")
             text = strip_accelerator_only(text, original)
             if original == Path("Makefile"):
@@ -715,13 +736,35 @@ class GeneratorTests(unittest.TestCase):
             "  # END ACCELERATOR ONLY\n",
         )
         self.write(".github/workflows/deploy-dev.yml", "jobs: {}\n")
-        self.write(".github/CODEOWNERS", "* @owner\n")
+        # Extensionless text files are processed too, and paths in them are renamed.
+        self.write(
+            ".github/CODEOWNERS",
+            "* @owner\n/apps/api/src/accelerator/ @owner\n"
+            "# BEGIN ACCELERATOR ONLY\n/infrastructure/ @owner\n# END ACCELERATOR ONLY\n",
+        )
+        # Markdown uses the HTML-comment markers, indented or not.
+        self.write(
+            ".github/GUIDE.md",
+            "Shared.\n<!-- BEGIN ACCELERATOR ONLY -->\nAccelerator status.\n"
+            "<!-- END ACCELERATOR ONLY -->\n1. Item\n   <!-- BEGIN ACCELERATOR ONLY -->\n"
+            "   Accelerator note.\n   <!-- END ACCELERATOR ONLY -->\n   Shared note.\n",
+        )
+        # Valid UTF-8 with a NUL byte is binary and copied byte for byte.
+        (self.source / ".github" / "data.bin").write_bytes(b"accelerator\x00")
         with patch("subprocess.run"):
             self.run_generator()
         workflows = self.destination / ".github/workflows"
         self.assertEqual(sorted(path.name for path in workflows.iterdir()), ["pull-request.yml"])
         self.assertEqual((workflows / "pull-request.yml").read_text(), "jobs:\n  quality: {}\n")
-        self.assertTrue((self.destination / ".github/CODEOWNERS").exists())
+        self.assertEqual(
+            (self.destination / ".github/CODEOWNERS").read_text(),
+            "* @owner\n/apps/api/src/my_solution/ @owner\n",
+        )
+        self.assertEqual(
+            (self.destination / ".github/GUIDE.md").read_text(),
+            "Shared.\n1. Item\n   Shared note.\n",
+        )
+        self.assertEqual((self.destination / ".github/data.bin").read_bytes(), b"accelerator\x00")
 
     def test_rejects_missing_workflows_and_unbalanced_accelerator_blocks(self) -> None:
         self.manifest["copy"] = [*self.manifest["copy"], ".github"]
@@ -734,6 +777,8 @@ class GeneratorTests(unittest.TestCase):
             ("# BEGIN ACCELERATOR ONLY\nx\n", "Unclosed"),
             ("x\n# END ACCELERATOR ONLY\n", "Unmatched"),
             ("# BEGIN ACCELERATOR ONLY\n# BEGIN ACCELERATOR ONLY\n", "Nested"),
+            ("<!-- BEGIN ACCELERATOR ONLY -->\nx\n", "Unclosed"),
+            ("x\n<!-- END ACCELERATOR ONLY -->\n", "Unmatched"),
         ):
             with self.subTest(text=text), self.assertRaisesRegex(ValueError, error):
                 strip_accelerator_only(text, Path("file"))
