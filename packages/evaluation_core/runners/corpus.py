@@ -55,9 +55,7 @@ def load_corpus(directory: Path) -> tuple[CorpusChunk, ...]:
     manifest = CorpusManifest.model_validate_json(
         (directory / "manifest.json").read_text(encoding="utf-8")
     )
-    if len({document.document_id for document in manifest.documents}) != len(
-        manifest.documents
-    ):
+    if len({document.document_id for document in manifest.documents}) != len(manifest.documents):
         raise ValueError("Corpus document IDs must be unique.")
     chunker = TextChunker(CORPUS_CHUNKING)
     chunks: list[CorpusChunk] = []

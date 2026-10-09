@@ -17,7 +17,12 @@ from typing import Any
 
 from pydantic import BaseModel, ConfigDict, field_validator
 
-from accelerator.agent_core.approvals import APPROVER_ROLE, ApprovalService, canonical_args_hash
+from accelerator.agent_core.approvals import (
+    APPROVER_ROLE,
+    Approval,
+    ApprovalService,
+    canonical_args_hash,
+)
 from accelerator.agent_core.middleware import ToolCallLimits, ToolPolicyMiddleware
 from accelerator.agent_core.tools import ToolRegistry
 from accelerator.agent_core.tools.agent_bridge import ToolTurn, current_tool_turn
@@ -48,6 +53,7 @@ from .offline import (
     OfflineRetriever,
     RecordingInvoker,
     RequestDocumentReviewTool,
+    WriteExecution,
 )
 
 logger = logging.getLogger(__name__)
@@ -109,6 +115,31 @@ class RowOutcome:
     @property
     def failed_gates(self) -> tuple[str, ...]:
         return tuple(gate.value for gate, passed in self.checks.items() if not passed)
+
+
+def write_was_approved(
+    execution: WriteExecution,
+    *,
+    tool_name: str,
+    context: ExecutionContext,
+    approval: Approval | None,
+) -> bool:
+    """A write passes only under exactly one scope bound to its executed approval.
+
+    An empty or multi-scope execution cannot be matched to one approval scope, so it
+    fails the gate rather than being checked against an arbitrary member.
+    """
+    if len(execution.scope_ids) != 1:
+        return False
+    (executed_scope_id,) = execution.scope_ids
+    return evaluate_approval_bypass(
+        write_executed=True,
+        tool_name=tool_name,
+        args_hash=canonical_args_hash(execution.args),
+        executed_scope_id=executed_scope_id,
+        context=context,
+        approval=approval,
+    )
 
 
 EVALUATION_PRINCIPAL = "evaluation-principal"
@@ -208,11 +239,9 @@ class OfflineSmokeRuntime:
                 context, {chunk.scope_id for chunk in retrieved}
             ),
             GateName.APPROVAL_BYPASS: all(
-                evaluate_approval_bypass(
-                    write_executed=True,
+                write_was_approved(
+                    execution,
                     tool_name=self.write_tool.name,
-                    args_hash=canonical_args_hash(execution.args),
-                    executed_scope_id=next(iter(execution.scope_ids)),
                     context=context,
                     approval=repository.approvals.get(execution.execution_id),
                 )
@@ -242,9 +271,7 @@ DEFAULT_DATASET = Path("evaluations/example-datasets/smoke.jsonl")
 DEFAULT_CORPUS = Path("tests/fixtures/retrieval/corpus")
 
 
-def run_smoke(
-    dataset: Path = DEFAULT_DATASET, corpus: Path = DEFAULT_CORPUS
-) -> EvaluationResult:
+def run_smoke(dataset: Path = DEFAULT_DATASET, corpus: Path = DEFAULT_CORPUS) -> EvaluationResult:
     """Run every dataset row through the offline runtime and return pass rates."""
     result, outcomes = asyncio.run(measure_smoke(load_dataset(dataset), load_corpus(corpus)))
     for outcome in outcomes:

@@ -21,7 +21,8 @@ def configure(tmp_path: Path) -> tuple[Path, Path]:
     )
     thresholds = tmp_path / "thresholds.yml"
     thresholds.write_text(
-        "metrics:\n" + "".join(
+        "metrics:\n"
+        + "".join(
             f"  {name}:\n    direction: higher\n    tolerance: 0.0\n" for name in SMOKE_METRICS
         ),
         encoding="utf-8",
@@ -34,9 +35,12 @@ ROOT = Path(__file__).resolve().parents[4]
 
 def cli_args(tmp_path: Path) -> list[str]:
     return [
-        "--baseline", str(tmp_path / "accepted.json"),
-        "--thresholds", str(tmp_path / "thresholds.yml"),
-        "--output-dir", str(tmp_path / "reports"),
+        "--baseline",
+        str(tmp_path / "accepted.json"),
+        "--thresholds",
+        str(tmp_path / "thresholds.yml"),
+        "--output-dir",
+        str(tmp_path / "reports"),
     ]
 
 
@@ -44,11 +48,16 @@ def test_real_smoke_passes_against_the_committed_baseline_and_example_thresholds
     tmp_path: Path,
 ) -> None:
     args = [
-        "--baseline", str(ROOT / "evaluations/baselines/accepted.json"),
-        "--thresholds", str(ROOT / "evaluations/thresholds.example.yml"),
-        "--dataset", str(ROOT / "evaluations/example-datasets/smoke.jsonl"),
-        "--corpus", str(ROOT / "tests/fixtures/retrieval/corpus"),
-        "--output-dir", str(tmp_path / "reports"),
+        "--baseline",
+        str(ROOT / "evaluations/baselines/accepted.json"),
+        "--thresholds",
+        str(ROOT / "evaluations/thresholds.example.yml"),
+        "--dataset",
+        str(ROOT / "evaluations/example-datasets/smoke.jsonl"),
+        "--corpus",
+        str(ROOT / "tests/fixtures/retrieval/corpus"),
+        "--output-dir",
+        str(tmp_path / "reports"),
     ]
     assert smoke.main(args) == 0
     payload = json.loads((tmp_path / "reports" / "smoke.json").read_text(encoding="utf-8"))
@@ -58,9 +67,9 @@ def test_real_smoke_passes_against_the_committed_baseline_and_example_thresholds
     assert {row["name"] for row in payload["metrics"]} == set(SMOKE_METRICS)
     assert len(payload["metrics"]) == 6
     assert all(row["current"] == row["baseline"] == 1.0 for row in payload["metrics"])
-    assert "not an accepted project baseline" not in (
-        tmp_path / "reports" / "smoke.md"
-    ).read_text(encoding="utf-8")
+    assert "not an accepted project baseline" not in (tmp_path / "reports" / "smoke.md").read_text(
+        encoding="utf-8"
+    )
 
 
 def test_the_fixture_fallback_flag_no_longer_exists(tmp_path: Path) -> None:
@@ -80,9 +89,7 @@ def test_project_baseline_files_are_read_only(tmp_path: Path) -> None:
 
 
 @pytest.mark.parametrize("missing", ["accepted.json", "thresholds.yml", "both"])
-def test_partial_or_missing_project_config_does_not_pass(
-    tmp_path: Path, missing: str
-) -> None:
+def test_partial_or_missing_project_config_does_not_pass(tmp_path: Path, missing: str) -> None:
     baseline, thresholds = configure(tmp_path)
     if missing in ("accepted.json", "both"):
         baseline.unlink()
@@ -106,7 +113,8 @@ def test_every_hard_failure_exits_nonzero_despite_generous_tolerance(
         encoding="utf-8",
     )
     monkeypatch.setattr(
-        smoke, "run_smoke",
+        smoke,
+        "run_smoke",
         lambda *_: RunnerResult(
             metrics={name: 1.0 for name in SMOKE_METRICS}, hard_failures=(gate,)
         ),
@@ -115,9 +123,7 @@ def test_every_hard_failure_exits_nonzero_despite_generous_tolerance(
     payload = json.loads((tmp_path / "reports" / "smoke.json").read_text(encoding="utf-8"))
     assert payload["passed"] is False
     assert payload["hard_failures"] == [gate]
-    assert "Hard gates: FAIL" in (
-        tmp_path / "reports" / "smoke.md"
-    ).read_text(encoding="utf-8")
+    assert "Hard gates: FAIL" in (tmp_path / "reports" / "smoke.md").read_text(encoding="utf-8")
 
 
 @pytest.mark.parametrize("metric", ["abstention", "tool_selection"])
@@ -148,17 +154,16 @@ def test_regression_artifacts_are_written_before_failure_exit(
 ) -> None:
     configure(tmp_path)
     monkeypatch.setattr(
-        smoke, "run_smoke",
-        lambda *_: RunnerResult(
-            metrics={name: 0.999 for name in SMOKE_METRICS}, hard_failures=()
-        ),
+        smoke,
+        "run_smoke",
+        lambda *_: RunnerResult(metrics={name: 0.999 for name in SMOKE_METRICS}, hard_failures=()),
     )
     assert smoke.main(cli_args(tmp_path)) == 1
     payload = json.loads((tmp_path / "reports" / "smoke.json").read_text(encoding="utf-8"))
     assert all(not row["passed"] for row in payload["metrics"])
-    assert "## Evaluation smoke: FAIL" in (
-        tmp_path / "reports" / "smoke.md"
-    ).read_text(encoding="utf-8")
+    assert "## Evaluation smoke: FAIL" in (tmp_path / "reports" / "smoke.md").read_text(
+        encoding="utf-8"
+    )
 
 
 @pytest.mark.parametrize(
@@ -194,9 +199,12 @@ def test_error_exit_code_is_preserved_when_artifact_writing_also_fails(
     blocked_output = tmp_path / "reports"
     blocked_output.write_text("not a directory", encoding="utf-8")
     args = [
-        "--baseline", str(baseline),
-        "--thresholds", str(tmp_path / "thresholds.yml"),
-        "--output-dir", str(blocked_output),
+        "--baseline",
+        str(baseline),
+        "--thresholds",
+        str(tmp_path / "thresholds.yml"),
+        "--output-dir",
+        str(blocked_output),
     ]
     assert smoke.main(args) == 2
 
@@ -206,9 +214,9 @@ def test_full_report_writer_uses_requested_name(tmp_path: Path) -> None:
     report = compare(baseline, baseline, thresholds)
     write_report(report, tmp_path / "reports", name="full")
     assert (tmp_path / "reports" / "full.json").exists()
-    assert "## Evaluation full: PASS" in (
-        tmp_path / "reports" / "full.md"
-    ).read_text(encoding="utf-8")
+    assert "## Evaluation full: PASS" in (tmp_path / "reports" / "full.md").read_text(
+        encoding="utf-8"
+    )
     with pytest.raises(ValueError, match="Report name"):
         write_report(report, tmp_path / "reports", name="../unsafe")
 
@@ -217,18 +225,20 @@ def test_suite_baselines_preserve_distinct_smoke_and_full_metrics(tmp_path: Path
     baseline, thresholds = configure(tmp_path)
     smoke_baseline = json.loads(baseline.read_text(encoding="utf-8"))
     baseline.write_text(
-        json.dumps({
-            "suites": {
-                "smoke": smoke_baseline,
-                "full": {"metrics": {"groundedness": 0.9}, "hard_failures": []},
+        json.dumps(
+            {
+                "suites": {
+                    "smoke": smoke_baseline,
+                    "full": {"metrics": {"groundedness": 0.9}, "hard_failures": []},
+                }
             }
-        }),
+        ),
         encoding="utf-8",
     )
     thresholds.write_text(
-        "suites:\n  smoke:\n    " + thresholds.read_text(encoding="utf-8").replace(
-            "\n", "\n    "
-        ).rstrip() + "\n  full:\n    metrics:\n      groundedness:\n"
+        "suites:\n  smoke:\n    "
+        + thresholds.read_text(encoding="utf-8").replace("\n", "\n    ").rstrip()
+        + "\n  full:\n    metrics:\n      groundedness:\n"
         "        direction: higher\n        tolerance: 0.1\n",
         encoding="utf-8",
     )

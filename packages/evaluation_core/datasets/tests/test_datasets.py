@@ -48,8 +48,11 @@ def test_loads_all_categories_with_typed_fields(tmp_path: Path, category: str) -
 def test_loads_nullable_expectations_and_empty_arrays(tmp_path: Path) -> None:
     row = valid_row()
     row.update(
-        expected_answer=None, expected_tool="lookup", expected_evidence_ids=[],
-        expected_abstain=True, tags=[],
+        expected_answer=None,
+        expected_tool="lookup",
+        expected_evidence_ids=[],
+        expected_abstain=True,
+        tags=[],
     )
     path = tmp_path / "dataset.jsonl"
     write_rows(path, [row])
@@ -69,16 +72,22 @@ def test_rejects_missing_fields_including_nullable_fields(tmp_path: Path, field:
 @pytest.mark.parametrize(
     ("field", "value"),
     [
-        ("id", 1), ("query", None), ("scope_id", 42), ("category", "unknown"),
-        ("expected_answer", False), ("expected_tool", 1), ("expected_abstain", "false"),
-        ("expected_abstain", 0), ("expected_evidence_ids", "chunk-1"),
-        ("expected_evidence_ids", [1]), ("tags", None), ("tags", [True]),
+        ("id", 1),
+        ("query", None),
+        ("scope_id", 42),
+        ("category", "unknown"),
+        ("expected_answer", False),
+        ("expected_tool", 1),
+        ("expected_abstain", "false"),
+        ("expected_abstain", 0),
+        ("expected_evidence_ids", "chunk-1"),
+        ("expected_evidence_ids", [1]),
+        ("tags", None),
+        ("tags", [True]),
         ("unexpected", "extra"),
     ],
 )
-def test_rejects_invalid_fields_without_coercion(
-    tmp_path: Path, field: str, value: object
-) -> None:
+def test_rejects_invalid_fields_without_coercion(tmp_path: Path, field: str, value: object) -> None:
     row = valid_row()
     row[field] = value
     path = tmp_path / "dataset.jsonl"

@@ -1,24 +1,27 @@
 """The smoke gate measures the product: breaking a real control fails its metric."""
 
 import asyncio
+from datetime import UTC, datetime, timedelta
 from pathlib import Path
 from typing import Any
 from uuid import uuid4
 
 import pytest
 
+from accelerator.agent_core.approvals import Approval, canonical_args_hash
 from accelerator.agent_core.middleware import ToolPolicyMiddleware
 from accelerator.agent_core.tools import IdempotentWriteTool
 from accelerator.agent_core.workflows import generation
 from accelerator.retrieval_core.citations import SameTurnCitationValidator
 from accelerator.retrieval_core.sufficiency import EvidenceSufficiencyChecker
 from accelerator.retrieval_core.sufficiency.policy import SufficiencyDecision
+from accelerator.security_core.data_boundaries.context import ExecutionContext
 from accelerator.security_core.prompt_injection import WrappedEvidence
 
 from ...datasets import load_dataset
 from ..corpus import load_corpus
-from ..offline import OfflineModel, OfflineRetriever
-from ..smoke import EvaluationResult, GateName, RowOutcome, measure_smoke
+from ..offline import OfflineModel, OfflineRetriever, ReviewRequestArgs, WriteExecution
+from ..smoke import EvaluationResult, GateName, RowOutcome, measure_smoke, write_was_approved
 
 ROOT = Path(__file__).resolve().parents[4]
 DATASET = ROOT / "evaluations/example-datasets/smoke.jsonl"
@@ -94,6 +97,47 @@ def test_a_write_executed_without_approval_fails_the_approval_gate(
 
     assert "approval_bypass" in result.hard_failures
     assert failed_rows(outcomes, GateName.APPROVAL_BYPASS) == {"smoke-tool-002"}
+
+
+@pytest.mark.parametrize(
+    ("scope_ids", "expected"),
+    [
+        (frozenset({"scope-a"}), True),
+        (frozenset(), False),
+        (frozenset({"scope-a", "scope-b"}), False),
+    ],
+)
+def test_a_write_must_run_under_exactly_one_approved_scope(
+    scope_ids: frozenset[str], expected: bool
+) -> None:
+    args = ReviewRequestArgs(document_title="Access review standard", reason="Annual review.")
+    execution = WriteExecution(uuid4(), args, scope_ids)
+    approval = Approval(
+        id=execution.execution_id,
+        tool_name="request_document_review",
+        args_hash=canonical_args_hash(args),
+        scope_id="scope-a",
+        requested_by="evaluation-principal",
+        status="executed",
+        decided_by="approver",
+        expires_at=datetime.now(UTC) + timedelta(minutes=5),
+        correlation_id="c",
+    )
+    context = ExecutionContext(
+        correlation_id="c",
+        user_id="evaluation-principal",
+        roles=frozenset({"reader"}),
+        scope_ids=frozenset({"scope-a", "scope-b"}),
+        session_id="s",
+        deadline_utc=datetime.now(UTC) + timedelta(minutes=5),
+    )
+
+    assert (
+        write_was_approved(
+            execution, tool_name="request_document_review", context=context, approval=approval
+        )
+        is expected
+    )
 
 
 def test_unvalidated_fabricated_citations_fail_citation_validity(

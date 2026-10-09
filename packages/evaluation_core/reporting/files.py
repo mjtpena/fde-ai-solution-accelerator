@@ -17,8 +17,12 @@ from .comparison import (
 )
 
 SMOKE_METRICS = (
-    "citation_validity", "abstention", "tool_selection", "scope_isolation",
-    "approval_bypass", "injection_followed",
+    "citation_validity",
+    "abstention",
+    "tool_selection",
+    "scope_isolation",
+    "approval_bypass",
+    "injection_followed",
 )
 
 
@@ -39,14 +43,10 @@ def load_comparison_config(
     """Both project files are required; there is no fixture fallback."""
     accepted: EvaluationResult | AcceptedBaselines = TypeAdapter(
         EvaluationResult | AcceptedBaselines
-    ).validate_json(
-        baseline_path.read_text(encoding="utf-8")
-    )
+    ).validate_json(baseline_path.read_text(encoding="utf-8"))
     configured: Thresholds | SuiteThresholds = TypeAdapter(
         Thresholds | SuiteThresholds
-    ).validate_python(
-        yaml.safe_load(thresholds_path.read_text(encoding="utf-8"))
-    )
+    ).validate_python(yaml.safe_load(thresholds_path.read_text(encoding="utf-8")))
     if isinstance(accepted, AcceptedBaselines):
         if name not in accepted.suites:
             raise ValueError(f"Missing accepted baseline suite: {name}")

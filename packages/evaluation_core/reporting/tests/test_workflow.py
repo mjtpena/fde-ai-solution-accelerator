@@ -15,8 +15,7 @@ def test_workflow_separates_pr_execution_from_privileged_commenting() -> None:
     assert smoke["permissions"] == {"contents": "read"}
     assert any(step.get("run") == "make eval-smoke" for step in smoke["steps"])
     assert any(
-        step.get("uses", "").startswith("actions/upload-artifact@")
-        and step.get("if") == "always()"
+        step.get("uses", "").startswith("actions/upload-artifact@") and step.get("if") == "always()"
         for step in smoke["steps"]
     )
     assert set(workflow[True]) == {"pull_request"}
@@ -33,13 +32,8 @@ def test_workflow_separates_pr_execution_from_privileged_commenting() -> None:
     assert publish["concurrency"]["cancel-in-progress"] is False
     assert "head_repository.full_name" in publish["concurrency"]["group"]
     assert "head_branch" in publish["concurrency"]["group"]
-    assert not any(
-        "run" in step or "checkout" in step.get("uses", "")
-        for step in publish["steps"]
-    )
-    scripts = "\n".join(
-        step.get("with", {}).get("script", "") for step in publish["steps"]
-    )
+    assert not any("run" in step or "checkout" in step.get("uses", "") for step in publish["steps"])
+    scripts = "\n".join(step.get("with", {}).get("script", "") for step in publish["steps"])
     assert "pr.head.sha !== run.head_sha" in scripts
     assert "p.head.repo?.full_name === run.head_repository.full_name" in scripts
     assert "p.head.ref === run.head_branch" in scripts

@@ -39,7 +39,9 @@ def main(argv: list[str] | None = None) -> int:
         baseline, thresholds = load_comparison_config(args.baseline, args.thresholds)
         logger.info(
             "correlation_id=evaluation-smoke baseline=%s thresholds=%s",
-            args.baseline, args.thresholds, extra=context,
+            args.baseline,
+            args.thresholds,
+            extra=context,
         )
         report = compare(current, baseline, thresholds)
         write_report(report, args.output_dir)
@@ -67,7 +69,10 @@ def main(argv: list[str] | None = None) -> int:
         return 2
     logger.info(
         "correlation_id=evaluation-smoke passed=%s metrics=%d hard_failures=%d",
-        report.passed, len(report.metrics), len(report.hard_failures), extra=context,
+        report.passed,
+        len(report.metrics),
+        len(report.hard_failures),
+        extra=context,
     )
     return 0 if report.passed else 1
 
