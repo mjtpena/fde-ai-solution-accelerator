@@ -73,3 +73,46 @@ async def test_generator_sends_evidence_and_bounded_options_to_the_agent() -> No
 def test_generator_requires_a_positive_output_budget() -> None:
     with pytest.raises(ValueError):
         AgentAnswerGenerator(RecordingAgent(""), max_output_tokens=0)
+
+
+class UsageResult:
+    def __init__(self, text: str, usage: dict[str, int]) -> None:
+        self.text = text
+        self.usage_details = usage
+
+
+async def test_model_calls_reserve_and_settle_the_request_token_budget() -> None:
+    from accelerator.security_core.cost_guard import TokenBudget
+
+    from .generation import current_token_budget
+
+    class Agent:
+        async def run(self, messages: str, *, options: Any, tools: Any = None) -> UsageResult:
+            return UsageResult("Ok. [cite:c-1]", {"input_token_count": 40, "output_token_count": 10})
+
+    budget = TokenBudget(1_000)
+    token = current_token_budget.set(budget)
+    try:
+        await AgentAnswerGenerator(Agent(), max_output_tokens=100).generate("q", [Item("c-1", "x")])
+    finally:
+        current_token_budget.reset(token)
+
+    assert budget.consumed_tokens == 50
+
+
+async def test_over_budget_requests_are_refused_before_the_model_is_called() -> None:
+    from accelerator.security_core.cost_guard import TokenBudget, TokenBudgetExceeded
+
+    from .generation import current_token_budget
+
+    agent = RecordingAgent("never")
+    token = current_token_budget.set(TokenBudget(50))
+    try:
+        with pytest.raises(TokenBudgetExceeded):
+            await AgentAnswerGenerator(agent, max_output_tokens=100).generate(
+                "q", [Item("c-1", "x")]
+            )
+    finally:
+        current_token_budget.reset(token)
+
+    assert agent.prompts == []

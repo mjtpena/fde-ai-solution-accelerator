@@ -81,11 +81,11 @@ def build_azure_grounded_answer(
             vector_candidates=settings.search_vector_candidates,
         ),
     )
-    agents = AgentFactory(
-        AgentFrameworkFoundryRuntime(str(settings.foundry_project_endpoint), credential=credential),
-        _no_tools,
-        instructions_directory(),
+    runtime = AgentFrameworkFoundryRuntime(
+        str(settings.foundry_project_endpoint), credential=credential
     )
+    shutdown.append(runtime.close)
+    agents = AgentFactory(runtime, _no_tools, instructions_directory())
     agent = agents.create(
         AgentConfig(
             name=GROUNDED_ANSWER_AGENT,

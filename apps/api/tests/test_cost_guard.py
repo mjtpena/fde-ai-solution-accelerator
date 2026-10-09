@@ -391,3 +391,51 @@ class CostGuardOnProductRoutesTests(unittest.TestCase):
 
         self.assertIn("429", paths["/chat/stream"]["post"]["responses"])
         self.assertNotIn("429", paths["/audit-events"]["get"]["responses"])
+
+
+class TokenBudgetOnChatTests(unittest.TestCase):
+    def test_chat_model_calls_draw_from_the_request_token_budget(self) -> None:
+        from datetime import UTC, datetime, timedelta
+
+        from fastapi.testclient import TestClient
+
+        from accelerator.agent_core.workflows.generation import current_token_budget
+        from accelerator.identity import scope_resolver
+        from accelerator.security_core.data_boundaries.context import ExecutionContext
+
+        class BudgetedChat:
+            async def run(self, query: str, ctx: Any) -> Any:
+                budget = current_token_budget.get()
+                assert budget is not None
+                budget.reserve(budget.limit + 1)  # a model call larger than the budget
+
+        context = ExecutionContext(
+            correlation_id="correlation-1",
+            user_id="user-1",
+            roles=frozenset({"Reader"}),
+            scope_ids=frozenset({"scope-1"}),
+            deadline_utc=datetime.now(UTC) + timedelta(minutes=1),
+        )
+        app = create_app(
+            Settings(
+                environment="test",
+                entra_tenant_id="00000000-0000-0000-0000-000000000001",
+                entra_audience="api://test",
+                request_token_budget=100,
+            ),
+            chat_turn=BudgetedChat(),
+        )
+
+        async def principal() -> Principal:
+            return Principal(subject="user-1", roles=frozenset({AppRole.READER}))
+
+        async def trusted() -> ExecutionContext:
+            return context
+
+        app.dependency_overrides[get_current_principal] = principal
+        app.dependency_overrides[scope_resolver.get_execution_context] = trusted
+        with TestClient(app) as client:
+            response = client.post("/chat/stream", json={"message": "Question"})
+
+        self.assertEqual(response.status_code, 429)
+        self.assertEqual(response.json()["detail"]["code"], "token_budget_exceeded")

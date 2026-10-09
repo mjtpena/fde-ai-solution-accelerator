@@ -148,3 +148,28 @@ def test_reranker_gate_requires_semantic_ranking() -> None:
         production_values(search_semantic_ranking=False, sufficiency_score_field="score")
     )
     assert settings.azure_services_configured
+
+
+def test_minimum_evidence_cannot_exceed_top_k_in_any_environment() -> None:
+    with pytest.raises(ValidationError, match="MIN_EVIDENCE"):
+        Settings.model_validate(
+            {
+                "environment": "development",
+                "entra_tenant_id": TENANT,
+                "entra_audience": "api://x",
+                "search_top_k": 1,
+                "sufficiency_min_evidence": 2,
+            }
+        )
+
+
+def test_reranker_gate_rule_applies_outside_production_too() -> None:
+    with pytest.raises(ValidationError, match="SEMANTIC_RANKING"):
+        Settings.model_validate(
+            {
+                "environment": "development",
+                "entra_tenant_id": TENANT,
+                "entra_audience": "api://x",
+                "search_semantic_ranking": False,
+            }
+        )

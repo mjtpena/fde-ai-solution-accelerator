@@ -139,3 +139,25 @@ class FoundrySettingsTests(unittest.TestCase):
             clear=True,
         ), self.assertRaises(ValidationError):
             FoundrySettings()
+
+
+async def test_runtime_closes_the_clients_it_created() -> None:
+    from unittest.mock import AsyncMock, MagicMock, patch
+
+    from accelerator.infrastructure.foundry import agent_runtime
+
+    created = MagicMock()
+    created.client.close = AsyncMock()
+    created.project_client.close = AsyncMock()
+    with patch.object(agent_runtime, "FoundryChatClient", return_value=created), patch.object(
+        agent_runtime, "Agent"
+    ):
+        runtime = AgentFrameworkFoundryRuntime(
+            "https://foundry.example.test/api/projects/p", credential=MagicMock()
+        )
+        runtime.create_agent(name="a", model="m", instructions="i", tools=())
+        await runtime.close()
+        await runtime.close()
+
+    created.client.close.assert_awaited_once()
+    created.project_client.close.assert_awaited_once()

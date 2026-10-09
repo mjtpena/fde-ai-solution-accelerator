@@ -30,6 +30,7 @@ class AgentFrameworkFoundryRuntime:
         self._credential: TokenCredential | AsyncTokenCredential = (
             credential if credential is not None else DefaultAzureCredential()
         )
+        self._clients: list[FoundryChatClient] = []
 
     def create_agent(
         self,
@@ -44,9 +45,21 @@ class AgentFrameworkFoundryRuntime:
             model=model,
             credential=self._credential,
         )
+        self._clients.append(client)
         return Agent(
             client=client,
             name=name,
             instructions=instructions,
             tools=list(tools),
         )
+
+    async def close(self) -> None:
+        """Close the HTTP clients owned by every chat client this runtime created."""
+        clients, self._clients = self._clients, []
+        for client in clients:
+            openai_client = getattr(client, "client", None)
+            if openai_client is not None:
+                await openai_client.close()
+            project_client = getattr(client, "project_client", None)
+            if project_client is not None:
+                await project_client.close()

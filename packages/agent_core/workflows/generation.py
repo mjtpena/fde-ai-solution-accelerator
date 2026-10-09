@@ -2,10 +2,45 @@
 
 import re
 from collections.abc import Mapping, Sequence
+from contextvars import ContextVar
 from dataclasses import dataclass
 from typing import Any, Protocol
 
 CITATION_MARKER = re.compile(r"\[cite:([^\[\]\s]{1,256})\]")
+
+
+class TokenReservation(Protocol):
+    def settle(self, actual_tokens: int) -> None: ...
+
+    def cancel(self) -> None: ...
+
+
+class TokenBudget(Protocol):
+    """``security_core.cost_guard.TokenBudget``: raises when a reservation would exceed it."""
+
+    def reserve(self, token_count: int) -> TokenReservation: ...
+
+
+# Set by the host for one request; every model call reserves from it first.
+current_token_budget: ContextVar[TokenBudget | None] = ContextVar(
+    "current_token_budget", default=None
+)
+
+
+def estimate_tokens(text: str) -> int:
+    """Conservative pre-call estimate (about four characters per token)."""
+    return len(text) // 4 + 1
+
+
+def used_tokens(response: object) -> int | None:
+    usage = getattr(response, "usage_details", None)
+    if usage is None:
+        return None
+    values = usage if isinstance(usage, Mapping) else vars(usage)
+    counts = [values.get(key) for key in ("input_token_count", "output_token_count")]
+    if all(isinstance(count, int) for count in counts):
+        return sum(counts)  # type: ignore[arg-type]
+    return None
 
 
 class EvidenceForGeneration(Protocol):
@@ -84,6 +119,19 @@ class AgentAnswerGenerator:
     async def generate(
         self, query: str, evidence: Sequence[EvidenceForGeneration]
     ) -> GeneratedGroundedAnswer:
-        response = await self._agent.run(build_prompt(query, evidence), options=self._options)
+        prompt = build_prompt(query, evidence)
+        budget = current_token_budget.get()
+        # Reserve the worst case (prompt plus every allowed output token) before the call,
+        # so an over-budget request is refused instead of billed.
+        estimate = estimate_tokens(prompt) + int(self._options["max_tokens"])
+        reservation = budget.reserve(estimate) if budget is not None else None
+        try:
+            response = await self._agent.run(prompt, options=self._options)
+        except BaseException:
+            if reservation is not None:
+                reservation.cancel()
+            raise
+        if reservation is not None:
+            reservation.settle(min(used_tokens(response) or estimate, estimate))
         answer, citations = extract_citations(response.text)
         return GeneratedGroundedAnswer(answer=answer, citations=citations)

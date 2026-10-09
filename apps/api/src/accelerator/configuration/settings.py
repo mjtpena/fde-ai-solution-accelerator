@@ -112,6 +112,17 @@ class Settings(BaseSettings):
         return self.environment == "production"
 
     @model_validator(mode="after")
+    def require_consistent_retrieval(self) -> Self:
+        """Combinations that would make every turn abstain fail in every environment."""
+        if self.sufficiency_min_evidence > self.search_top_k:
+            raise ValueError("API_SUFFICIENCY_MIN_EVIDENCE cannot exceed API_SEARCH_TOP_K.")
+        if self.sufficiency_score_field == "reranker_score" and not self.search_semantic_ranking:
+            raise ValueError(
+                "API_SUFFICIENCY_SCORE_FIELD=reranker_score requires API_SEARCH_SEMANTIC_RANKING."
+            )
+        return self
+
+    @model_validator(mode="after")
     def require_production_services(self) -> Self:
         if self.allows_fakes:
             return self
@@ -141,10 +152,6 @@ class Settings(BaseSettings):
             url: HttpUrl | None = getattr(self, name)
             if url is not None and url.scheme != "https":
                 raise ValueError(f"API_{name.upper()} must use HTTPS in production.")
-        if self.sufficiency_score_field == "reranker_score" and not self.search_semantic_ranking:
-            raise ValueError(
-                "API_SUFFICIENCY_SCORE_FIELD=reranker_score requires API_SEARCH_SEMANTIC_RANKING."
-            )
         return self
 
     @property

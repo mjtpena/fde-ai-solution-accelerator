@@ -5,8 +5,10 @@ from fastapi import APIRouter, Depends, HTTPException, Request, status
 from fastapi.responses import StreamingResponse
 from pydantic import BaseModel, ConfigDict, Field, field_validator
 
+from accelerator.agent_core.workflows.generation import current_token_budget
 from accelerator.agent_core.workflows.grounded_answer import GroundedAnswerResult
 from accelerator.identity.scope_resolver import get_execution_context
+from accelerator.security_core.cost_guard import TokenBudget
 from accelerator.security_core.data_boundaries.context import ExecutionContext
 from accelerator.security_core.tool_policy import ApprovalRequired
 
@@ -76,6 +78,12 @@ def get_chat_turn(request: Request) -> ChatTurnPort:
             detail="The chat workflow is not configured.",
         )
     return workflow
+
+
+def get_request_token_budget(request: Request) -> TokenBudget | None:
+    """The budget the route's cost-guard dependency (run first) stored for this request."""
+    guard = getattr(request.state, "request_cost_guard", None)
+    return getattr(guard, "token_budget", None)
 
 
 def _frame(
@@ -192,8 +200,14 @@ async def stream_chat(
     payload: ChatRequest,
     context: Annotated[ExecutionContext, Depends(get_execution_context)],
     workflow: Annotated[ChatTurnPort, Depends(get_chat_turn)],
+    token_budget: Annotated[TokenBudget | None, Depends(get_request_token_budget)] = None,
 ) -> StreamingResponse:
-    result = await workflow.run(payload.message, context)
+    # The per-request token budget from the cost guard bounds every model call.
+    budget_token = current_token_budget.set(token_budget)
+    try:
+        result = await workflow.run(payload.message, context)
+    finally:
+        current_token_budget.reset(budget_token)
     if isinstance(result, ApprovalRequired):
         citations: list[CitationItem] = []
     else:

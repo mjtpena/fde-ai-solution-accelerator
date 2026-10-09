@@ -238,8 +238,8 @@ def test_configured_azure_services_wire_the_grounded_answer_workflow() -> None:
     app = build_application(azure_settings(), credential=credential)
 
     assert isinstance(app.state.chat_turn, GroundedAnswerWorkflow)
-    # The Search and embedding clients are closed with the app.
-    assert len(app.state.shutdown_callbacks) == 2
+    # The Search, embedding and Foundry chat clients are closed with the app.
+    assert len(app.state.shutdown_callbacks) == 3
 
 
 def test_azure_workflow_refuses_to_build_without_a_credential() -> None:
