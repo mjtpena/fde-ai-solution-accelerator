@@ -46,8 +46,10 @@ export async function fetchWithHeadersTimeout(
     timedOut = true;
     controller.abort();
   }, timeoutMs);
+  // A request that is already gone must not start an upstream call at all.
   const forwardAbort = () => controller.abort();
-  signal?.addEventListener("abort", forwardAbort, { once: true });
+  if (signal?.aborted) forwardAbort();
+  else signal?.addEventListener("abort", forwardAbort, { once: true });
   try {
     const response = await fetch(url, { ...init, signal: controller.signal });
     return { response, controller };
@@ -59,7 +61,13 @@ export async function fetchWithHeadersTimeout(
   }
 }
 
-/** Pass a body through, aborting the upstream when it goes silent too long. */
+/**
+ * Pass a body through, aborting the upstream when it goes silent too long.
+ *
+ * The idle timer is cleared however the stream ends: normal close (`flush`),
+ * downstream cancellation or a source error (`cancel`). The latter two also
+ * abort the upstream request.
+ */
 export function withIdleTimeout(
   body: ReadableStream<Uint8Array>,
   idleMs: number,
@@ -73,18 +81,25 @@ export function withIdleTimeout(
       target.error(new UpstreamTimeoutError());
     }, idleMs);
   };
-  return body.pipeThrough(
-    new TransformStream<Uint8Array, Uint8Array>({
-      start(target) {
-        reset(target);
-      },
-      transform(chunk, target) {
-        reset(target);
-        target.enqueue(chunk);
-      },
-      flush() {
-        clearTimeout(timer);
-      },
-    }),
-  );
+  // `cancel` is a WHATWG Streams transformer hook (Node 22) that TypeScript's
+  // lib.dom typings do not declare yet.
+  const transformer: Transformer<Uint8Array, Uint8Array> & {
+    cancel: (reason: unknown) => void;
+  } = {
+    start(target) {
+      reset(target);
+    },
+    transform(chunk, target) {
+      reset(target);
+      target.enqueue(chunk);
+    },
+    flush() {
+      clearTimeout(timer);
+    },
+    cancel() {
+      clearTimeout(timer);
+      controller.abort();
+    },
+  };
+  return body.pipeThrough(new TransformStream(transformer));
 }
