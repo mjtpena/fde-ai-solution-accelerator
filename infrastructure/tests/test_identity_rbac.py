@@ -47,12 +47,25 @@ def test_storage_roles_are_limited_to_one_blob_container() -> None:
     assert "name: blobContainerName" in assignment
 
 
-def test_foundry_uses_agent_consumer_at_project_scope() -> None:
-    assignment = read_module("foundry-agent-consumer-role-assignment.bicep")
+def test_foundry_grants_foundry_user_for_direct_inference_at_project_scope() -> None:
+    assignment = read_module("foundry-user-role-assignment.bicep")
 
-    assert "'eed3b665-ab3a-47b6-8f48-c9382fb1dad6'" in assignment
+    # Foundry User (formerly Azure AI User) covers direct chat and embedding inference.
+    assert "'53ca6127-db72-4b80-b1b0-d745d6d5456d'" in assignment
+    # Foundry Agent Consumer only reaches published agent endpoints; it would deny them.
+    assert "'eed3b665-ab3a-47b6-8f48-c9382fb1dad6'" not in assignment
     assert "scope: foundryProject" in assignment
-    assert "Foundry User" not in assignment
+    assert "scope: foundryAccount" not in assignment
+
+
+def test_every_inference_caller_gets_project_scoped_foundry_user() -> None:
+    main = MAIN.read_text(encoding="utf-8")
+
+    for caller in ("api", "worker", "evaluation"):
+        assert (
+            f"module {caller}FoundryAccess './modules/foundry-user-role-assignment.bicep'" in main
+        )
+    assert "foundry-agent-consumer-role-assignment.bicep" not in main
 
 
 def test_queue_roles_are_limited_to_one_queue() -> None:
@@ -95,7 +108,7 @@ def test_api_has_no_storage_access_and_worker_storage_access_is_split() -> None:
         "storage-container-role-assignment.bicep",
         "storage-queue-role-assignment.bicep",
         "monitoring-publisher-role-assignment.bicep",
-        "foundry-agent-consumer-role-assignment.bicep",
+        "foundry-user-role-assignment.bicep",
     ],
 )
 def test_role_assignment_modules_expose_resource_ids(module_name: str) -> None:

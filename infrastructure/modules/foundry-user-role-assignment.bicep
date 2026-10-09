@@ -16,16 +16,20 @@ resource foundryProject 'Microsoft.CognitiveServices/accounts/projects@2025-06-0
   name: foundryProjectName
 }
 
-var foundryAgentConsumerRoleDefinitionId = subscriptionResourceId(
+// Foundry User (formerly Azure AI User): the least-privilege built-in role that
+// includes direct model inference (chat and embeddings) on the project. Foundry
+// Agent Consumer (eed3b665-...) only covers published agent endpoints, so the
+// FoundryChatClient and FoundryEmbeddingClient calls would be denied under it.
+var foundryUserRoleDefinitionId = subscriptionResourceId(
   'Microsoft.Authorization/roleDefinitions',
-  'eed3b665-ab3a-47b6-8f48-c9382fb1dad6'
+  '53ca6127-db72-4b80-b1b0-d745d6d5456d'
 )
 
 resource foundryRoleAssignment 'Microsoft.Authorization/roleAssignments@2022-04-01' = {
-  name: guid(foundryProject.id, principalId, foundryAgentConsumerRoleDefinitionId)
+  name: guid(foundryProject.id, principalId, foundryUserRoleDefinitionId)
   scope: foundryProject
   properties: {
-    roleDefinitionId: foundryAgentConsumerRoleDefinitionId
+    roleDefinitionId: foundryUserRoleDefinitionId
     principalId: principalId
     principalType: 'ServicePrincipal'
   }

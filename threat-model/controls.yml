@@ -404,7 +404,7 @@ controls:
     description: >-
       Each container app has its own user-assigned identity. Each role assignment is
       scoped to a single resource: AcrPull on the registry, Search reader or index
-      contributor, one blob container, one queue, Foundry agent consumer at project
+      contributor, one blob container, one queue, Foundry User at project
       scope, and Monitoring Metrics Publisher on Application Insights. The API has no
       Storage access.
     type: preventive
@@ -416,7 +416,7 @@ controls:
       - infrastructure/modules/search-index-role-assignment.bicep
       - infrastructure/modules/storage-container-role-assignment.bicep
       - infrastructure/modules/storage-queue-role-assignment.bicep
-      - infrastructure/modules/foundry-agent-consumer-role-assignment.bicep
+      - infrastructure/modules/foundry-user-role-assignment.bicep
       - infrastructure/modules/monitoring-publisher-role-assignment.bicep
     verified_by:
       - infrastructure/tests/test_identity_rbac.py

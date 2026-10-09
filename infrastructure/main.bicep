@@ -440,8 +440,8 @@ module workerPoisonQueueAccess './modules/storage-queue-role-assignment.bicep' =
   }
 }
 
-module workerFoundryAccess './modules/foundry-agent-consumer-role-assignment.bicep' = {
-  name: 'worker-foundry-consumer-${take(suffix, 8)}'
+module workerFoundryAccess './modules/foundry-user-role-assignment.bicep' = {
+  name: 'worker-foundry-user-${take(suffix, 8)}'
   scope: environmentResourceGroup
   params: {
     foundryAccountName: foundry.outputs.accountName
@@ -478,8 +478,8 @@ module evaluationSearchAccess './modules/search-index-role-assignment.bicep' = i
   }
 }
 
-module evaluationFoundryAccess './modules/foundry-agent-consumer-role-assignment.bicep' = if (!empty(evaluationPrincipalId)) {
-  name: 'evaluation-foundry-consumer-${take(suffix, 8)}'
+module evaluationFoundryAccess './modules/foundry-user-role-assignment.bicep' = if (!empty(evaluationPrincipalId)) {
+  name: 'evaluation-foundry-user-${take(suffix, 8)}'
   scope: environmentResourceGroup
   params: {
     foundryAccountName: foundry.outputs.accountName
@@ -499,8 +499,8 @@ module deployerSearchAccess './modules/search-index-role-assignment.bicep' = if 
   }
 }
 
-module apiFoundryAccess './modules/foundry-agent-consumer-role-assignment.bicep' = {
-  name: 'api-foundry-consumer-${take(suffix, 8)}'
+module apiFoundryAccess './modules/foundry-user-role-assignment.bicep' = {
+  name: 'api-foundry-user-${take(suffix, 8)}'
   scope: environmentResourceGroup
   params: {
     foundryAccountName: foundry.outputs.accountName
