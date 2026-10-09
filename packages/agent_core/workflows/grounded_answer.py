@@ -1,6 +1,7 @@
 from collections.abc import Callable, Sequence
 from dataclasses import dataclass, field
-from typing import Generic, Literal, Never, Protocol, TypeVar, cast
+from datetime import datetime
+from typing import Final, Generic, Literal, Never, Protocol, TypeVar, cast, runtime_checkable
 
 from agent_framework import (
     Case,
@@ -9,6 +10,16 @@ from agent_framework import (
     WorkflowBuilder,
     WorkflowContext,
     handler,
+)
+
+from accelerator.security_core.content_safety import (
+    OUTPUT_BLOCKED,
+    PROMPT_ATTACK,
+    UNAVAILABLE,
+    ContentSafetyChecker,
+    ContentSafetyPolicy,
+    ContentSafetyUnavailableError,
+    ScreenedDocument,
 )
 
 from .base import Workflow
@@ -80,10 +91,30 @@ class CitationValidator(Protocol):
     ) -> None: ...
 
 
+INSUFFICIENT_EVIDENCE: Final = "insufficient_evidence"
+AbstentionCode = Literal[
+    "insufficient_evidence",
+    "content_safety_prompt_attack",
+    "content_safety_output_blocked",
+    "content_safety_unavailable",
+]
+CONTENT_SAFETY_CODES: Final[frozenset[str]] = frozenset(
+    {PROMPT_ATTACK, OUTPUT_BLOCKED, UNAVAILABLE}
+)
+# Fixed refusal texts: they never echo the prompt, the evidence or the answer.
+REFUSAL_REASONS: Final[dict[str, str]] = {
+    PROMPT_ATTACK: "The request was refused by content safety screening.",
+    OUTPUT_BLOCKED: "The generated answer was withheld by content safety screening.",
+    UNAVAILABLE: "Content safety screening is unavailable, so no answer was returned.",
+}
+
+
 @dataclass(frozen=True, slots=True)
 class Abstention:
     reason: str
     evidence_ids: tuple[str, ...]
+    # Stable, machine-readable cause; ``reason`` is the human-readable text.
+    code: AbstentionCode = "insufficient_evidence"
 
 
 @dataclass(frozen=True, slots=True)
@@ -109,6 +140,36 @@ class GroundedAnswerResult:
     evaluation_context: tuple[RetrievedEvidenceContext, ...] | None = field(
         default=None, repr=False
     )
+    # Retrieved chunks that content safety flagged as document attacks and dropped
+    # from evidence before generation. IDs only, never their text.
+    screened_out_chunk_ids: tuple[str, ...] = ()
+
+
+@runtime_checkable
+class _HasDeadline(Protocol):
+    @property
+    def deadline_utc(self) -> datetime: ...
+
+
+def _refusal(
+    code: str,
+    *,
+    screened_out_chunk_ids: tuple[str, ...] = (),
+    evaluation_context: tuple[RetrievedEvidenceContext, ...] | None = None,
+) -> GroundedAnswerResult:
+    return GroundedAnswerResult(
+        status="abstained",
+        answer=None,
+        citations=(),
+        citation_sources=(),
+        abstention=Abstention(
+            reason=REFUSAL_REASONS[code],
+            evidence_ids=(),
+            code=cast(AbstentionCode, code),
+        ),
+        evaluation_context=evaluation_context,
+        screened_out_chunk_ids=screened_out_chunk_ids,
+    )
 
 
 @dataclass(frozen=True, slots=True)
@@ -121,6 +182,7 @@ class _WorkflowInput:
 class _RetrievedEvidence:
     query: str
     evidence: tuple[Evidence, ...]
+    screened_out_chunk_ids: tuple[str, ...] = ()
 
 
 @dataclass(frozen=True, slots=True)
@@ -129,12 +191,102 @@ class _AssessedEvidence:
     evidence: tuple[Evidence, ...]
     decision: SufficiencyDecision
     evaluation_context: tuple[RetrievedEvidenceContext, ...] | None
+    screened_out_chunk_ids: tuple[str, ...] = ()
 
 
 @dataclass(frozen=True, slots=True)
 class _GeneratedResponse:
     assessed: _AssessedEvidence
     generated: GeneratedAnswer
+
+
+class _ShieldPromptExecutor(Executor):
+    """Prompt Shields on the user's prompt, before anything is retrieved."""
+
+    def __init__(
+        self,
+        checker: ContentSafetyChecker | None,
+        deadline_utc: datetime | None,
+        capture_evaluation_context: bool,
+    ) -> None:
+        super().__init__(id="shield-prompt")
+        self._checker = checker
+        self._deadline = deadline_utc
+        # Refusals before generation carry an empty same-turn context when captured.
+        self._context: tuple[RetrievedEvidenceContext, ...] | None = (
+            () if capture_evaluation_context else None
+        )
+
+    @handler
+    async def shield(
+        self,
+        message: _WorkflowInput,
+        ctx: WorkflowContext[_WorkflowInput, GroundedAnswerResult],
+    ) -> None:
+        if self._checker is not None:
+            try:
+                verdict = await self._checker.shield_prompt(
+                    message.query, (), deadline_utc=self._deadline
+                )
+            except ContentSafetyUnavailableError:
+                await ctx.yield_output(_refusal(UNAVAILABLE, evaluation_context=self._context))
+                return
+            if verdict.user_prompt_attack:
+                await ctx.yield_output(_refusal(PROMPT_ATTACK, evaluation_context=self._context))
+                return
+        await ctx.send_message(message)
+
+
+class _ShieldDocumentsExecutor(Executor):
+    """Prompt Shields on retrieved chunks; attacked chunks are dropped, not rewritten."""
+
+    def __init__(
+        self,
+        checker: ContentSafetyChecker | None,
+        deadline_utc: datetime | None,
+        capture_evaluation_context: bool,
+    ) -> None:
+        super().__init__(id="shield-documents")
+        self._checker = checker
+        self._deadline = deadline_utc
+        # Refusals before generation carry an empty same-turn context when captured.
+        self._context: tuple[RetrievedEvidenceContext, ...] | None = (
+            () if capture_evaluation_context else None
+        )
+
+    @handler
+    async def shield(
+        self,
+        message: _RetrievedEvidence,
+        ctx: WorkflowContext[_RetrievedEvidence, GroundedAnswerResult],
+    ) -> None:
+        if self._checker is None or not message.evidence:
+            await ctx.send_message(message)
+            return
+        try:
+            verdict = await self._checker.shield_prompt(
+                message.query,
+                [ScreenedDocument(item.chunk_id, item.text) for item in message.evidence],
+                deadline_utc=self._deadline,
+            )
+        except ContentSafetyUnavailableError:
+            await ctx.yield_output(_refusal(UNAVAILABLE, evaluation_context=self._context))
+            return
+        if verdict.user_prompt_attack:
+            await ctx.yield_output(_refusal(PROMPT_ATTACK, evaluation_context=self._context))
+            return
+        attacked = frozenset(verdict.attacked_document_ids)
+        await ctx.send_message(
+            _RetrievedEvidence(
+                query=message.query,
+                evidence=tuple(item for item in message.evidence if item.chunk_id not in attacked),
+                screened_out_chunk_ids=tuple(
+                    dict.fromkeys(
+                        item.chunk_id for item in message.evidence if item.chunk_id in attacked
+                    )
+                ),
+            )
+        )
 
 
 class _RetrieveExecutor(
@@ -192,6 +344,7 @@ class _SufficiencyExecutor(Executor, Generic[EvidenceT]):
                 evidence=message.evidence,
                 decision=decision,
                 evaluation_context=evaluation_context,
+                screened_out_chunk_ids=message.screened_out_chunk_ids,
             )
         )
 
@@ -222,7 +375,7 @@ class _CitationValidationExecutor(Executor):
     async def validate(
         self,
         message: _GeneratedResponse,
-        ctx: WorkflowContext[Never, GroundedAnswerResult],
+        ctx: WorkflowContext[GroundedAnswerResult],
     ) -> None:
         evidence = message.assessed.evidence
         citations = tuple(message.generated.citations)
@@ -239,7 +392,7 @@ class _CitationValidationExecutor(Executor):
             )
             for chunk_id in citations
         )
-        await ctx.yield_output(
+        await ctx.send_message(
             GroundedAnswerResult(
                 status="answered",
                 answer=message.generated.answer,
@@ -247,6 +400,51 @@ class _CitationValidationExecutor(Executor):
                 citation_sources=citation_sources,
                 abstention=None,
                 evaluation_context=message.assessed.evaluation_context,
+                screened_out_chunk_ids=message.assessed.screened_out_chunk_ids,
+            )
+        )
+
+
+class _ScreenOutputExecutor(Executor):
+    """Harm-category analysis of the validated answer; blocked answers become refusals."""
+
+    def __init__(
+        self,
+        checker: ContentSafetyChecker | None,
+        policy: ContentSafetyPolicy,
+        deadline_utc: datetime | None,
+    ) -> None:
+        super().__init__(id="screen-output")
+        self._checker = checker
+        self._policy = policy
+        self._deadline = deadline_utc
+
+    @handler
+    async def screen(
+        self,
+        message: GroundedAnswerResult,
+        ctx: WorkflowContext[Never, GroundedAnswerResult],
+    ) -> None:
+        if self._checker is None or message.answer is None:
+            await ctx.yield_output(message)
+            return
+        try:
+            analysis = await self._checker.analyze_text(
+                message.answer, deadline_utc=self._deadline
+            )
+            blocked = self._policy.blocked_categories(analysis)
+        except ContentSafetyUnavailableError:
+            code = UNAVAILABLE
+        else:
+            if not blocked:
+                await ctx.yield_output(message)
+                return
+            code = OUTPUT_BLOCKED
+        await ctx.yield_output(
+            _refusal(
+                code,
+                screened_out_chunk_ids=message.screened_out_chunk_ids,
+                evaluation_context=message.evaluation_context,
             )
         )
 
@@ -280,6 +478,7 @@ class _AbstainExecutor(Executor):
                     evidence_ids=tuple(message.decision.evidence_ids),
                 ),
                 evaluation_context=message.evaluation_context,
+                screened_out_chunk_ids=message.screened_out_chunk_ids,
             )
         )
 
@@ -297,25 +496,45 @@ class GroundedAnswerWorkflow(
         citation_validator: CitationValidator,
         retrieval_request_factory: Callable[[str], RequestT],
         capture_evaluation_context: bool = False,
+        content_safety_checker: ContentSafetyChecker | None = None,
+        content_safety_policy: ContentSafetyPolicy | None = None,
     ) -> None:
+        """Without ``content_safety_checker`` the workflow runs unscreened. That is for
+        library and unit-test use only; the API's composition root always supplies a
+        checker in production, and the settings refuse to disable it there."""
         self._retriever = retriever
         self._sufficiency_checker = sufficiency_checker
         self._answer_generator = answer_generator
         self._citation_validator = citation_validator
         self._retrieval_request_factory = retrieval_request_factory
         self._capture_evaluation_context = capture_evaluation_context
+        self._content_safety = content_safety_checker
+        self._content_safety_policy = content_safety_policy or ContentSafetyPolicy()
 
     async def run(self, workflow_input: str, ctx: ContextT) -> GroundedAnswerResult:
+        # Screening calls are bounded by the request deadline when the context has one.
+        deadline = ctx.deadline_utc if isinstance(ctx, _HasDeadline) else None
+        shield_prompt = _ShieldPromptExecutor(
+            self._content_safety, deadline, self._capture_evaluation_context
+        )
         retrieve = _RetrieveExecutor(self._retriever, self._retrieval_request_factory)
+        shield_documents = _ShieldDocumentsExecutor(
+            self._content_safety, deadline, self._capture_evaluation_context
+        )
         sufficiency = _SufficiencyExecutor(
             self._sufficiency_checker, self._capture_evaluation_context
         )
         generate = _GenerateExecutor(self._answer_generator)
         abstain = _AbstainExecutor()
         validate = _CitationValidationExecutor(self._citation_validator)
+        screen_output = _ScreenOutputExecutor(
+            self._content_safety, self._content_safety_policy, deadline
+        )
         workflow = (
-            WorkflowBuilder(name="Grounded answer", start_executor=retrieve)
-            .add_edge(retrieve, sufficiency)
+            WorkflowBuilder(name="Grounded answer", start_executor=shield_prompt)
+            .add_edge(shield_prompt, retrieve)
+            .add_edge(retrieve, shield_documents)
+            .add_edge(shield_documents, sufficiency)
             .add_switch_case_edge_group(
                 sufficiency,
                 [
@@ -327,6 +546,7 @@ class GroundedAnswerWorkflow(
                 ],
             )
             .add_edge(generate, validate)
+            .add_edge(validate, screen_output)
             .build()
         )
         run_result = await workflow.run(_WorkflowInput(workflow_input, ctx))
