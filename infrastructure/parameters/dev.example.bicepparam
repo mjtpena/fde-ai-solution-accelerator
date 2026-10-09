@@ -39,6 +39,7 @@ param embeddingModelName = readEnvironmentVariable('AZURE_EMBEDDING_MODEL_NAME',
 param embeddingModelVersion = readEnvironmentVariable('AZURE_EMBEDDING_MODEL_VERSION', '1')
 param embeddingSkuName = 'GlobalStandard'
 param embeddingCapacity = 1
+param contentSafetySkuName = 'S0'
 param deploymentPrincipalId = readEnvironmentVariable('AZURE_DEPLOYMENT_PRINCIPAL_ID', '')
 // User when AZURE_DEPLOYMENT_PRINCIPAL_ID is a signed-in developer; ServicePrincipal for CI OIDC.
 param deploymentPrincipalType = readEnvironmentVariable('AZURE_DEPLOYMENT_PRINCIPAL_TYPE', 'ServicePrincipal')

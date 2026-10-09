@@ -35,6 +35,9 @@ Assert-Condition ($migration.properties.configuration.triggerType -eq 'Manual') 
 Assert-Condition (($migration.properties.template.containers[0].command -join ' ') -eq 'python -m accelerator.migrations upgrade head') 'The migration job must run the packaged migrations.'
 $insights = $modules.properties.template.resources | Where-Object type -eq 'Microsoft.Insights/components'
 Assert-Condition ($insights.properties.DisableLocalAuth -eq $true) 'Application Insights must require Entra ingestion.'
+$contentSafety = @($modules.properties.template.resources | Where-Object { $_.type -eq 'Microsoft.CognitiveServices/accounts' -and $_.kind -eq 'ContentSafety' })
+Assert-Condition ($contentSafety.Count -eq 1) 'Expected one Azure AI Content Safety account.'
+Assert-Condition ($contentSafety[0].properties.disableLocalAuth -eq $true) 'Content Safety must require Entra authentication.'
 Assert-Condition ($appResources[0].identity.type -eq 'UserAssigned') 'Workload UAMIs must be attached.'
 Assert-Condition ($appResources[0].properties.configuration.registries[0].identity -match 'identityId') 'Registry must use the workload identity.'
 $postgres = $modules.properties.template.resources | Where-Object type -eq 'Microsoft.DBforPostgreSQL/flexibleServers'

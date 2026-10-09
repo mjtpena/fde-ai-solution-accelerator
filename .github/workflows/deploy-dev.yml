@@ -132,6 +132,7 @@ jobs:
       search_endpoint: ${{ steps.outputs.outputs.search_endpoint }}
       search_index_name: ${{ steps.outputs.outputs.search_index_name }}
       search_vector_dimensions: ${{ steps.outputs.outputs.search_vector_dimensions }}
+      content_safety_endpoint: ${{ steps.outputs.outputs.content_safety_endpoint }}
       embedding_deployment_name: ${{ steps.outputs.outputs.embedding_deployment_name }}
       web_identity_id: ${{ steps.outputs.outputs.web_identity_id }}
       web_identity_principal_id: ${{ steps.outputs.outputs.web_identity_principal_id }}
@@ -284,6 +285,7 @@ jobs:
             echo "search_endpoint=$(jq -er '.searchEndpoint.value' <<< "$outputs")"
             echo "search_index_name=$(jq -er '.searchIndexName.value' <<< "$outputs")"
             echo "search_vector_dimensions=$(jq -er '.searchVectorDimensions.value' <<< "$outputs")"
+            echo "content_safety_endpoint=$(jq -er '.contentSafetyEndpoint.value' <<< "$outputs")"
             echo "embedding_deployment_name=$(jq -er '.embeddingDeploymentName.value' <<< "$outputs")"
           } >> "$GITHUB_OUTPUT"
 
@@ -528,6 +530,7 @@ jobs:
       API_SEARCH_ENDPOINT: ${{ needs.deploy_dev.outputs.search_endpoint }}
       API_SEARCH_INDEX_NAME: ${{ needs.deploy_dev.outputs.search_index_name }}
       API_SEARCH_VECTOR_DIMENSIONS: ${{ needs.deploy_dev.outputs.search_vector_dimensions }}
+      API_CONTENT_SAFETY_ENDPOINT: ${{ needs.deploy_dev.outputs.content_safety_endpoint }}
       EVALUATION_PRINCIPAL_OBJECT_ID: ${{ vars.EVALUATION_PRINCIPAL_OBJECT_ID }}
       EVALUATION_JUDGE_AZURE_ENDPOINT: ${{ vars.EVALUATION_JUDGE_AZURE_ENDPOINT }}
       EVALUATION_JUDGE_AZURE_DEPLOYMENT: ${{ vars.EVALUATION_JUDGE_AZURE_DEPLOYMENT }}

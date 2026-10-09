@@ -14,21 +14,24 @@ passwords, or connection strings are supplied or emitted; every service has loca
 | Storage | `incoming` and `documents` containers, `ingestion` and `ingestion-poison` queues, shared keys off |
 | Azure AI Search | Local auth off; semantic ranker plan `searchSemanticSearch` (default `free`) |
 | Foundry | Chat deployment (`modelName`) and embedding deployment (`embeddingModelName`) |
+| Azure AI Content Safety | Kind `ContentSafety`, SKU `contentSafetySkuName`, key auth off, custom subdomain for Entra tokens, diagnostics to Log Analytics; its endpoint is the API's `API_CONTENT_SAFETY_ENDPOINT` (ADR-0007) |
 | Key Vault, Log Analytics, Application Insights | RBAC vault; App Insights ingestion requires Entra |
 | User-assigned identities | One each for api, web, worker and migrator |
 
 Search and Foundry SKUs are parameters (`searchSkuName`, `searchReplicaCount`,
-`searchPartitionCount`, `foundrySkuName`, `modelSkuName`, `embeddingSkuName`).
+`searchPartitionCount`, `foundrySkuName`, `modelSkuName`, `embeddingSkuName`,
+`contentSafetySkuName`).
 
 ### Least-privilege access
 
 | Identity | Grants |
 | --- | --- |
-| api | AcrPull; Search Index Data Reader; Foundry project user; Monitoring Metrics Publisher; database role `accelerator_api` |
+| api | AcrPull; Search Index Data Reader; Foundry project user; Cognitive Services User on the Content Safety account; Monitoring Metrics Publisher; database role `accelerator_api` |
 | worker | AcrPull; Search Index Data Contributor; Foundry project user; Blob Data Reader on `incoming`; Blob Data Contributor on `documents`; Queue Message Processor on `ingestion`; Queue Message Sender on `ingestion-poison`; database role `accelerator_worker` |
 | migrator | AcrPull; Monitoring Metrics Publisher; database role `accelerator_migrator` |
 | web | AcrPull only; it calls the API over the environment's internal network |
 | deployer (`deploymentPrincipalId`) | Search Service Contributor, to create the index (optional) |
+| evaluation (`evaluationPrincipalId`) | Search Index Data Reader; Foundry project user; Cognitive Services User on the Content Safety account (optional) |
 
 Database privileges: only `accelerator_migrator` may create objects. After each
 upgrade it grants the runtime roles exactly their table privileges
@@ -121,8 +124,9 @@ principal; a role assignment with the wrong principal type fails). The database 
 
 The workflow's full evaluation runs on the VNet runner: the evaluation principal's
 scopes are read from the private database. Set `AZURE_EVALUATION_PRINCIPAL_ID` to
-that runner identity's object ID (it receives Search Index Data Reader and Foundry
-project access), and `EVALUATION_PRINCIPAL_OBJECT_ID` to the principal whose scope
+that runner identity's object ID (it receives Search Index Data Reader, Foundry
+project access and Cognitive Services User on the Content Safety account, because
+the evaluated workflow screens every turn), and `EVALUATION_PRINCIPAL_OBJECT_ID` to the principal whose scope
 memberships bound the evaluated turns.
 
 ## Database boundary

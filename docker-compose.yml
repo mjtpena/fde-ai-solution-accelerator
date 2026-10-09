@@ -67,6 +67,8 @@ services:
       AZURE_CLIENT_ID: ${AZURE_CLIENT_ID:-}
       API_SEARCH_ENDPOINT: ${API_SEARCH_ENDPOINT:-}
       API_SEARCH_INDEX_NAME: ${API_SEARCH_INDEX_NAME:-}
+      # Without it, development runs unscreened (logged); production requires it.
+      API_CONTENT_SAFETY_ENDPOINT: ${API_CONTENT_SAFETY_ENDPOINT:-}
       APPLICATIONINSIGHTS_CONNECTION_STRING: ${APPLICATIONINSIGHTS_CONNECTION_STRING:-}
       API_DATABASE_URL: postgresql+asyncpg://${POSTGRES_USER:-accelerator}:${POSTGRES_PASSWORD:-local-development-only}@postgres:5432/${POSTGRES_DB:-accelerator}
     ports:

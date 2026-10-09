@@ -135,6 +135,7 @@ def test_api_has_no_storage_access_and_worker_storage_access_is_split() -> None:
         "storage-queue-role-assignment.bicep",
         "monitoring-publisher-role-assignment.bicep",
         "foundry-user-role-assignment.bicep",
+        "content-safety-user-role-assignment.bicep",
     ],
 )
 def test_role_assignment_modules_expose_resource_ids(module_name: str) -> None:
@@ -144,7 +145,12 @@ def test_role_assignment_modules_expose_resource_ids(module_name: str) -> None:
 def test_evaluation_principal_gets_only_search_reader_and_project_foundry_user() -> None:
     granted = main_modules_granting("evaluationPrincipalId")
 
-    assert set(granted) == {"evaluationSearchAccess", "evaluationFoundryAccess"}
+    # The full evaluation runs the API's workflow, content safety included.
+    assert set(granted) == {
+        "evaluationSearchAccess",
+        "evaluationFoundryAccess",
+        "evaluationContentSafetyAccess",
+    }
     search = granted["evaluationSearchAccess"]
     assert "'./modules/search-index-role-assignment.bicep'" in search.splitlines()[0]
     assert "accessLevel: 'reader'" in search
@@ -169,3 +175,50 @@ def test_runtime_identity_grants_are_unconditional() -> None:
 
     assert "apiFoundryAccess" in granted
     assert "= if (" not in granted["apiFoundryAccess"].splitlines()[0]
+
+
+def test_content_safety_grants_cognitive_services_user_at_account_scope() -> None:
+    assignment = read_module("content-safety-user-role-assignment.bicep")
+
+    # Cognitive Services User: data-plane calls only, no keys or management.
+    assert "'a97b65f3-24c7-4388-baec-2e87135dc908'" in assignment
+    # Not Cognitive Services Contributor (25fbc0a9-...), which can list keys.
+    assert "25fbc0a9-bd7c-42a3-aa1a-3b75d497ee68" not in assignment
+    assert "scope: account" in assignment
+    assert "name: guid(account.id, principalId, cognitiveServicesUserRoleDefinitionId)" in (
+        assignment
+    )
+
+
+def test_api_and_evaluation_principals_can_call_content_safety() -> None:
+    api = main_modules_granting("apiIdentity.outputs.principalId")
+    evaluation = main_modules_granting("evaluationPrincipalId")
+
+    assert "apiContentSafetyAccess" in api
+    assert "= if (" not in api["apiContentSafetyAccess"].splitlines()[0]
+    assert "content-safety-user-role-assignment.bicep" in api["apiContentSafetyAccess"]
+    assert "content-safety-user-role-assignment.bicep" in (
+        evaluation["evaluationContentSafetyAccess"]
+    )
+    for caller in ("workerIdentity", "webIdentity", "migratorIdentity"):
+        granted = main_modules_granting(f"{caller}.outputs.principalId")
+        assert not any("content-safety" in body for body in granted.values()), caller
+
+
+def test_content_safety_account_is_entra_only_with_diagnostics() -> None:
+    account = read_module("content-safety.bicep")
+    main = MAIN.read_text(encoding="utf-8")
+    apps = read_module("container-apps.bicep")
+
+    assert "kind: 'ContentSafety'" in account
+    assert "disableLocalAuth: true" in account
+    # Entra token authentication needs a custom subdomain endpoint.
+    assert "customSubDomainName: accountName" in account
+    assert "name: skuName" in account
+    assert "Microsoft.Insights/diagnosticSettings" in account
+    assert "workspaceId: logAnalyticsWorkspaceId" in account
+    assert "categoryGroup: 'allLogs'" in account
+    assert "output endpoint string = account.properties.endpoint" in account
+    assert "param contentSafetySkuName string\n" in main
+    assert "contentSafetyEndpoint: contentSafety.outputs.endpoint" in main
+    assert "{ name: 'API_CONTENT_SAFETY_ENDPOINT', value: contentSafetyEndpoint }" in apps

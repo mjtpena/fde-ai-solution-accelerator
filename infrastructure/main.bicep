@@ -112,6 +112,13 @@ param embeddingModelVersion string = '1'
 param embeddingSkuName string = 'GlobalStandard'
 param embeddingCapacity int = 1
 
+@description('Azure AI Content Safety SKU for prompt, document and answer screening.')
+@allowed([
+  'F0'
+  'S0'
+])
+param contentSafetySkuName string
+
 @description('Object ID of the deployment principal; granted Search Service Contributor to provision the index. Empty skips the grant.')
 param deploymentPrincipalId string = ''
 
@@ -122,7 +129,7 @@ param deploymentPrincipalId string = ''
 ])
 param deploymentPrincipalType string = 'ServicePrincipal'
 
-@description('Object ID of the principal that runs the full evaluation (the VNet runner\'s OIDC identity); granted Search Index Data Reader and Foundry project access. Empty skips the grants.')
+@description('Object ID of the principal that runs the full evaluation (the VNet runner\'s OIDC identity); granted Search Index Data Reader, Foundry project access and Content Safety access. Empty skips the grants.')
 param evaluationPrincipalId string = ''
 
 @description('Azure Key Vault SKU.')
@@ -151,6 +158,7 @@ var searchServiceName = '${resourcePrefix}-search-${take(suffix, 6)}'
 var postgresServerName = '${resourcePrefix}-postgres-${take(suffix, 6)}'
 var foundryAccountName = '${take(sanitizedPrefix, 35)}${take(suffix, 13)}'
 var foundryProjectName = '${resourcePrefix}-project'
+var contentSafetyAccountName = '${take(sanitizedPrefix, 30)}safety${take(suffix, 13)}'
 var workspaceName = '${resourcePrefix}-logs-${take(suffix, 6)}'
 var appInsightsName = '${resourcePrefix}-appi-${take(suffix, 6)}'
 var containerAppsEnvironmentName = '${resourcePrefix}-apps-${take(suffix, 6)}'
@@ -260,6 +268,18 @@ module foundry './modules/foundry.bicep' = {
     embeddingModelVersion: embeddingModelVersion
     embeddingSkuName: embeddingSkuName
     embeddingCapacity: embeddingCapacity
+    logAnalyticsWorkspaceId: monitoring.outputs.workspaceId
+    tags: tags
+  }
+}
+
+module contentSafety './modules/content-safety.bicep' = {
+  name: 'content-safety-${take(suffix, 8)}'
+  scope: environmentResourceGroup
+  params: {
+    location: location
+    accountName: contentSafetyAccountName
+    skuName: contentSafetySkuName
     logAnalyticsWorkspaceId: monitoring.outputs.workspaceId
     tags: tags
   }
@@ -488,6 +508,15 @@ module evaluationFoundryAccess './modules/foundry-user-role-assignment.bicep' = 
   }
 }
 
+module evaluationContentSafetyAccess './modules/content-safety-user-role-assignment.bicep' = if (!empty(evaluationPrincipalId)) {
+  name: 'evaluation-content-safety-user-${take(suffix, 8)}'
+  scope: environmentResourceGroup
+  params: {
+    contentSafetyAccountName: contentSafety.outputs.accountName
+    principalId: evaluationPrincipalId
+  }
+}
+
 module deployerSearchAccess './modules/search-index-role-assignment.bicep' = if (!empty(deploymentPrincipalId)) {
   name: 'deployer-search-service-${take(suffix, 8)}'
   scope: environmentResourceGroup
@@ -505,6 +534,17 @@ module apiFoundryAccess './modules/foundry-user-role-assignment.bicep' = {
   params: {
     foundryAccountName: foundry.outputs.accountName
     foundryProjectName: foundry.outputs.projectName
+    principalId: apiIdentity.outputs.principalId
+  }
+}
+
+// The API screens every chat turn (prompt, retrieved chunks, answer) and fails
+// closed without this grant.
+module apiContentSafetyAccess './modules/content-safety-user-role-assignment.bicep' = {
+  name: 'api-content-safety-user-${take(suffix, 8)}'
+  scope: environmentResourceGroup
+  params: {
+    contentSafetyAccountName: contentSafety.outputs.accountName
     principalId: apiIdentity.outputs.principalId
   }
 }
@@ -551,6 +591,7 @@ module containerApps './modules/container-apps.bicep' = {
     projectEndpoint: foundry.outputs.projectEndpoint
     modelDeploymentName: foundry.outputs.modelDeploymentName
     embeddingDeploymentName: foundry.outputs.embeddingDeploymentName
+    contentSafetyEndpoint: contentSafety.outputs.endpoint
     applicationInsightsConnectionString: monitoring.outputs.applicationInsightsConnectionString
     tags: tags
   }
@@ -559,6 +600,7 @@ module containerApps './modules/container-apps.bicep' = {
     webRegistryPull
     workerRegistryPull
     migratorRegistryPull
+    apiContentSafetyAccess
   ]
 }
 
@@ -578,6 +620,8 @@ output foundryProjectId string = foundry.outputs.projectId
 output projectEndpoint string = foundry.outputs.projectEndpoint
 output projectPrincipalId string = foundry.outputs.projectPrincipalId
 output modelDeploymentName string = foundry.outputs.modelDeploymentName
+output contentSafetyAccountName string = contentSafety.outputs.accountName
+output contentSafetyEndpoint string = contentSafety.outputs.endpoint
 output keyVaultName string = keyVault.outputs.vaultName
 output keyVaultUri string = keyVault.outputs.vaultUri
 output registryName string = containerRegistry.outputs.registryName

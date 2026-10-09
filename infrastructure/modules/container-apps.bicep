@@ -38,6 +38,8 @@ param searchVectorDimensions int
 param projectEndpoint string
 param modelDeploymentName string
 param embeddingDeploymentName string
+@description('Azure AI Content Safety endpoint; the API refuses to start in production without it.')
+param contentSafetyEndpoint string
 param applicationInsightsConnectionString string
 
 @description('Minimum API replicas; 1 avoids cold starts on the first chat request.')
@@ -88,6 +90,7 @@ var apiSettings = [
   { name: 'API_SEARCH_ENDPOINT', value: searchEndpoint }
   { name: 'API_SEARCH_INDEX_NAME', value: searchIndexName }
   { name: 'API_SEARCH_VECTOR_DIMENSIONS', value: string(searchVectorDimensions) }
+  { name: 'API_CONTENT_SAFETY_ENDPOINT', value: contentSafetyEndpoint }
   { name: 'APPLICATIONINSIGHTS_CONNECTION_STRING', value: applicationInsightsConnectionString }
 ]
 
