@@ -13,6 +13,18 @@ the SDK-free `IndexDefinition` into an Azure SDK index, and `ensure_index` accep
 an injected async token-authenticated `SearchIndexClient` with Search Service
 Contributor privileges.
 
+Provision or update the index from the schema-as-code definition with the
+deployment identity:
+
+```text
+AZURE_SEARCH_ENDPOINT=https://<service>.search.windows.net \
+AZURE_SEARCH_INDEX_NAME=chunks AZURE_SEARCH_VECTOR_DIMENSIONS=1536 \
+uv run --all-packages python -m accelerator.infrastructure.search.provision
+```
+
+It uses `DefaultAzureCredential` (workload identity in CI, a developer login
+locally) and never an admin key.
+
 The default query combines keyword and vector search with semantic ranking,
 50 vector candidates, and `preFilter`. `SEMANTIC_RANKING` and `VECTOR_CANDIDATES`
 are operator settings, not request parameters. Semantic service errors fail the
