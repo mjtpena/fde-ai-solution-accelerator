@@ -37,19 +37,11 @@ services:
       start_period: 5s
 
   migrate:
-    image: python:3.12-slim
-    working_dir: /workspace
-    volumes:
-      - .:/workspace:ro
-    command:
-      - /bin/sh
-      - -c
-      - >-
-        cp -a /workspace/apps/api /tmp/accelerator-api
-        && cp -a /workspace/packages/agent_core /tmp/accelerator-agent-core
-        && cp -a /workspace/packages/security_core /tmp/accelerator-security-core
-        && python -m pip install --no-cache-dir /tmp/accelerator-agent-core /tmp/accelerator-security-core /tmp/accelerator-api
-        && python -m accelerator.migrations upgrade head
+    build:
+      context: .
+      dockerfile: apps/api/Dockerfile
+    image: fde-accelerator-api:local
+    command: ["python", "-m", "accelerator.migrations", "upgrade", "head"]
     environment:
       API_DATABASE_URL: postgresql+asyncpg://${POSTGRES_USER:-accelerator}:${POSTGRES_PASSWORD:-local-development-only}@postgres:5432/${POSTGRES_DB:-accelerator}
     depends_on:
@@ -58,19 +50,10 @@ services:
     restart: "no"
 
   api:
-    image: python:3.12-slim
-    working_dir: /workspace
-    volumes:
-      - .:/workspace:ro
-    command:
-      - /bin/sh
-      - -c
-      - >-
-        cp -a /workspace/apps/api /tmp/accelerator-api
-        && cp -a /workspace/packages/agent_core /tmp/accelerator-agent-core
-        && cp -a /workspace/packages/security_core /tmp/accelerator-security-core
-        && python -m pip install --no-cache-dir /tmp/accelerator-agent-core /tmp/accelerator-security-core /tmp/accelerator-api 'uvicorn[standard]>=0.30,<1'
-        && python -m uvicorn --factory accelerator.api.main:create_application --host 0.0.0.0 --port 8000
+    build:
+      context: .
+      dockerfile: apps/api/Dockerfile
+    image: fde-accelerator-api:local
     environment:
       API_ENVIRONMENT: ${API_ENVIRONMENT:-development}
       API_ENTRA_TENANT_ID: ${ENTRA_TENANT_ID:?Set ENTRA_TENANT_ID in .env}
@@ -95,7 +78,7 @@ services:
         - CMD
         - python
         - -c
-        - "import socket; socket.create_connection(('127.0.0.1', 8000), timeout=2).close()"
+        - "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8000/healthz', timeout=2).close()"
       interval: 10s
       timeout: 3s
       retries: 5
@@ -140,11 +123,11 @@ services:
       azurite:
         condition: service_healthy
     healthcheck:
-      test: ["CMD", "python", "-c", "import os; os.kill(1, 0)"]
-      interval: 10s
+      test: ["CMD", "python", "-m", "accelerator.ingestion.healthcheck"]
+      interval: 15s
       timeout: 3s
       retries: 3
-      start_period: 5s
+      start_period: 10s
 
 volumes:
   postgres-data:

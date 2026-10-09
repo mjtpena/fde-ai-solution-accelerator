@@ -7,7 +7,8 @@ RUN python -m pip install --no-cache-dir .
 
 USER 10001:10001
 
-HEALTHCHECK --interval=10s --timeout=3s --start-period=5s --retries=3 \
-    CMD ["python", "-c", "import os; os.kill(1, 0)"]
+# Fails when the worker's event loop stops refreshing its heartbeat file.
+HEALTHCHECK --interval=15s --timeout=3s --start-period=10s --retries=3 \
+    CMD ["python", "-m", "accelerator.ingestion.healthcheck"]
 
 CMD ["python", "-m", "accelerator.ingestion"]

@@ -99,3 +99,13 @@ does not skip or silently replace PostgreSQL with an in-memory database.
 It also exercises HTTP admin authorisation and auth-failure persistence, shared
 scope resolution, and approval/tool hooks through test-only routes using the same
 PostgreSQL session factory.
+
+## Container image
+
+`apps/api/Dockerfile` builds from the repository root
+(`docker build -f apps/api/Dockerfile .`). It installs the locked dependencies
+with `uv sync --frozen --no-dev` into a virtual environment, copies only that
+environment into a digest-pinned `python:3.12-slim` runtime, runs as UID 10001,
+and health-checks `GET /healthz` over HTTP. The same image runs migrations
+(`python -m accelerator.migrations upgrade head`); `docker compose up` does this
+in the one-shot `migrate` service before the API starts.

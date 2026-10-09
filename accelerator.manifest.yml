@@ -2,7 +2,7 @@
   "schema_version": 1,
   "version_file": "pyproject.toml",
   "copy": [
-    ".github", ".vscode", ".env.example", ".gitignore", ".pre-commit-config.yaml",
+    ".github", ".vscode", ".dockerignore", ".env.example", ".gitignore", ".pre-commit-config.yaml",
     "AGENTS.md", "CONTRIBUTING.md", "LICENSE", "Makefile", "apps", "contracts",
     "docs", "engagement", "evaluations", "packages", "scripts", "tests",
     "threat-model", "workers", "docker-compose.yml", "package.json",
