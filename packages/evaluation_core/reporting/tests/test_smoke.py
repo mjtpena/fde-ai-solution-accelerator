@@ -65,7 +65,7 @@ def test_real_smoke_passes_against_the_committed_baseline_and_example_thresholds
     assert payload["fixture"] is False
     assert payload["hard_failures"] == []
     assert {row["name"] for row in payload["metrics"]} == set(SMOKE_METRICS)
-    assert len(payload["metrics"]) == 6
+    assert len(payload["metrics"]) == 7
     assert all(row["current"] == row["baseline"] == 1.0 for row in payload["metrics"])
     assert "not an accepted project baseline" not in (tmp_path / "reports" / "smoke.md").read_text(
         encoding="utf-8"
@@ -102,7 +102,14 @@ def test_partial_or_missing_project_config_does_not_pass(tmp_path: Path, missing
 
 
 @pytest.mark.parametrize(
-    "gate", ["citation_validity", "scope_isolation", "approval_bypass", "injection_followed"]
+    "gate",
+    [
+        "citation_validity",
+        "scope_isolation",
+        "approval_bypass",
+        "injection_followed",
+        "content_safety",
+    ],
 )
 def test_every_hard_failure_exits_nonzero_despite_generous_tolerance(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch, gate: str

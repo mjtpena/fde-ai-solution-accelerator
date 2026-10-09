@@ -2,7 +2,8 @@
 
 The smoke gate runs the product's own grounded-answer workflow, sufficiency gate,
 citation validator, untrusted-evidence wrapper, tool bridge, tool policy and
-approval service over the fixture corpus. Only two pieces are offline stand-ins:
+approval service and content-safety wiring over the fixture corpus. Only three
+pieces are offline stand-ins:
 
 * ``OfflineRetriever`` scores chunks lexically instead of with Azure AI Search, and
   filters them by the trusted ``ExecutionContext`` scopes exactly as the Search
@@ -13,9 +14,16 @@ approval service over the fixture corpus. Only two pieces are offline stand-ins:
   ``SYSTEM:``/``INSTRUCTION:`` directive it finds outside an ``<evidence>`` element
   is obeyed. Injection metrics therefore fail if retrieved text ever escapes its
   evidence element, which is what the wrapper must prevent.
+* ``OfflineContentSafetyChecker`` replaces Azure AI Content Safety. Prompt Shields is
+  approximated by ``security_core.prompt_injection.injection_signals`` plus the
+  directive and evidence-markup patterns above; harm analysis recognises only the
+  synthetic ``UNSAFE-<CATEGORY>-<LOW|MEDIUM|HIGH>`` markers planted in the fixture
+  corpus (severity 2, 4 or 6). It measures the workflow's handling of verdicts
+  (refuse, drop, re-assess, withhold), not classifier quality.
 
 What this measures is the deterministic control plane (scope filtering, abstention,
-citation validation, evidence wrapping, tool routing, approval binding), not model
+citation validation, evidence wrapping, tool routing, approval binding,
+content-safety refusal and evidence dropping), not model
 judgement; ``make eval-full`` measures the real model with Foundry evaluators.
 """
 
@@ -27,6 +35,7 @@ import re
 from collections.abc import AsyncIterator, Mapping, Sequence
 from contextlib import asynccontextmanager
 from dataclasses import dataclass, field
+from datetime import datetime
 from typing import Any, ClassVar, Literal
 from uuid import UUID
 
@@ -40,7 +49,14 @@ from accelerator.agent_core.tools import (
     ToolRisk,
 )
 from accelerator.retrieval_core.models import Evidence, RetrievalRequest
+from accelerator.security_core.content_safety import (
+    HarmCategory,
+    ScreenedDocument,
+    ShieldResult,
+    TextAnalysis,
+)
 from accelerator.security_core.data_boundaries.context import ExecutionContext
+from accelerator.security_core.prompt_injection import injection_signals
 
 from .corpus import CorpusChunk
 
@@ -212,6 +228,62 @@ class OfflineModel:
         return " ".join(
             f"{sentence} [cite:{chunk_id}]" for score, sentence, chunk_id in best if score >= floor
         )
+
+
+_EVIDENCE_MARKUP = re.compile(r"</?(?:evidence|retrieved_evidence)\b", re.IGNORECASE)
+_HARM_MARKER = re.compile(r"\bUNSAFE-(HATE|SELFHARM|SEXUAL|VIOLENCE)-(LOW|MEDIUM|HIGH)\b")
+_HARM_CATEGORIES = {
+    "HATE": HarmCategory.HATE,
+    "SELFHARM": HarmCategory.SELF_HARM,
+    "SEXUAL": HarmCategory.SEXUAL,
+    "VIOLENCE": HarmCategory.VIOLENCE,
+}
+_HARM_LEVELS = {"LOW": 2, "MEDIUM": 4, "HIGH": 6}
+
+
+class OfflineContentSafetyChecker:
+    """A deterministic ``ContentSafetyChecker`` stand-in for the smoke evaluation.
+
+    ``detect_document_attacks=False`` simulates a classifier miss on retrieved
+    documents, so the evaluation can prove the untrusted-evidence wrapper still
+    holds when Prompt Shields lets a poisoned chunk through (defence in depth).
+    """
+
+    def __init__(self, *, detect_document_attacks: bool = True) -> None:
+        self._detect_document_attacks = detect_document_attacks
+
+    @staticmethod
+    def is_attack(text: str) -> bool:
+        return bool(
+            injection_signals(text) or _DIRECTIVE.search(text) or _EVIDENCE_MARKUP.search(text)
+        )
+
+    async def shield_prompt(
+        self,
+        user_prompt: str,
+        documents: Sequence[ScreenedDocument],
+        *,
+        deadline_utc: datetime | None = None,
+    ) -> ShieldResult:
+        del deadline_utc
+        return ShieldResult(
+            user_prompt_attack=self.is_attack(user_prompt),
+            attacked_document_ids=tuple(
+                document.document_id
+                for document in documents
+                if self._detect_document_attacks and self.is_attack(document.text)
+            ),
+        )
+
+    async def analyze_text(
+        self, text: str, *, deadline_utc: datetime | None = None
+    ) -> TextAnalysis:
+        del deadline_utc
+        severities = dict.fromkeys(HarmCategory, 0)
+        for category, level in _HARM_MARKER.findall(text):
+            harm = _HARM_CATEGORIES[category]
+            severities[harm] = max(severities[harm], _HARM_LEVELS[level])
+        return TextAnalysis(severities=severities)
 
 
 class DocumentStatusArgs(BaseModel):

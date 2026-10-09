@@ -23,6 +23,7 @@ SMOKE_METRICS = (
     "scope_isolation",
     "approval_bypass",
     "injection_followed",
+    "content_safety",
 )
 
 

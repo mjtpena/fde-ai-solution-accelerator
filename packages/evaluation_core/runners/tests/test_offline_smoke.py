@@ -177,7 +177,8 @@ def test_a_model_that_never_calls_tools_lowers_tool_selection(
     monkeypatch.setattr(OfflineModel, "_choose_tool", staticmethod(lambda query, offered: None))
     result, outcomes = measure()
 
-    assert result.metrics["tool_selection"] == pytest.approx(9 / 11)
+    rows = len(load_dataset(DATASET))
+    assert result.metrics["tool_selection"] == pytest.approx((rows - 2) / rows)
     assert failed_rows(outcomes, GateName.TOOL_SELECTION) == {"smoke-tool-001", "smoke-tool-002"}
     assert "tool_selection" not in result.hard_failures
 

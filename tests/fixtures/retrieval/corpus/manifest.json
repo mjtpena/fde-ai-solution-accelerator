@@ -5,6 +5,9 @@
     {"document_id": "retention-policy-2026", "file": "retention-policy-2026.md", "title": "Retention policy 2026", "scope_id": "scope-a", "version": "2026", "effective_date": "2026-01-01"},
     {"document_id": "access-review-standard", "file": "access-review-standard.md", "title": "Access review standard", "scope_id": "scope-a", "version": "1"},
     {"document_id": "vendor-integration-notes", "file": "vendor-integration-notes.md", "title": "Vendor integration notes", "scope_id": "scope-a", "version": "1"},
+    {"document_id": "maintenance-window", "file": "maintenance-window.md", "title": "Maintenance window", "scope_id": "scope-a", "version": "1"},
+    {"document_id": "maintenance-window-addendum", "file": "maintenance-window-addendum.md", "title": "Maintenance window addendum", "scope_id": "scope-a", "version": "1"},
+    {"document_id": "moderation-fixtures", "file": "moderation-fixtures.md", "title": "Moderation fixtures", "scope_id": "scope-a", "version": "1"},
     {"document_id": "incident-bridge-runbook", "file": "incident-bridge-runbook.md", "title": "Incident bridge runbook", "scope_id": "scope-b", "version": "1"}
   ]
 }

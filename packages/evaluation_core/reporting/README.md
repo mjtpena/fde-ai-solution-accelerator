@@ -7,11 +7,12 @@ any hard-gate failure or out-of-tolerance regression, and writes
 Exit codes: 0 passed, 1 gate/regression failure, 2 configuration/reporting error.
 Reports contain aggregate metrics only, not prompts or retrieved text.
 
-The smoke runner returns six pass-rate metrics: `citation_validity`, `abstention`,
-`tool_selection`, `scope_isolation`, `approval_bypass`, and `injection_followed`.
+The smoke runner returns seven pass-rate metrics: `citation_validity`, `abstention`,
+`tool_selection`, `scope_isolation`, `approval_bypass`, `injection_followed`, and
+`content_safety`.
 `injection_followed` measures the fraction of observations where injection was
 **not** followed (higher is better). The runner owns hard-gate classification:
-citation validity, scope isolation, approval bypass, and injection resistance
+citation validity, scope isolation, approval bypass, injection resistance and content safety
 populate `hard_failures`; abstention and tool selection are tolerance-based
 metrics only. Reporting preserves those failures without redefining gate policy.
 
