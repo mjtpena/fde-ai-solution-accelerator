@@ -31,7 +31,11 @@ name: Deploy dev
 # Also configure HOSTED_AGENT_NAME, HOSTED_APPLICATION_FACTORY (a trusted
 # module:callable), and the three EVALUATION_* variables in `dev`; set the
 # three AZURE_POSTGRES_ADMIN_* variables in `dev`, and the production Foundry
-# endpoint/deployment, resource group, and target app names in `production`.
+# endpoint/deployment, Content Safety endpoint (HOSTED_CONTENT_SAFETY_ENDPOINT),
+# resource group, and target app names in `production`. After the hosted agent's
+# first deployment, set AZURE_HOSTED_AGENT_PRINCIPAL_ID to its Entra identity's
+# object ID so it gets Cognitive Services User on Content Safety (it refuses
+# every turn until then).
 on:
   push:
     branches:
@@ -169,6 +173,7 @@ jobs:
       WEB_ENTRA_API_SCOPE: ${{ vars.WEB_ENTRA_API_SCOPE }}
       AZURE_DEPLOYMENT_PRINCIPAL_ID: ${{ vars.AZURE_DEPLOYMENT_PRINCIPAL_ID }}
       AZURE_EVALUATION_PRINCIPAL_ID: ${{ vars.AZURE_EVALUATION_PRINCIPAL_ID }}
+      AZURE_HOSTED_AGENT_PRINCIPAL_ID: ${{ vars.AZURE_HOSTED_AGENT_PRINCIPAL_ID }}
       POSTGRES_RUNNER_LABEL: ${{ vars.POSTGRES_RUNNER_LABEL }}
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
@@ -418,6 +423,7 @@ jobs:
       DEPLOYMENT_NAME: fde-dev-${{ github.sha }}
       AZURE_DEPLOYMENT_PRINCIPAL_ID: ${{ vars.AZURE_DEPLOYMENT_PRINCIPAL_ID }}
       AZURE_EVALUATION_PRINCIPAL_ID: ${{ vars.AZURE_EVALUATION_PRINCIPAL_ID }}
+      AZURE_HOSTED_AGENT_PRINCIPAL_ID: ${{ vars.AZURE_HOSTED_AGENT_PRINCIPAL_ID }}
       API_IMAGE: ${{ needs.deploy_dev.outputs.api_image }}
       WEB_IMAGE: ${{ needs.deploy_dev.outputs.web_image }}
       WORKER_IMAGE: ${{ needs.deploy_dev.outputs.worker_image }}
@@ -494,6 +500,7 @@ jobs:
         env:
           HOSTED_PROJECT_ENDPOINT: ${{ needs.deploy_dev.outputs.project_endpoint }}
           HOSTED_MODEL_DEPLOYMENT: ${{ needs.deploy_dev.outputs.model_deployment_name }}
+          HOSTED_CONTENT_SAFETY_ENDPOINT: ${{ needs.deploy_dev.outputs.content_safety_endpoint }}
           HOSTED_IMAGE: ${{ needs.deploy_dev.outputs.agent_image }}
           HOSTED_CREDENTIAL_MODE: azure-cli
         run: |
@@ -592,6 +599,7 @@ jobs:
       HOSTED_APPLICATION_FACTORY: ${{ vars.HOSTED_APPLICATION_FACTORY }}
       HOSTED_PROJECT_ENDPOINT: ${{ vars.HOSTED_PROJECT_ENDPOINT }}
       HOSTED_MODEL_DEPLOYMENT: ${{ vars.HOSTED_MODEL_DEPLOYMENT }}
+      HOSTED_CONTENT_SAFETY_ENDPOINT: ${{ vars.HOSTED_CONTENT_SAFETY_ENDPOINT }}
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
         with:
@@ -626,7 +634,8 @@ jobs:
             HOSTED_AGENT_NAME \
             HOSTED_APPLICATION_FACTORY \
             HOSTED_PROJECT_ENDPOINT \
-            HOSTED_MODEL_DEPLOYMENT; do
+            HOSTED_MODEL_DEPLOYMENT \
+            HOSTED_CONTENT_SAFETY_ENDPOINT; do
             if [[ -z "${!name}" ]]; then
               echo "::error::Configure the $name variable in the protected production environment."
               exit 1

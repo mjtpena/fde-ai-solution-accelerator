@@ -132,6 +132,9 @@ param deploymentPrincipalType string = 'ServicePrincipal'
 @description('Object ID of the principal that runs the full evaluation (the VNet runner\'s OIDC identity); granted Search Index Data Reader, Foundry project access and Content Safety access. Empty skips the grants.')
 param evaluationPrincipalId string = ''
 
+@description('Object ID of the Foundry hosted agent\'s Entra identity (Foundry creates it when the agent is deployed); granted Content Safety access, without which the hosted runtime refuses every turn. Empty skips the grant.')
+param hostedAgentPrincipalId string = ''
+
 @description('Azure Key Vault SKU.')
 param keyVaultSkuName string
 
@@ -514,6 +517,17 @@ module evaluationContentSafetyAccess './modules/content-safety-user-role-assignm
   params: {
     contentSafetyAccountName: contentSafety.outputs.accountName
     principalId: evaluationPrincipalId
+  }
+}
+
+// The hosted agent screens every invocation with Content Safety and fails closed
+// without this grant (infrastructure/hosted_agent, ADR-0007).
+module hostedAgentContentSafetyAccess './modules/content-safety-user-role-assignment.bicep' = if (!empty(hostedAgentPrincipalId)) {
+  name: 'hosted-agent-content-safety-user-${take(suffix, 8)}'
+  scope: environmentResourceGroup
+  params: {
+    contentSafetyAccountName: contentSafety.outputs.accountName
+    principalId: hostedAgentPrincipalId
   }
 }
 

@@ -205,6 +205,40 @@ def test_api_and_evaluation_principals_can_call_content_safety() -> None:
         assert not any("content-safety" in body for body in granted.values()), caller
 
 
+def test_hosted_agent_identity_gets_only_content_safety_user() -> None:
+    granted = main_modules_granting("hostedAgentPrincipalId")
+    main = MAIN.read_text(encoding="utf-8")
+    parameters = (MODULES.parent / "parameters" / "dev.example.bicepparam").read_text(
+        encoding="utf-8"
+    )
+
+    # The hosted runtime screens every invocation and refuses all turns without it.
+    assert set(granted) == {"hostedAgentContentSafetyAccess"}
+    declaration = granted["hostedAgentContentSafetyAccess"]
+    assert "'./modules/content-safety-user-role-assignment.bicep'" in declaration.splitlines()[0]
+    assert "contentSafetyAccountName: contentSafety.outputs.accountName" in declaration
+    # Foundry creates the agent identity at deployment, so the grant waits for its ID.
+    assert "param hostedAgentPrincipalId string = ''" in main
+    assert declaration.splitlines()[0].endswith("= if (!empty(hostedAgentPrincipalId)) {")
+    assert (
+        "param hostedAgentPrincipalId = "
+        "readEnvironmentVariable('AZURE_HOSTED_AGENT_PRINCIPAL_ID', '')"
+    ) in parameters
+
+
+def test_hosted_agent_deployment_passes_the_content_safety_endpoint() -> None:
+    from infrastructure.hosted_agent.configuration import DeploymentSettings
+
+    assert "content_safety_endpoint" in DeploymentSettings.model_fields
+    example = (MODULES.parent / "hosted_agent" / "deployment.example.json").read_text(
+        encoding="utf-8"
+    )
+    assert '"content_safety_endpoint": "https://' in example
+    assert "output contentSafetyEndpoint string = contentSafety.outputs.endpoint" in (
+        MAIN.read_text(encoding="utf-8")
+    )
+
+
 def test_content_safety_account_is_entra_only_with_diagnostics() -> None:
     account = read_module("content-safety.bicep")
     main = MAIN.read_text(encoding="utf-8")
