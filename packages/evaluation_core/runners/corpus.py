@@ -3,10 +3,12 @@
 Parsing and chunking use ``retrieval_core`` exactly as ingestion does. Chunk IDs
 are ``<document_id>-<n>`` in heading order so dataset rows can name expected
 evidence. Every chunk keeps the scope assigned by the manifest; retrieval filters
-on it from the trusted execution context, never from dataset rows.
+on it from the trusted execution context, never from dataset rows. Chunks carry
+the manifest's ``version`` and ``effective_date`` like ingested chunks do.
 """
 
 from dataclasses import dataclass
+from datetime import date
 from pathlib import Path
 
 from pydantic import BaseModel, ConfigDict, Field
@@ -27,6 +29,7 @@ class ManifestDocument(BaseModel):
     title: str = Field(min_length=1)
     scope_id: str = Field(min_length=1)
     version: str | None = None
+    effective_date: date | None = None
 
 
 class CorpusManifest(BaseModel):
@@ -42,6 +45,7 @@ class CorpusChunk:
     document_title: str
     source_uri: str
     version: str | None
+    effective_date: date | None
     scope_id: str
     section_heading: str | None
     text: str
@@ -69,6 +73,7 @@ def load_corpus(directory: Path) -> tuple[CorpusChunk, ...]:
                 document_title=document.title,
                 source_uri=f"fixture://corpus/{document.file}",
                 version=document.version,
+                effective_date=document.effective_date,
                 scope_id=document.scope_id,
                 section_heading=piece.section_heading,
                 text=piece.text,

@@ -2,7 +2,7 @@
 
 Synthetic, domain-free documents for the offline smoke evaluation
 (`evaluations/example-datasets/smoke.jsonl`). `manifest.json` assigns each file a
-document ID, title, version and authorization scope. Chunk IDs are
+document ID, title, version, optional effective date and authorization scope. Chunk IDs are
 `<document_id>-<n>` in heading order, so dataset rows can name expected evidence.
 
 - `scope-a` is the evaluation principal's scope; `scope-b` holds a document that

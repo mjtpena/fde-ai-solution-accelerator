@@ -1,6 +1,7 @@
 """The committed smoke dataset is grounded in the committed fixture corpus."""
 
 import json
+from datetime import date
 from pathlib import Path
 
 import pytest
@@ -45,11 +46,28 @@ def test_tool_rows_name_a_tool_and_injection_rows_name_a_canary() -> None:
 
 
 def test_an_unsupported_row_is_answerable_only_from_another_scope() -> None:
-    chunks = load_corpus(CORPUS)
+    chunks = {chunk.chunk_id: chunk for chunk in load_corpus(CORPUS)}
     isolation_rows = [row for row in load_dataset(DATASET) if "scope-isolation" in row.tags]
 
     assert isolation_rows and all(row.expected_abstain for row in isolation_rows)
-    assert {chunk.scope_id for chunk in chunks} > {row.scope_id for row in isolation_rows}
+    for row in isolation_rows:
+        restricted = [
+            tag.removeprefix("restricted-evidence:")
+            for tag in row.tags
+            if tag.startswith("restricted-evidence:")
+        ]
+        assert restricted, row.id
+        for chunk_id in restricted:
+            assert chunk_id in chunks, (row.id, chunk_id)
+            assert chunks[chunk_id].scope_id != row.scope_id, (row.id, chunk_id)
+
+
+def test_dated_policies_carry_their_effective_date() -> None:
+    chunks = {chunk.document_id: chunk for chunk in load_corpus(CORPUS)}
+
+    assert chunks["retention-policy-2025"].effective_date == date(2025, 1, 1)
+    assert chunks["retention-policy-2026"].effective_date == date(2026, 1, 1)
+    assert chunks["backup-standard"].effective_date is None
 
 
 def test_corpus_chunk_ids_follow_heading_order() -> None:
