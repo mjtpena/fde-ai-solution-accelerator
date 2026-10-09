@@ -352,7 +352,12 @@ controls:
       audit API has no mutation routes and is readable only by Admin. Event payloads
       are typed and safe-field only.
     type: detective
-    status: implemented
+    status: partial
+    notes: >-
+      Tool executions reach the audit log only through the approval repository's
+      executed transition, so only successful approved write-tool runs are recorded.
+      Read-tool runs and failed approved writes are not, and no production code calls
+      AuditRecorder.tool_execution.
     implemented_in:
       - apps/api/src/accelerator/migrations/versions/0001_audit_event.py
       - apps/api/src/accelerator/migrations/versions/0006_authorization_failure_audit.py

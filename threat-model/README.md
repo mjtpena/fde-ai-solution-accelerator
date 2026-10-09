@@ -71,6 +71,9 @@ Run `uv run pytest -q tests/test_threat_model.py` before you push.
 
 * C-005: the `fde.retrieval.injection_signal_count` span attribute has no test and
   no alert rule.
+* C-019: only successful approved write-tool executions reach the audit log.
+  Read-tool runs and failed approved writes are not recorded, and no production code
+  calls `AuditRecorder.tool_execution`.
 * C-021: PostgreSQL server-side `require_secure_transport` is not pinned in Bicep.
   It relies on the platform default.
 * C-023: security scans are not required status checks until a repository ruleset is
