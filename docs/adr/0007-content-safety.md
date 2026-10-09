@@ -67,10 +67,37 @@ Further decisions:
 - **Contract.** Refusals are abstentions with fixed, non-echoing reason texts. The SSE
   `abstention` frame gains a required `code` (`insufficient_evidence`,
   `answer_withdrawn`, and the three `content_safety_*` codes); the OpenAPI contract
-  and web client types are regenerated. Streaming keeps the existing design: tokens are
-  forwarded as the model produces them, and output screening runs after generation, so
-  a blocked answer that already streamed is withdrawn by the `abstention` frame that
-  clients must honour (as for failed citation validation).
+  and web client types are regenerated.
+- **Screen before release.** `/chat/stream` never sends model text that has not
+  passed citation validation and content safety. In the default
+  `API_STREAM_RELEASE_MODE=screened` the route runs the turn without a token sink,
+  so the generator makes a non-streaming model call and the answer is buffered
+  server-side; only a validated, screened result is released, as 48-character
+  `token` frames followed by `citations` and `done`, so the SSE contract and
+  progressive rendering are unchanged. A turn that finishes within
+  `API_STREAM_HEARTBEAT_SECONDS` (default 5, at most 10) keeps the old error
+  contract (500, or 429 for an exhausted budget, before any bytes). A slower turn
+  starts the response with SSE comment frames (`: keepalive`) every heartbeat, which
+  keeps the web proxy's 15-second header and 60-second idle timeouts from firing;
+  if it then fails, the client gets an `abstention` with code `answer_withdrawn` and
+  no answer text (`screened_answer_withheld` is logged). Production settings
+  validation rejects anything but `screened`. Development may opt into
+  `incremental`, the previous behaviour: tokens are forwarded as generated and a
+  failed answer is withdrawn by a later `abstention` frame that clients must honour.
+- **Hosted agent.** The Foundry hosted agent's packaged production composition
+  (`infrastructure/hosted_agent/production.py`) builds the same adapter from
+  `HOSTED_CONTENT_SAFETY_*` settings (the API's names and semantics with the
+  `HOSTED_` prefix, `ManagedIdentityCredential` only) before any provider loads, and
+  refuses to start without an HTTPS endpoint or with screening disabled. It calls the
+  workflow factory with `content_safety_checker` and `content_safety_policy`, and
+  `WorkflowHostedApplication` (`packages/agent_core/hosting/screening.py`) records
+  every verdict that checker gives during a turn: it releases a result only when a
+  clean Prompt Shields verdict covers the query and, for an answer, every citation is
+  a shielded, unflagged chunk and a non-blocking analysis covers exactly the answer
+  text. Anything else, such as a factory that ignored the checker, is refused with
+  `content_safety_unavailable`. `HostedAbstention` carries the same stable `code`
+  as the API (without the streaming-only `answer_withdrawn`). The agent's Entra
+  identity gets Cognitive Services User through `hostedAgentPrincipalId`.
 - **Audit.** Every content-safety refusal writes an `audit_event` of type
   `content_safety` with the actor, correlation ID and a bounded `reason_code`
   (`apps/api/src/accelerator/api/refusal_audit.py`, migration
@@ -105,16 +132,20 @@ Negative:
 
 - Two to three extra service calls per turn add latency and cost; the request deadline
   bounds them, and a slow service turns into refusals, not slow answers.
-- Streamed tokens can reach the client before a blocked answer is withdrawn. Clients
-  must discard text on `abstention`. Buffering the whole answer would remove this but
-  give up token streaming.
+- Screened release gives up model-paced token streaming: the first answer byte
+  arrives only after generation, citation validation and output analysis, so time to
+  first token equals the whole turn. Released text still renders progressively, and
+  keepalives hold the connection open meanwhile.
 - Prompt Shields false positives drop legitimate chunks or refuse legitimate prompts.
   The smoke gate catches regressions in wiring, not classifier quality; projects should
   add representative rows to their full evaluation.
 - The two vendor-notes injection rows in the smoke dataset now expect abstention,
   because both chunks that could answer them are poisoned and dropped.
-- The Foundry hosted agent (ADR-0002) composes its workflow through a configured
-  factory; it is screened only if that factory supplies a checker.
+- The hosted agent's workflow factory contract changed: it must accept the
+  `content_safety_checker` and `content_safety_policy` keyword arguments and screen
+  with them, or every turn is refused. Foundry creates the agent identity with the
+  first version, so the Cognitive Services User grant needs a second infrastructure
+  deployment; the agent refuses every turn until then.
 
 ## Alternatives considered
 
@@ -126,6 +157,16 @@ Negative:
 - **The `azure-ai-contentsafety` SDK.** A new dependency for two POST calls; the
   workspace already ships `httpx`, which also makes the contract tests
   (`httpx.MockTransport`) straightforward.
+- **Keep streaming tokens and withdraw blocked answers afterwards.** The first
+  design. Harmful or ungrounded text reached the client, and every client had to
+  discard it correctly. Kept only as the development-only `incremental` mode.
+- **Screen partial text while streaming.** Analysing growing prefixes would multiply
+  service calls, still release text before citations validate, and a prefix can be
+  harmless while the whole answer is not.
+- **Screen around the hosted workflow instead of inside it.** Wrapping the hosted
+  application with its own prompt and answer screening could not drop poisoned
+  chunks before sufficiency, and would call the service twice for workflows that
+  already screen. Verifying the workflow's own verdicts keeps one call per stage.
 - **Fail open on outage.** Rejected: an outage would silently ship unscreened answers.
 - **Rewrite or redact flagged chunks.** Rejected for the same reason
   `security_core.prompt_injection` never rewrites evidence: silently changed evidence
@@ -138,6 +179,10 @@ Negative:
 - `packages/agent_core/workflows/grounded_answer.py`
 - `apps/api/src/accelerator/infrastructure/content_safety.py`
 - `apps/api/src/accelerator/api/refusal_audit.py`
+- `apps/api/src/accelerator/api/chat.py` (screened release),
+  `apps/api/tests/test_chat_screened_release.py`
+- `packages/agent_core/hosting/screening.py`, `infrastructure/hosted_agent/production.py`,
+  `infrastructure/hosted_agent/tests/test_content_safety.py`
 - `packages/evaluation_core/runners/smoke.py`, `packages/evaluation_core/runners/offline.py`
 - `infrastructure/modules/content-safety.bicep`,
   `infrastructure/modules/content-safety-user-role-assignment.bicep`

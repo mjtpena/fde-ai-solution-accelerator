@@ -82,7 +82,6 @@ Run `uv run pytest -q tests/test_threat_model.py` before you push.
 * C-025: parsers run in the separate worker container without a dedicated sandbox or
   per-document resource limits.
 * C-026: there is no network egress restriction for tool code.
-* C-029: streamed answers are screened after generation, so token frames can reach
-  the client before a blocked answer is withdrawn; no test calls a live Content
-  Safety account; the hosted agent screens only if its workflow factory adds a
-  checker.
+* C-029 (implemented): no test calls a live Content Safety account, and the hosted
+  agent's Content Safety grant needs a second infrastructure deployment once
+  Foundry has created its identity (it refuses every turn until then).

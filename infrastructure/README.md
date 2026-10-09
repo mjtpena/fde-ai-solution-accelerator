@@ -14,7 +14,7 @@ passwords, or connection strings are supplied or emitted; every service has loca
 | Storage | `incoming` and `documents` containers, `ingestion` and `ingestion-poison` queues, shared keys off |
 | Azure AI Search | Local auth off; semantic ranker plan `searchSemanticSearch` (default `free`) |
 | Foundry | Chat deployment (`modelName`) and embedding deployment (`embeddingModelName`) |
-| Azure AI Content Safety | Kind `ContentSafety`, SKU `contentSafetySkuName`, key auth off, custom subdomain for Entra tokens, diagnostics to Log Analytics; its endpoint is the API's `API_CONTENT_SAFETY_ENDPOINT` (ADR-0007) |
+| Azure AI Content Safety | Kind `ContentSafety`, SKU `contentSafetySkuName`, key auth off, custom subdomain for Entra tokens, diagnostics to Log Analytics; its endpoint is the API's `API_CONTENT_SAFETY_ENDPOINT` and the hosted agent's `HOSTED_CONTENT_SAFETY_ENDPOINT` (ADR-0007) |
 | Key Vault, Log Analytics, Application Insights | RBAC vault; App Insights ingestion requires Entra |
 | User-assigned identities | One each for api, web, worker and migrator |
 
@@ -32,6 +32,7 @@ Search and Foundry SKUs are parameters (`searchSkuName`, `searchReplicaCount`,
 | web | AcrPull only; it calls the API over the environment's internal network |
 | deployer (`deploymentPrincipalId`) | Search Service Contributor, to create the index (optional) |
 | evaluation (`evaluationPrincipalId`) | Search Index Data Reader; Foundry project user; Cognitive Services User on the Content Safety account (optional) |
+| Foundry hosted agent (`hostedAgentPrincipalId`) | Cognitive Services User on the Content Safety account (optional; Foundry creates the identity with the first agent version, and the agent refuses every turn until the grant exists) |
 
 Database privileges: only `accelerator_migrator` may create objects. After each
 upgrade it grants the runtime roles exactly their table privileges

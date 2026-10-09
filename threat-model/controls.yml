@@ -100,8 +100,9 @@ controls:
     title: Same-turn citation validation
     description: >-
       Every cited chunk ID must be in the set retrieved during the same turn.
-      Otherwise the whole response fails. Streamed answers are withdrawn and replaced
-      by an abstention.
+      Otherwise the whole response fails. The chat stream releases no answer text
+      before validation passes (screened release), so a failing answer becomes an
+      abstention without any of its text reaching the client.
     type: preventive
     status: implemented
     implemented_in:
@@ -577,37 +578,50 @@ controls:
       SelfHarm, Sexual and Violence; a severity at or above the per-category threshold
       (default 4) withholds it with code content_safety_output_blocked. Any screening
       failure, timeout or malformed reply refuses with code content_safety_unavailable
-      (fail closed). Every refusal is audited. Production cannot disable it.
+      (fail closed). Every refusal is audited. Production cannot disable it. The chat
+      stream screens before release (API_STREAM_RELEASE_MODE=screened, required in
+      production): the answer is buffered server-side and no answer text reaches the
+      client until citation validation and content safety have passed. The Foundry
+      hosted agent builds the same checker in its production composition, refuses to
+      start without an endpoint, hands the checker to its workflow factory, and
+      refuses any result that the turn's verdicts do not cover; its abstentions carry
+      the same stable codes.
     type: preventive
-    status: partial
+    status: implemented
     notes: >-
-      Streaming answers are screened only after generation: token frames can reach the
-      client before a blocked answer is withdrawn by the abstention frame. No test calls
-      a live Content Safety account; the smoke gate uses a deterministic offline checker
-      and measures the workflow's handling of verdicts, not classifier quality. The
-      Foundry hosted agent screens only if its configured workflow factory builds the
-      workflow with a checker.
+      No test calls a live Content Safety account; the smoke gate uses a deterministic
+      offline checker and measures the workflow's handling of verdicts, not classifier
+      quality. The hosted agent's Entra identity exists only after its first
+      deployment, so its Cognitive Services User grant (hostedAgentPrincipalId) is
+      applied by a second infrastructure deployment; until then it refuses every turn.
+      Development may opt into API_STREAM_RELEASE_MODE=incremental, which streams
+      unscreened tokens and withdraws a failed answer afterwards.
     implemented_in:
       - packages/security_core/src/accelerator/security_core/content_safety/__init__.py
       - packages/agent_core/workflows/grounded_answer.py
+      - packages/agent_core/hosting/screening.py
+      - packages/agent_core/hosting/application.py
       - apps/api/src/accelerator/infrastructure/content_safety.py
       - apps/api/src/accelerator/infrastructure/grounded_answer.py
       - apps/api/src/accelerator/configuration/settings.py
       - apps/api/src/accelerator/api/refusal_audit.py
       - apps/api/src/accelerator/api/chat.py
       - apps/api/src/accelerator/migrations/versions/0007_content_safety_audit.py
+      - infrastructure/hosted_agent/production.py
+      - infrastructure/hosted_agent/configuration.py
       - infrastructure/modules/content-safety.bicep
       - infrastructure/modules/content-safety-user-role-assignment.bicep
+      - infrastructure/main.bicep
     verified_by:
       - packages/agent_core/workflows/test_content_safety_workflow.py
       - apps/api/tests/test_content_safety_adapter.py
       - apps/api/tests/test_content_safety_wiring.py
+      - apps/api/tests/test_chat_screened_release.py
       - apps/api/tests/test_chat_streaming.py
       - apps/api/tests/test_settings.py
       - apps/api/tests/test_boot.py
       - packages/evaluation_core/runners/tests/test_content_safety_smoke.py
       - packages/evaluation_core/runners/tests/test_red_team.py
+      - infrastructure/hosted_agent/tests/test_content_safety.py
+      - infrastructure/hosted_agent/tests/test_hosted_agent.py
       - infrastructure/tests/test_identity_rbac.py
-    gates:
-      - content_safety
-      - injection_followed

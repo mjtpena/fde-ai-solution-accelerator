@@ -196,7 +196,8 @@ Container Apps sends stdout and stderr to Log Analytics (see
 | `search_scope_violation` | ERROR | `correlation_id` (and `event`) | `apps/api/src/accelerator/infrastructure/search/adapter.py` |
 | `search_index_provisioned` | INFO | `index_name` | `apps/api/src/accelerator/infrastructure/search/provision.py` |
 | `chat_turn_ended_with_pending_approval` | WARNING | `correlation_id`, `exception_type` (via `exc_info`) | `apps/api/src/accelerator/api/tool_turns.py` |
-| `streamed_answer_withdrawn` | ERROR | `correlation_id`, `exception_type` | `apps/api/src/accelerator/api/chat.py` |
+| `screened_answer_withheld` | ERROR | `correlation_id`, `exception_type`. A turn failed (for example citation validation) after the screened stream had started sending keepalives; no answer text was sent, and the client got an `answer_withdrawn` abstention | `apps/api/src/accelerator/api/chat.py` |
+| `streamed_answer_withdrawn` | ERROR | `correlation_id`, `exception_type` (development-only `API_STREAM_RELEASE_MODE=incremental`) | `apps/api/src/accelerator/api/chat.py` |
 | `content_safety_refusal` | WARNING | `correlation_id`, `reason_code` | `apps/api/src/accelerator/api/refusal_audit.py` |
 | `content_safety_refusal_unaudited` | ERROR | `correlation_id`, `reason_code` (development without a database only) | `apps/api/src/accelerator/api/refusal_audit.py` |
 | `content_safety_chunks_dropped` | WARNING | `correlation_id`, `chunk_ids` | `apps/api/src/accelerator/api/refusal_audit.py` |
@@ -208,6 +209,15 @@ Container Apps sends stdout and stderr to Log Analytics (see
 | `audit_query_failed` | ERROR | `correlation_id` | `apps/api/src/accelerator/api/audit.py` |
 | `auth_failure_audit_suppressed` | WARNING | `correlation_id`, `suppressed_count` | `apps/api/src/accelerator/api/audit.py` |
 | `auth_failure_audit_failed` | ERROR | `correlation_id` | `apps/api/src/accelerator/api/audit.py` |
+
+### Hosted agent events
+
+The Foundry hosted agent (`infrastructure/hosted_agent/`) opens no spans; its
+content-safety calls go straight to the adapter, not `TracedContentSafetyChecker`.
+
+| Event | Level | Structured fields | Emitted from |
+|---|---|---|---|
+| `hosted_content_safety_unscreened` | ERROR | `reason` (`prompt_unscreened`, `answer_missing`, `citation_unscreened`, `answer_unscreened`, `answer_blocked`, `answer_analysis_incomplete`). The workflow returned a result that the turn's content-safety verdicts do not cover; the caller got a `content_safety_unavailable` refusal | `packages/agent_core/hosting/application.py` |
 
 ### Ingestion worker events
 

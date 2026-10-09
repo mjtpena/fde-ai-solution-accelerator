@@ -47,6 +47,7 @@ Identity grants (see [`infrastructure/README.md`](../infrastructure/README.md#le
 | web | AcrPull only; it reaches the API over the environment's internal network |
 | `AZURE_DEPLOYMENT_PRINCIPAL_ID` (optional) | Search Service Contributor, so the `index` stage can create the index |
 | `AZURE_EVALUATION_PRINCIPAL_ID` (optional) | Search Index Data Reader, Foundry project access and Cognitive Services User on the Content Safety account, for the full evaluation |
+| `AZURE_HOSTED_AGENT_PRINCIPAL_ID` (optional until the hosted agent exists) | Cognitive Services User on the Content Safety account, for the Foundry hosted agent's Entra identity; without it the agent refuses every turn |
 
 Parameters live in `infrastructure/parameters/dev.example.bicepparam`
 (resource group `fde-dev-rg`, prefix `fde-dev`, SKUs, network prefixes). Values
@@ -102,6 +103,7 @@ environment variables):
 | `AZURE_DEPLOYMENT_PRINCIPAL_ID` | no | Your own object ID (or the OIDC principal's), granted Search Service Contributor for the `index` stage |
 | `AZURE_DEPLOYMENT_PRINCIPAL_TYPE` | no | Principal type of `AZURE_DEPLOYMENT_PRINCIPAL_ID`: `User` for your own login, default `ServicePrincipal` for the OIDC principal |
 | `AZURE_EVALUATION_PRINCIPAL_ID` | no | Object ID of the identity that runs the full evaluation |
+| `AZURE_HOSTED_AGENT_PRINCIPAL_ID` | no | Object ID of the Foundry hosted agent's Entra identity (exists after its first deployment) |
 | `DEPLOYMENT_NAME` | no | Default `fde-dev-<12-char git SHA>`; the migration and app deployments are `<name>-migrations` and `<name>-apps` |
 | `IMAGE_TAG` | no | Default the git SHA |
 | `SMOKE_ATTEMPTS`, `SMOKE_INTERVAL_SECONDS` | no | Default 30 attempts, 10 seconds apart |
@@ -280,6 +282,7 @@ credentials in GitHub.
 | `EVALUATION_JUDGE_AZURE_ENDPOINT`, `EVALUATION_JUDGE_AZURE_DEPLOYMENT` | Judge model for the full evaluation |
 | `AZURE_DEPLOYMENT_PRINCIPAL_ID` (optional) | The OIDC principal's object ID, for the index stage |
 | `AZURE_EVALUATION_PRINCIPAL_ID` (optional) | The VNet runner identity's object ID, for the full evaluation |
+| `AZURE_HOSTED_AGENT_PRINCIPAL_ID` (optional) | The hosted agent's Entra identity object ID, granted Content Safety access; set it after the first hosted-agent deployment and run the workflow again |
 | `EVALUATION_DATASET` (optional) | Dataset path for the full evaluation |
 
 **`dev-database`** (protected; used by the VNet runner jobs)
@@ -302,6 +305,7 @@ credentials in GitHub.
 | `AZURE_RESOURCE_GROUP` | Pre-provisioned production resource group |
 | `AZURE_WEB_CONTAINER_APP_NAME`, `AZURE_WORKER_CONTAINER_APP_NAME` | Target Container Apps |
 | `HOSTED_AGENT_NAME`, `HOSTED_APPLICATION_FACTORY`, `HOSTED_PROJECT_ENDPOINT`, `HOSTED_MODEL_DEPLOYMENT` | Production Foundry project and hosted agent |
+| `HOSTED_CONTENT_SAFETY_ENDPOINT` | Production Content Safety endpoint; the hosted agent refuses to start without it |
 
 ### OIDC federated credentials
 
@@ -487,6 +491,19 @@ protocol, port 8088, `/readiness`, `/invocations` accepting only
   providers packaged in the image. The repository ships only the fail-closed
   production entry point (`infrastructure.hosted_agent.production:runtime_factory`)
   and example placeholders.
+- Content safety (ADR-0007): the runtime screens every invocation and refuses to
+  start without `HOSTED_CONTENT_SAFETY_ENDPOINT` (deployment output
+  `contentSafetyEndpoint`; `content_safety_endpoint` in the config file, passed to
+  the runtime by `deploy`). The workflow factory receives
+  `content_safety_checker` and `content_safety_policy` keyword arguments and must
+  pass them to `GroundedAnswerWorkflow`; results its verdicts do not cover are
+  refused. Abstentions carry a stable `code`.
+- After the first deployment, read the agent's Entra identity object ID in the
+  Foundry portal, set `AZURE_HOSTED_AGENT_PRINCIPAL_ID` and deploy the
+  infrastructure again, which grants Cognitive Services User on the Content
+  Safety account. Until then the agent answers every turn with
+  `content_safety_unavailable`; the smoke command accepts an abstention, so watch
+  for that code.
 - Prerequisites: a region supporting Foundry hosted agents, AcrPull (or
   Container Registry Repository Reader for ABAC registries) for the project's
   managed identity, and Foundry Project Manager for the deployer.
@@ -534,6 +551,9 @@ must be able to pull from it.
 | `smoke test failed` | The web app answered but `/api/health` returned 502 ("The API is unreachable.") or an error, or the web app is not up. The smoke check only proves API liveness (`/healthz`) |
 | API revision never becomes ready | The API's readiness probe is `GET /readyz` (internal ingress, so not reachable from outside). It returns 503 with fixed check names: `database` (connection or role privileges, often migrations not run), `identity_provider` (Entra signing keys unreachable), `chat_workflow` (Foundry/Search not configured). Read the reason in the app's logs (`readiness_check_failed`) |
 | API exits on start | Production settings validation fails fast when any of the managed identity client ID, database URL, Foundry endpoint and deployments, Search endpoint, index and dimensions, Content Safety endpoint, or Application Insights connection string is missing, or when `API_CONTENT_SAFETY_ENABLED=false` |
+| Chat answers appear only after a pause, all at once | Expected: `API_STREAM_RELEASE_MODE=screened` (required in production) releases an answer only after citation validation and content safety, with `: keepalive` comments every `API_STREAM_HEARTBEAT_SECONDS` meanwhile. A proxy that buffers or drops SSE comments can time out a slow turn; keep the heartbeat below its idle timeout |
+| API exits on start with `API_STREAM_RELEASE_MODE=incremental` | Production refuses `incremental`, which streams unscreened tokens; remove the override |
+| Every hosted-agent invocation abstains with code `content_safety_unavailable` | The agent's identity lacks Cognitive Services User (`AZURE_HOSTED_AGENT_PRINCIPAL_ID` unset or not yet propagated), the service is unreachable, or the workflow factory ignores the checker it is given (logged as `hosted_content_safety_unscreened`) |
 | Every chat turn ends in an abstention with code `content_safety_unavailable` | The API cannot reach Azure AI Content Safety and fails closed. Check `fde.content_safety.error_reason` on the `content_safety.*` spans: `http_401`/`http_403` usually means the Cognitive Services User assignment has not propagated yet; `timeout` means the call exceeded `API_CONTENT_SAFETY_TIMEOUT_SECONDS` or the request deadline |
 | Worker logs `ingestion_disabled` | Indexing settings are incomplete; in production the worker refuses to start instead |
 | Messages land in `ingestion-poison` | Invalid JSON or unknown fields, unsupported `content_type`, oversized, unparseable or empty document, or retries exhausted |
@@ -541,7 +561,7 @@ must be able to pull from it.
 | `index` stage gets `403` | `AZURE_DEPLOYMENT_PRINCIPAL_ID` was not set for the infrastructure deployment, or it is not the identity you are signed in as |
 | `psql` cannot resolve or reach the PostgreSQL host | Private DNS: the server is only resolvable inside the linked VNet (or through an approved forwarder) and has no public endpoint or firewall exception. Run from the VNet machine |
 | TLS verification error to PostgreSQL | Bootstrap uses `verify-full`; supply the correct CA bundle (`-CaCertificatePath`, `POSTGRES_CA_CERTIFICATE_PATH`, `API_DATABASE_TLS_CA_FILE`) |
-| Hosted-agent step fails configuration validation in the workflow | The workflow passes `HOSTED_AGENT_NAME`, `HOSTED_APPLICATION_FACTORY`, `HOSTED_PROJECT_ENDPOINT`, `HOSTED_MODEL_DEPLOYMENT`, `HOSTED_IMAGE` and `HOSTED_CREDENTIAL_MODE`, but not the required `HOSTED_CONTEXT_RESOLVER_FACTORY` and `HOSTED_GROUNDED_WORKFLOW_FACTORY`; add them to the step's environment |
+| Hosted-agent step fails configuration validation in the workflow | The workflow passes `HOSTED_AGENT_NAME`, `HOSTED_APPLICATION_FACTORY`, `HOSTED_PROJECT_ENDPOINT`, `HOSTED_MODEL_DEPLOYMENT`, `HOSTED_CONTENT_SAFETY_ENDPOINT`, `HOSTED_IMAGE` and `HOSTED_CREDENTIAL_MODE`, but not the required `HOSTED_CONTEXT_RESOLVER_FACTORY` and `HOSTED_GROUNDED_WORKFLOW_FACTORY`; add them to the step's environment |
 | Model deployment fails | Region access or quota; override `AZURE_MODEL_NAME`/`AZURE_MODEL_VERSION` and the embedding equivalents |
 
 For day-two procedures see [`operations-runbook.md`](operations-runbook.md) and
