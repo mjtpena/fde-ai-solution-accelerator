@@ -1,10 +1,10 @@
 from datetime import UTC, datetime, timedelta
-from typing import Literal
+from typing import Annotated, Literal
 from uuid import UUID, uuid4
 
 import httpx
 import pytest
-from fastapi import FastAPI, HTTPException
+from fastapi import Depends, FastAPI, HTTPException
 from pydantic import ValidationError
 from sqlalchemy.exc import SQLAlchemyError
 
@@ -422,23 +422,31 @@ async def test_forbidden_responses_are_audited_with_the_validated_actor() -> Non
     repository = MemoryRepository()
     app = make_app(repository)
 
-    async def reader_context() -> Context:
-        return Context(roles=frozenset({"Reader"}))
+    class ReaderTokenValidator:
+        async def validate(
+            self, token: str, client: httpx.AsyncClient, *, correlation_id: str | None = None
+        ) -> Principal:
+            return Principal(subject="s", object_id="reader-1", roles=frozenset({AppRole.READER}))
 
-    async def reader() -> Principal:
-        return Principal(subject="s", object_id="reader-1", roles=frozenset({AppRole.READER}))
+    # The real bearer-token dependency runs, so the actor comes from validation.
+    async def reader_context(
+        principal: Annotated[Principal, Depends(get_current_principal)],
+    ) -> Context:
+        return Context(user_id=principal.subject, roles=frozenset({"Reader"}))
 
+    app.state.token_validator = ReaderTokenValidator()
     app.dependency_overrides[get_execution_context] = reader_context
-    app.dependency_overrides[get_current_principal] = reader
     async with httpx.AsyncClient(
         transport=httpx.ASGITransport(app=app), base_url="http://test"
     ) as c:
-        response = await c.get("/audit-events")
+        app.state.http_client = c
+        response = await c.get("/audit-events", headers={"Authorization": "Bearer reader-jwt"})
 
     assert response.status_code == 403
     [event] = repository.events
     assert event.event_type == EventType.AUTHORIZATION_FAILURE
     assert event.outcome == EventOutcome.DENIED
+    assert event.actor_id == "reader-1"
     assert event.correlation_id == response.headers["x-correlation-id"]
 
 

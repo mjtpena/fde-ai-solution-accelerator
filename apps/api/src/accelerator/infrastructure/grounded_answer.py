@@ -16,7 +16,13 @@ from azure.search.documents.aio import SearchClient
 
 from accelerator.agent_core.agents.factory import AgentConfig, AgentFactory
 from accelerator.agent_core.workflows.generation import AgentAnswerGenerator, ChatAgent
-from accelerator.agent_core.workflows.grounded_answer import GroundedAnswerWorkflow
+from accelerator.agent_core.workflows.grounded_answer import (
+    AnswerGenerator,
+    CitationValidator,
+    GroundedAnswerWorkflow,
+    Retriever,
+    SufficiencyChecker,
+)
 from accelerator.configuration.settings import Settings
 from accelerator.infrastructure.foundry.agent_runtime import AgentFrameworkFoundryRuntime
 from accelerator.infrastructure.foundry.embedder import EmbeddingClient, FoundryQueryEmbedder
@@ -106,18 +112,18 @@ def build_azure_grounded_answer(
         )
     )
     top_k = settings.search_top_k
-    sufficiency: Any = EvidenceSufficiencyChecker(
+    sufficiency: SufficiencyChecker[Evidence] = EvidenceSufficiencyChecker(
         SufficiencyPolicy(
             minimum_score=settings.sufficiency_min_score,
             minimum_evidence_count=settings.sufficiency_min_evidence,
         ),
         score_field=settings.sufficiency_score_field,
     )
-    generator: Any = AgentAnswerGenerator(
+    generator: AnswerGenerator[Evidence] = AgentAnswerGenerator(
         cast(ChatAgent, agent), max_output_tokens=settings.generation_max_output_tokens
     )
-    validator: Any = SameTurnCitationValidator()
-    traced_retriever: Any = retriever
+    validator: CitationValidator = SameTurnCitationValidator()
+    traced_retriever: Retriever[RetrievalRequest, ExecutionContext, Evidence] = retriever
     if telemetry is not None:
         traced_retriever = TracedRetriever(retriever, telemetry)
         sufficiency = TracedSufficiencyChecker(sufficiency, telemetry)

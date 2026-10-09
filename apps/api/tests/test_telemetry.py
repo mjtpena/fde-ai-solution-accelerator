@@ -45,11 +45,12 @@ async def test_trace_and_response_share_the_client_supplied_correlation_id() -> 
     app = build_application(settings(), span_exporter=exporter)
     correlation_id = "6b2f8e5a-4c1d-4e9a-9f3b-1a2b3c4d5e6f"
 
-    async with httpx.AsyncClient(
-        transport=httpx.ASGITransport(app=app), base_url="http://test"
-    ) as client:
+    # Leaving the lifespan flushes and stops the span processor this app started.
+    async with (
+        app.router.lifespan_context(app),
+        httpx.AsyncClient(transport=httpx.ASGITransport(app=app), base_url="http://test") as client,
+    ):
         response = await client.get("/healthz", headers={"X-Correlation-ID": correlation_id})
-    app.state.telemetry.force_flush()
 
     assert response.headers.get_list("x-correlation-id") == [correlation_id]
     [request_span] = [s for s in exporter.get_finished_spans() if s.name == "http.request"]

@@ -52,6 +52,28 @@ def test_managed_identity_export_and_batch_flush(monkeypatch: pytest.MonkeyPatch
     credential.close.assert_called_once()
 
 
+def test_explicit_connection_string_is_the_exporter_destination(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    credential = MagicMock()
+    exporter_factory = MagicMock(return_value=InMemorySpanExporter())
+    monkeypatch.setattr(insights, "ManagedIdentityCredential", MagicMock(return_value=credential))
+    monkeypatch.setattr(insights, "AzureMonitorTraceExporter", exporter_factory)
+    adapter = ApplicationInsightsAdapter(
+        ApplicationInsightsSettings(service_name="api"),
+        connection_string="InstrumentationKey=00000000-0000-0000-0000-000000000000",
+    )
+
+    adapter.create_exporter()
+
+    exporter_factory.assert_called_once_with(
+        credential=credential,
+        disable_offline_storage=True,
+        connection_string="InstrumentationKey=00000000-0000-0000-0000-000000000000",
+    )
+    adapter.close()
+
+
 def test_initialization_errors_are_not_swallowed_and_credentials_are_closed(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:

@@ -59,9 +59,10 @@ def test_attribute_values_are_escaped() -> None:
     assert "&lt;b&gt;Title&lt;/b&gt;" in wrapped.prompt_block
 
 
-def test_invalid_boundary_is_rejected() -> None:
+@pytest.mark.parametrize("boundary", ["bad boundary", "", "SHORT"])
+def test_invalid_boundary_is_rejected(boundary: str) -> None:
     with pytest.raises(ValueError):
-        wrap_untrusted_documents([Item("c", "x")], boundary="bad boundary")
+        wrap_untrusted_documents([Item("c", "x")], boundary=boundary)
 
 
 @pytest.mark.parametrize(

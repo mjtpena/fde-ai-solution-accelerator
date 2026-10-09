@@ -53,7 +53,7 @@ def wrap_untrusted_documents(
     items: Sequence[UntrustedItem], *, boundary: str | None = None
 ) -> WrappedEvidence:
     """Render ``items`` as one fenced, escaped block of evidence elements."""
-    fence = boundary or f"UNTRUSTED-{secrets.token_hex(12)}"
+    fence = f"UNTRUSTED-{secrets.token_hex(12)}" if boundary is None else boundary
     if not re.fullmatch(r"[A-Za-z0-9-]{8,64}", fence):
         raise ValueError("boundary must be 8-64 letters, digits or hyphens")
 

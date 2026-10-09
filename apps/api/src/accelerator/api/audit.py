@@ -108,9 +108,11 @@ class AuthFailureAuditThrottle:
 
 
 class AuthFailureAuditMiddleware:
-    """Record every 401 (authentication) and 403 (authorization) before it is sent.
+    """Record 401 (authentication) and 403 (authorization) responses before they are sent.
 
-    If the audit write fails the response becomes a 503: an unaudited denial is
+    Recording is throttled per client and globally: past the throttle, a denial is
+    sent without an event and only counted in a later ``auth_failure_audit_suppressed``
+    log. If the audit write fails the response becomes a 503: an unaudited denial is
     never reported as an ordinary one. Request headers, paths, bodies and query
     strings are never stored.
     """

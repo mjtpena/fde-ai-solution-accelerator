@@ -5,11 +5,18 @@ evidence text, prompts and answers never become span attributes.
 """
 
 from collections.abc import Sequence
-from typing import Any
 
 from pydantic import BaseModel
 
-from accelerator.agent_core.workflows.grounded_answer import GroundedAnswerResult
+from accelerator.agent_core.workflows.grounded_answer import (
+    AnswerGenerator,
+    CitationValidator,
+    GeneratedAnswer,
+    GroundedAnswerResult,
+    Retriever,
+    SufficiencyChecker,
+    SufficiencyDecision,
+)
 from accelerator.api.chat import ChatTurnPort
 from accelerator.observability_core import SpanAttributes, Telemetry
 from accelerator.retrieval_core.models import Evidence, RetrievalRequest
@@ -19,7 +26,11 @@ from accelerator.security_core.tool_policy import ApprovalRequired
 
 
 class TracedRetriever:
-    def __init__(self, inner: Any, telemetry: Telemetry) -> None:
+    def __init__(
+        self,
+        inner: Retriever[RetrievalRequest, ExecutionContext, Evidence],
+        telemetry: Telemetry,
+    ) -> None:
         self._inner = inner
         self._telemetry = telemetry
 
@@ -40,11 +51,11 @@ class TracedRetriever:
 
 
 class TracedSufficiencyChecker:
-    def __init__(self, inner: Any, telemetry: Telemetry) -> None:
+    def __init__(self, inner: SufficiencyChecker[Evidence], telemetry: Telemetry) -> None:
         self._inner = inner
         self._telemetry = telemetry
 
-    async def evaluate(self, evidence: Sequence[Any]) -> Any:
+    async def evaluate(self, evidence: Sequence[Evidence]) -> SufficiencyDecision:
         with self._telemetry.span("retrieval.sufficiency") as span:
             decision = await self._inner.evaluate(evidence)
             span.set_attribute(
@@ -55,12 +66,14 @@ class TracedSufficiencyChecker:
 
 
 class TracedAnswerGenerator:
-    def __init__(self, inner: Any, telemetry: Telemetry, *, model: str) -> None:
+    def __init__(
+        self, inner: AnswerGenerator[Evidence], telemetry: Telemetry, *, model: str
+    ) -> None:
         self._inner = inner
         self._telemetry = telemetry
         self._model = model
 
-    async def generate(self, query: str, evidence: Sequence[Any]) -> Any:
+    async def generate(self, query: str, evidence: Sequence[Evidence]) -> GeneratedAnswer:
         with self._telemetry.span(
             "gen_ai.chat", attributes=SpanAttributes(model=self._model)
         ) as span:
@@ -70,7 +83,7 @@ class TracedAnswerGenerator:
 
 
 class TracedCitationValidator:
-    def __init__(self, inner: Any, telemetry: Telemetry) -> None:
+    def __init__(self, inner: CitationValidator, telemetry: Telemetry) -> None:
         self._inner = inner
         self._telemetry = telemetry
 
