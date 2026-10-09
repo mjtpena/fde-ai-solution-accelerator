@@ -28,7 +28,14 @@ from accelerator.retrieval_core.sufficiency import (
     EvidenceSufficiencyChecker,
     SufficiencyPolicy,
 )
+from accelerator.observability_core import Telemetry
 from accelerator.security_core.data_boundaries.context import ExecutionContext
+from accelerator.telemetry.traced import (
+    TracedAnswerGenerator,
+    TracedCitationValidator,
+    TracedRetriever,
+    TracedSufficiencyChecker,
+)
 
 GROUNDED_ANSWER_AGENT = "grounded-answer"
 GroundedAnswer = GroundedAnswerWorkflow[RetrievalRequest, ExecutionContext, Evidence]
@@ -46,6 +53,8 @@ def build_azure_grounded_answer(
     settings: Settings,
     credential: AsyncTokenCredential,
     shutdown: list[Callable[[], Awaitable[None]]],
+    *,
+    telemetry: Telemetry | None = None,
 ) -> GroundedAnswer:
     if not settings.azure_services_configured:
         raise ValueError("Foundry and Azure AI Search settings are incomplete.")
@@ -94,18 +103,29 @@ def build_azure_grounded_answer(
         )
     )
     top_k = settings.search_top_k
+    sufficiency: Any = EvidenceSufficiencyChecker(
+        SufficiencyPolicy(
+            minimum_score=settings.sufficiency_min_score,
+            minimum_evidence_count=settings.sufficiency_min_evidence,
+        ),
+        score_field=settings.sufficiency_score_field,
+    )
+    generator: Any = AgentAnswerGenerator(
+        cast(ChatAgent, agent), max_output_tokens=settings.generation_max_output_tokens
+    )
+    validator: Any = SameTurnCitationValidator()
+    traced_retriever: Any = retriever
+    if telemetry is not None:
+        traced_retriever = TracedRetriever(retriever, telemetry)
+        sufficiency = TracedSufficiencyChecker(sufficiency, telemetry)
+        generator = TracedAnswerGenerator(
+            generator, telemetry, model=settings.foundry_model_deployment
+        )
+        validator = TracedCitationValidator(validator, telemetry)
     return GroundedAnswerWorkflow(
-        retriever=retriever,
-        sufficiency_checker=EvidenceSufficiencyChecker(
-            SufficiencyPolicy(
-                minimum_score=settings.sufficiency_min_score,
-                minimum_evidence_count=settings.sufficiency_min_evidence,
-            ),
-            score_field=settings.sufficiency_score_field,
-        ),
-        answer_generator=AgentAnswerGenerator(
-            cast(ChatAgent, agent), max_output_tokens=settings.generation_max_output_tokens
-        ),
-        citation_validator=SameTurnCitationValidator(),
+        retriever=traced_retriever,
+        sufficiency_checker=sufficiency,
+        answer_generator=generator,
+        citation_validator=validator,
         retrieval_request_factory=lambda query: RetrievalRequest(query=query, top_k=top_k),
     )

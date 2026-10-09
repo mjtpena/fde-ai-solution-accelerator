@@ -243,9 +243,9 @@ def test_configured_azure_services_wire_the_grounded_answer_workflow() -> None:
     from accelerator.api.tool_turns import PolicyEnforcedChatTurn
 
     assert isinstance(app.state.chat_turn, PolicyEnforcedChatTurn)
-    assert isinstance(app.state.chat_turn._workflow, GroundedAnswerWorkflow)
-    # The Search, embedding and Foundry chat clients are closed with the app.
-    assert len(app.state.shutdown_callbacks) == 3
+    assert isinstance(app.state.chat_turn._workflow._inner, GroundedAnswerWorkflow)
+    # Telemetry and the Search, embedding and Foundry chat clients close with the app.
+    assert len(app.state.shutdown_callbacks) == 4
 
 
 def test_azure_workflow_refuses_to_build_without_a_credential() -> None:

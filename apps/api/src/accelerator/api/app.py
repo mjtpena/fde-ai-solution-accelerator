@@ -36,6 +36,7 @@ from accelerator.identity.scope_resolver import (
 )
 from accelerator.security_core.authorisation.memberships import ScopeMembershipRepository
 from accelerator.security_core.cost_guard import RateLimiter, TokenBudgetExceeded
+from accelerator.observability_core import Telemetry, TracingMiddleware
 from accelerator.security_core.infrastructure.database import SessionFactory
 
 
@@ -81,6 +82,7 @@ def create_app(
     scope_repository: ScopeMembershipRepository | None = None,
     session_factory: SessionFactory | None = None,
     on_shutdown: Sequence[Callable[[], Awaitable[None]]] = (),
+    telemetry: Telemetry | None = None,
 ) -> FastAPI:
     app = FastAPI(
         title="FDE AI Solution Accelerator API",
@@ -139,5 +141,10 @@ def create_app(
     if scope_repository is not None:
         configure_scope_resolver(app, scope_repository)
     app.include_router(chat_router, **cost_guarded)
+    if telemetry is not None:
+        app.state.telemetry = telemetry
+        # Inside the correlation boundary, which owns X-Correlation-ID: every request
+        # span carries the same validated ID the client sees.
+        app.add_middleware(TracingMiddleware, telemetry=telemetry)  # type: ignore[arg-type]
     install_scope_boundary(app)
     return app

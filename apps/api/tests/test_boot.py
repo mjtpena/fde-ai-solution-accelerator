@@ -23,6 +23,8 @@ import httpx
 import jwt
 import pytest
 from azure.core.credentials import AccessToken
+from opentelemetry.sdk.trace.export.in_memory_span_exporter import InMemorySpanExporter
+from opentelemetry.sdk.trace.sampling import ALWAYS_ON
 from cryptography.hazmat.primitives.asymmetric import rsa
 from fastapi import FastAPI
 from sqlalchemy import text
@@ -149,7 +151,7 @@ class FakeSearchClient:
                 "document_id": "document-a",
                 "document_title": "Operations guide",
                 "version": "1",
-                "text": "Backups run nightly.",
+                "text": f"Backups run nightly. {SEEDED_SECRETS[1]}",
                 "source_uri": "https://documents.example.test/a",
                 "@search.score": 0.03,
                 "@search.reranker_score": 3.2,
@@ -198,6 +200,28 @@ class FakeAgent:
         return Stream()
 
 
+EXPORTERS: list[InMemorySpanExporter] = []
+SEEDED_SECRETS = ("api_key=SEEDED-SECRET-QUERY", "password=SEEDED-SECRET-EVIDENCE")
+
+
+class InMemoryApplicationInsights:
+    """Stands in for the Azure Monitor exporter; the sanitizer still wraps it."""
+
+    def __init__(self, *args: object, **kwargs: object) -> None:
+        del args, kwargs
+
+    def create_exporter(self) -> InMemorySpanExporter:
+        # One per app: shutting an app down stops its exporter.
+        EXPORTERS.append(InMemorySpanExporter())
+        return EXPORTERS[-1]
+
+    def create_sampler(self) -> Any:
+        return ALWAYS_ON
+
+    def close(self) -> None:
+        return None
+
+
 def fake_create_agent(self: object, **kwargs: object) -> FakeAgent:
     del self, kwargs
     return FakeAgent()
@@ -215,6 +239,10 @@ def production_app(migrated_database_url: str) -> Iterator[FastAPI]:
             "accelerator.infrastructure.foundry.agent_runtime."
             "AgentFrameworkFoundryRuntime.create_agent",
             fake_create_agent,
+        ),
+        patch(
+            "accelerator.telemetry.tracing.ApplicationInsightsAdapter",
+            InMemoryApplicationInsights,
         ),
         patch.dict("os.environ", production_environment(migrated_database_url), clear=True),
         patch(
@@ -283,8 +311,11 @@ async def test_production_chat_stream_is_configured_and_ready(
     async with running(production_app) as client:
         ready = await client.get("/readyz")
         response = await client.post(
-            "/chat/stream", json={"message": "What is supported?"}, headers=bearer("Reader")
+            f"/chat/stream?{SEEDED_SECRETS[0]}",
+            json={"message": f"What is supported? {SEEDED_SECRETS[0]}"},
+            headers=bearer("Reader"),
         )
+    production_app.state.telemetry.force_flush()
 
     assert ready.status_code == 200, ready.text
     assert response.status_code == 200, response.text
@@ -293,3 +324,35 @@ async def test_production_chat_stream_is_configured_and_ready(
     assert "[cite:" not in response.text
     # The scope filter came from the database membership, not from the request.
     assert FakeSearchClient.filters[-1].startswith("(search.in(scope_id, 'scope-a'")
+
+    # One trace per request, under the correlation ID the client received ...
+    spans = EXPORTERS[-1].get_finished_spans()
+    correlation_id = response.headers["x-correlation-id"]
+    traced = [
+        span
+        for span in spans
+        if (span.attributes or {}).get("fde.correlation_id") == correlation_id
+    ]
+    assert {span.name for span in traced} >= {
+        "http.request",
+        "workflow.grounded_answer",
+        "retrieval.search",
+        "retrieval.sufficiency",
+        "gen_ai.chat",
+        "citations.validate",
+    }
+    assert len({span.context.trace_id for span in traced}) == 1
+    # ... and no secret from any input channel survives export.
+    exported = json.dumps(
+        [
+            {
+                "name": span.name,
+                "attributes": dict(span.attributes or {}),
+                "events": [dict(event.attributes or {}) for event in span.events],
+            }
+            for span in spans
+        ],
+        default=str,
+    )
+    for secret in ("SEEDED-SECRET-QUERY", "SEEDED-SECRET-EVIDENCE", "Bearer "):
+        assert secret not in exported

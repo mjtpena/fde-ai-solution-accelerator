@@ -10,6 +10,7 @@ from collections.abc import Awaitable, Callable
 from azure.core.credentials_async import AsyncTokenCredential
 from azure.identity.aio import DefaultAzureCredential
 from fastapi import FastAPI
+from opentelemetry.sdk.trace.export import SpanExporter
 
 from accelerator.agent_core.middleware import ToolCallLimits
 from accelerator.agent_core.tools import ToolRegistry
@@ -23,6 +24,9 @@ from accelerator.infrastructure.audit import PostgresAuditRepository
 from accelerator.infrastructure.cost_controls import PostgresRateLimiter
 from accelerator.infrastructure.database import create_database_engine
 from accelerator.infrastructure.grounded_answer import build_azure_grounded_answer
+from accelerator.observability_core import Telemetry
+from accelerator.telemetry.traced import TracedChatTurn
+from accelerator.telemetry.tracing import build_telemetry
 from accelerator.security_core.infrastructure.database import (
     SessionFactory,
     create_session_factory,
@@ -37,7 +41,7 @@ logger = logging.getLogger(__name__)
 
 ShutdownCallbacks = list[Callable[[], Awaitable[None]]]
 ChatTurnFactory = Callable[
-    [Settings, AsyncTokenCredential | None, ShutdownCallbacks], ChatTurnPort | None
+    [Settings, AsyncTokenCredential | None, ShutdownCallbacks, Telemetry], ChatTurnPort | None
 ]
 
 
@@ -45,6 +49,7 @@ def default_chat_turn(
     settings: Settings,
     credential: AsyncTokenCredential | None,
     shutdown: ShutdownCallbacks,
+    telemetry: Telemetry | None = None,
 ) -> ChatTurnPort | None:
     """The Azure grounded-answer workflow whenever Foundry and Search are configured.
 
@@ -55,7 +60,7 @@ def default_chat_turn(
         return None
     if credential is None:
         raise ValueError("The Azure grounded-answer workflow requires an Azure credential.")
-    return build_azure_grounded_answer(settings, credential, shutdown)
+    return build_azure_grounded_answer(settings, credential, shutdown, telemetry=telemetry)
 
 
 def build_application(
@@ -64,6 +69,7 @@ def build_application(
     credential: AsyncTokenCredential | None = None,
     chat_turn_factory: ChatTurnFactory = default_chat_turn,
     tool_registry: ToolRegistry | None = None,
+    span_exporter: SpanExporter | None = None,
 ) -> FastAPI:
     """Build the API with real persistence, scope resolution, audit and cost guards.
 
@@ -72,6 +78,8 @@ def build_application(
     Azure dependency is configured before this runs.
     """
     shutdown: ShutdownCallbacks = []
+    telemetry, stop_telemetry = build_telemetry(settings, exporter=span_exporter)
+    shutdown.append(stop_telemetry)
     needs_azure = (
         settings.database_auth_mode == "managed_identity" or settings.azure_services_configured
     )
@@ -100,10 +108,10 @@ def build_application(
             extra={"environment": settings.environment},
         )
 
-    workflow = chat_turn_factory(settings, credential, shutdown)
+    workflow = chat_turn_factory(settings, credential, shutdown, telemetry)
     chat_turn = (
         PolicyEnforcedChatTurn(
-            workflow,
+            TracedChatTurn(workflow, telemetry, name="grounded_answer"),
             tool_registry if tool_registry is not None else ToolRegistry(),
             session_factory=session_factory,
             limits=ToolCallLimits(
@@ -129,5 +137,6 @@ def build_application(
         chat_turn=chat_turn,
         session_factory=session_factory,
         on_shutdown=shutdown,
+        telemetry=telemetry,
     )
     return app

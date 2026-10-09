@@ -10,6 +10,7 @@ dependencies = [
     "agent-framework-foundry>=1.14,<2",
     "azure-identity>=1.26,<2",
     "fde-agent-core",
+    "fde-observability-core",
     "azure-search-documents>=11.6,<12",
     "aiohttp>=3.12,<4",
     "fde-retrieval-core",
@@ -25,6 +26,7 @@ dependencies = [
 
 [tool.uv.sources]
 fde-agent-core = { workspace = true }
+fde-observability-core = { workspace = true }
 fde-retrieval-core = { workspace = true }
 fde-security-core = { workspace = true }
 

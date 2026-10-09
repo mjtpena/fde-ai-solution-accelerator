@@ -7,7 +7,10 @@ from fastapi import FastAPI
 
 from accelerator.api.composition import build_application
 from accelerator.configuration.settings import get_settings
+from accelerator.telemetry.logging import configure_logging
 
 
 def create_application() -> FastAPI:
-    return build_application(get_settings())
+    settings = get_settings()
+    configure_logging(settings.log_level)
+    return build_application(settings)

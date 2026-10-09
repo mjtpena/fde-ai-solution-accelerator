@@ -31,6 +31,7 @@ class Settings(BaseSettings):
     )
 
     environment: Environment
+    log_level: Literal["DEBUG", "INFO", "WARNING", "ERROR"] = "INFO"
     request_token_budget: int = Field(default=8192, gt=0)
     request_rate_limit: int = Field(default=60, gt=0)
     request_rate_window_seconds: float = Field(default=60.0, gt=0, allow_inf_nan=False)

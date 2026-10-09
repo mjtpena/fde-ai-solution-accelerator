@@ -22,8 +22,12 @@ class ApplicationInsightsSettings(BaseSettings):
 
 
 class ApplicationInsightsAdapter:
-    def __init__(self, settings: ApplicationInsightsSettings) -> None:
+    def __init__(
+        self, settings: ApplicationInsightsSettings, *, connection_string: str | None = None
+    ) -> None:
         self.settings = settings
+        # None: the exporter reads APPLICATIONINSIGHTS_CONNECTION_STRING itself.
+        self._connection_string = connection_string
         self._credential: ManagedIdentityCredential | None = None
 
     def create_sampler(self) -> Sampler:
@@ -35,9 +39,13 @@ class ApplicationInsightsAdapter:
         credential = ManagedIdentityCredential(client_id=self.settings.managed_identity_client_id)
         try:
             # The exporter reads the deployment-provided destination from its standard env var.
+            destination = (
+                {"connection_string": self._connection_string}
+                if self._connection_string is not None
+                else {}
+            )
             exporter = AzureMonitorTraceExporter(
-                credential=credential,
-                disable_offline_storage=True,
+                credential=credential, disable_offline_storage=True, **destination
             )
         except BaseException:
             credential.close()
