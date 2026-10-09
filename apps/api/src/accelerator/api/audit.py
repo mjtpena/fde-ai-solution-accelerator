@@ -92,8 +92,10 @@ class AuthFailureAuditThrottle:
 
     def allow(self, client_host: str | None) -> bool:
         try:
-            self._per_client.check(_ThrottleKey("", f"client:{client_host or 'unknown'}"))
+            # Global first: once the global cap is hit, unseen clients allocate no
+            # per-client state, so high-cardinality floods stay bounded in memory.
             self._global.check(_ThrottleKey("", "all-unauthenticated"))
+            self._per_client.check(_ThrottleKey("", f"client:{client_host or 'unknown'}"))
         except RateLimitExceeded:
             with self._lock:
                 self._suppressed += 1

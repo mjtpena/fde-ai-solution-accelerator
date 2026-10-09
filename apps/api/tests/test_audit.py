@@ -381,3 +381,13 @@ def test_suppressed_failures_are_counted_for_the_next_audit_log_line() -> None:
     assert throttle.allow("client-b")
     assert throttle.take_suppressed_count() == 2
     assert throttle.take_suppressed_count() == 0
+
+
+def test_globally_throttled_floods_allocate_no_per_client_state() -> None:
+    from accelerator.api.audit import AuthFailureAuditThrottle
+
+    throttle = AuthFailureAuditThrottle(per_client_limit=5, global_limit=2, window_seconds=60)
+    allowed = [throttle.allow(f"198.51.100.{index}") for index in range(200)]
+
+    assert allowed.count(True) == 2
+    assert len(throttle._per_client._requests) == 2
