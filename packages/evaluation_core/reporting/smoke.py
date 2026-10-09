@@ -1,4 +1,4 @@
-"""Run deterministic evaluators and publish baseline movement."""
+"""Run the offline smoke evaluation of the product and publish baseline movement."""
 
 import argparse
 import json
@@ -9,6 +9,7 @@ from pydantic import ValidationError
 import yaml
 
 from ..runners import run_smoke
+from ..runners.smoke import DEFAULT_CORPUS, DEFAULT_DATASET
 from .comparison import EvaluationResult, compare
 from .files import load_comparison_config, write_report
 
@@ -20,15 +21,19 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--baseline", type=Path, default=Path("evaluations/baselines/accepted.json"))
     parser.add_argument("--thresholds", type=Path, default=Path("evaluations/thresholds.yml"))
     parser.add_argument("--output-dir", type=Path, default=Path("evaluations/reports"))
+    parser.add_argument("--dataset", type=Path, default=DEFAULT_DATASET)
+    parser.add_argument("--corpus", type=Path, default=DEFAULT_CORPUS)
     parser.add_argument("--allow-fixture", action="store_true")
     args = parser.parse_args(argv)
     logging.basicConfig(level=logging.INFO, format="%(levelname)s %(message)s")
+    # Workflow supersteps are not evaluation results; keep the report log readable.
+    logging.getLogger("agent_framework").setLevel(logging.WARNING)
     context = {"correlation_id": "evaluation-smoke"}
     try:
         args.output_dir.mkdir(parents=True, exist_ok=True)
         (args.output_dir / "smoke.json").unlink(missing_ok=True)
         (args.output_dir / "smoke.md").unlink(missing_ok=True)
-        measured = run_smoke()
+        measured = run_smoke(args.dataset, args.corpus)
         current = EvaluationResult(metrics=measured.metrics, hard_failures=measured.hard_failures)
         baseline, thresholds, fixture = load_comparison_config(
             args.baseline, args.thresholds, allow_fixture=args.allow_fixture

@@ -1,6 +1,7 @@
 # Evaluation reporting
 
-`make eval-smoke` runs the deterministic `runners.run_smoke()` API, fails on
+`make eval-smoke` runs the offline smoke evaluation (`runners.run_smoke()`, see
+`runners/README.md`) over `evaluations/example-datasets/smoke.jsonl`, fails on
 any hard-gate failure or out-of-tolerance regression, and writes
 `evaluations/reports/smoke.json` and `evaluations/reports/smoke.md`.
 Exit codes: 0 passed, 1 gate/regression failure, 2 configuration/reporting error.

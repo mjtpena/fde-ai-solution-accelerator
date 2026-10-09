@@ -93,7 +93,7 @@ def test_every_hard_failure_exits_nonzero_despite_generous_tolerance(
     )
     monkeypatch.setattr(
         smoke, "run_smoke",
-        lambda: RunnerResult(
+        lambda *_: RunnerResult(
             metrics={name: 1.0 for name in SMOKE_METRICS}, hard_failures=(gate,)
         ),
     )
@@ -118,7 +118,7 @@ def test_quality_metrics_use_tolerance_without_creating_hard_failures(
     metrics = {name: 1.0 for name in SMOKE_METRICS}
     metrics[metric] = 0.9
     monkeypatch.setattr(
-        smoke, "run_smoke", lambda: RunnerResult(metrics=metrics, hard_failures=())
+        smoke, "run_smoke", lambda *_: RunnerResult(metrics=metrics, hard_failures=())
     )
     assert smoke.main(cli_args(tmp_path)) == 0
     payload = json.loads((tmp_path / "reports" / "smoke.json").read_text(encoding="utf-8"))
@@ -135,7 +135,7 @@ def test_regression_artifacts_are_written_before_failure_exit(
     configure(tmp_path)
     monkeypatch.setattr(
         smoke, "run_smoke",
-        lambda: RunnerResult(
+        lambda *_: RunnerResult(
             metrics={name: 0.999 for name in SMOKE_METRICS}, hard_failures=()
         ),
     )
@@ -232,3 +232,20 @@ def test_full_evaluation_never_falls_back_to_smoke_fixtures(tmp_path: Path) -> N
             tmp_path / "accepted.json", tmp_path / "thresholds.yml",
             name="full", allow_fixture=True,
         )
+
+
+def test_cli_passes_dataset_and_corpus_to_the_runner(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    configure(tmp_path)
+    seen: list[tuple[Path, Path]] = []
+
+    def record(dataset: Path, corpus: Path) -> RunnerResult:
+        seen.append((dataset, corpus))
+        return RunnerResult(metrics={name: 1.0 for name in SMOKE_METRICS}, hard_failures=())
+
+    monkeypatch.setattr(smoke, "run_smoke", record)
+    args = cli_args(tmp_path) + ["--dataset", "d.jsonl", "--corpus", "corpus"]
+
+    assert smoke.main(args) == 0
+    assert seen == [(Path("d.jsonl"), Path("corpus"))]
