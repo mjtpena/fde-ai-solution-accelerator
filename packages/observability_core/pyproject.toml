@@ -10,7 +10,7 @@ dependencies = [
     "asgiref==3.12.1",
     "azure-identity==1.26.0",
     "azure-monitor-opentelemetry-exporter==1.0.0b57",
-    "opentelemetry-api==1.44.0",
+    "opentelemetry-api==1.45.1",
     "opentelemetry-sdk==1.44.0",
     "pydantic-settings==2.15.0",
 ]
